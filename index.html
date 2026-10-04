@@ -231,7 +231,7 @@ dialog::backdrop{background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
     <button class="btn" data-a="today">Aujourd'hui</button>
     <details class="menu"><summary class="btn">Options ▾</summary><div>
       <button data-a="pdf">📄 Imprimer / PDF</button>
-      <button data-a="export">⬇️️ Exporter (JSON)</button>
+      <button data-a="export">⬇ Exporter (JSON)</button>
       <button data-a="import">⬆️ Importer (JSON)</button>
       <hr style="border:0;border-top:1px solid var(--line);margin:4px 0;">
       <button data-a="logout" style="color:var(--warn)">🚪 Se déconnecter</button>
@@ -427,7 +427,7 @@ function save() {
     const dataStr = JSON.stringify(S);
     localStorage.setItem(LS, dataStr); 
     if(currentUser) {
-      db.collection('users').doc(currentUser.uid).set({ budgetData: dataStr })
+      db.collection('users').doc(currentUser.uid).collection('data').doc('budget').set({ budgetData: dataStr })
         .catch(e => console.error("Erreur de sauvegarde Firebase", e));
     }
   } catch(e) {
@@ -443,13 +443,13 @@ auth.onAuthStateChanged(user => {
     $('app-wrap').style.display = 'flex';
     $('header-email').textContent = user.email;
     
-    db.collection('users').doc(user.uid).get().then(doc => {
+    db.collection('users').doc(user.uid).collection('data').doc('budget').get().then(doc => {
       if(doc.exists && doc.data().budgetData) {
         S = normalize(JSON.parse(doc.data().budgetData));
       } else {
         let localS;
         try{ localS = JSON.parse(localStorage.getItem(LS)); }catch(e){}
-        if(localS) { S = normalize(localS); }
+        if(localS) { S = normalize(localS); } else { S = normalize({categories:[...DC],templates:DT(),months:{}}); }
       }
       all();
       toast('Connecté à votre espace privé');
@@ -459,6 +459,8 @@ auth.onAuthStateChanged(user => {
     });
   } else {
     currentUser = null;
+    // IMPORTANT: Vider les données locales à la déconnexion pour éviter les fuites entre comptes
+    S = normalize({categories:[...DC],templates:DT(),months:{}});
     $('auth-screen').style.display = 'flex';
     $('app-wrap').style.display = 'none';
   }
@@ -787,7 +789,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='newca
 </script>
 <script>
 (()=>{
-const ICO={'Logement':'🏠','Énergie':'⚡','Assurance':'🛡️','Abonnement':'📱','Banque':'🏦','Alimentation':'🛒','Transport':'🚗','Santé':'💊','Loisirs':'🎬','Autre':'🏷'};
+const ICO={'Logement':'🏠','Énergie':'⚡','Assurance':'🛡️️','Abonnement':'📱','Banque':'🏦','Alimentation':'🛒','Transport':'🚗','Santé':'💊','Loisirs':'🎬','Autre':'🏷'};
 let pre=null,undo=null,tt,SK={k:null,d:1};
 const ser=()=>JSON.stringify(S),hide=()=>{$('toast').classList.remove('show');undo=null};
 ['click','change'].forEach(t=>document.addEventListener(t,()=>{pre=ser()},true));
