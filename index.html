@@ -645,16 +645,7 @@ function render(){
   }
   
   $('b-in').textContent = '+ ' + eur(c.incAll);$('b-fix').textContent = '− ' + eur(c.fixAll);$('b-var').textContent = '− ' + eur(c.varAll);$('b-bud').textContent = '− ' + eur(c.budLeft);$('b-sav').textContent = '− ' + eur(c.saving);
-  
-  // MODIFICATION DE LA COULEUR DU SOLDE ESTIMÉ
-  $('b-est').textContent = eur(c.est);
-  if (c.est < 0) {
-      $('b-est').style.color = 'var(--bad)'; // Rouge si < 0
-  } else if (c.est > c.computedInitBal) {
-      $('b-est').style.color = 'var(--ok)'; // Vert si supérieur au solde de départ
-  } else {
-      $('b-est').style.color = 'var(--ink)'; // Noir (ou blanc en mode sombre) sinon
-  }
+  $('b-est').textContent = eur(c.est);$('b-est').style.color = c.est < 0 ? '#fca5a5' : '#fff';
 
   const today = new Date(); today.setHours(0,0,0,0);
   const yr = cur.getFullYear(), mo = cur.getMonth();
