@@ -778,7 +778,7 @@ document.addEventListener('click',ev=>{
     case'pdf':return window.print();
     case'export':{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([JSON.stringify(S,null,2)],{type:'application/json'}));l.download='budget_perso_'+new Date().toISOString().slice(0,10)+'.json';l.click();return toast('Export téléchargé')}
     case'import':return $('file').click();
-    case'logout': auth.signOut(); return toast('Déconnecté');
+   case'logout': auth.signOut(); localStorage.removeItem(LS); return toast('Déconnecté');
     case'reset':if(confirm('Effacer TOUTES vos données (Cloud et Local) ?')){S = normalize({categories:[...DC],templates:{expenses:[],incomes:[],budgets:[]},months:{}});save();all();}return;
   }
   save();all();
