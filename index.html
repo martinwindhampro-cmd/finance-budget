@@ -33,13 +33,7 @@
   .chip.w { border-color: #b45309; background: #78350f; color: #fde68a; }
   .chip.b { border-color: #b91c1c; background: #7f1d1d; color: #fca5a5; }
   td { border-bottom-color: var(--line); }
-  .cal td { background: #1e293b; border-color: var(--line); }
-  .cal td.we { opacity: 0.6; }
-  .cal td.today { background: rgba(59,130,246,0.15); border-color: var(--acc); }
-  .cal-d { background: #334155; color: #cbd5e1; }
-  .cal td.today .cal-d { background: var(--acc); color: #fff; }
-  .cal-itm.ok { background: #064e3b; color: #34d399; border-color: #065f46; }
-  .cal-itm.pend { background: #7c2d12; color: #fdba74; border-color: #9a3412; }
+  
   .auth-input { background: var(--bg); border: 1px solid var(--line); color: var(--ink); }
   .auth-input:focus { border-color: var(--acc); }
   
@@ -56,6 +50,12 @@
   .bank { background: var(--card); border-color: var(--line); }
   .est { background: #0f172a; }
   .bank input { background: #0f172a; border-color: var(--line); color: #fff; }
+  
+  /* Timeline Dark Mode */
+  .tl-itm.ok { background: rgba(5,150,105,0.1); }
+  .tl-itm.warn { background: rgba(217,119,6,0.1); }
+  .tl-itm.bad { background: rgba(220,38,38,0.1); }
+  .tl-day.today .tl-head { background: var(--acc); color: #fff; }
 }
 
 *{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -86,7 +86,7 @@ h1{font-size:1.25rem;font-weight:800}header small{color:var(--acc);font-weight:7
 .k4{background:rgba(37,99,235,0.06); border:1px solid rgba(37,99,235,0.2);}
 .k4 .kl, .k4 .ks {color:#1e40af;} .k4 .kv {color:#2563eb;}
 
-/* Nouveau Rapprochement Bancaire */
+/* Rapprochement Bancaire */
 .bank{background:var(--card);color:var(--ink);border-radius:var(--r);border:1px solid var(--line);padding:18px 24px;display:flex;flex-wrap:wrap;gap:18px 28px;align-items:center;justify-content:space-between;box-shadow:0 1px 3px rgba(15,23,42,.06)}
 .bank h3{font-size:1.05rem}.bank p{font-size:.8rem;color:var(--mute);font-weight:600;}
 .bs{display:flex;flex-direction:column;gap:4px}.bs span{font-size:.75rem;color:var(--mid);font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
@@ -102,23 +102,27 @@ h1{font-size:1.25rem;font-weight:800}header small{color:var(--acc);font-weight:7
 .sh{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}.sh h2{font-size:1.1rem}
 .sh .r{display:flex;gap:8px;flex-wrap:wrap}
 .trk { display: block; border: 1px solid var(--line); border-radius: var(--r); padding: 18px; margin-bottom: 18px; background: var(--card); box-shadow: 0 1px 3px rgba(15,23,42,.06); }
-.cal-wrap { overflow-x: auto; padding-bottom: 4px; }
-.cal { width: 100%; min-width: 600px; border-collapse: separate; border-spacing: 6px; }
-.cal th { text-align: center; font-size: .75rem; color: var(--mute); padding: 4px; font-weight: 700; text-transform: uppercase; border: none; }
-.cal td { background: var(--hov); border-radius: 12px; height: 85px; vertical-align: top; padding: 6px; width: 14.28%; border: 1px solid transparent; transition: all .2s; }
-.cal td.we { opacity: 0.8; }
-.cal td.empty { background: transparent; border: none; }
-.cal td.today { background: #eff6ff; border-color: #bfdbfe; box-shadow: 0 4px 12px rgba(37,99,235,0.08); }
-.cal-d { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .8rem; color: var(--mid); background: #e2e8f0; flex-shrink: 0; }
-.cal td.today .cal-d { background: var(--acc); color: #fff; box-shadow: 0 2px 8px rgba(37,99,235,0.4); }
-.cal-i { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 52px; }
-.cal-i::-webkit-scrollbar { display: none; }
-.cal-itm { font-size: .62rem; font-weight: 700; padding: 3px 5px; border-radius: 6px; display: flex; align-items: center; gap: 5px; cursor: pointer; border: 1px solid transparent; transition: transform .1s; }
-.cal-itm:active { transform: scale(0.96); }
-.cal-itm.ok { background: #ecfdf5; color: var(--ok); border-color: #a7f3d0; }
-.cal-itm.pend { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-.cal-itm svg.br-icon { width: 14px; height: 14px; flex-shrink: 0; border-radius: 3px; }
-.cal-itm span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* NOUVEAU STYLE TIMELINE (FRISE) */
+.tl-wrap { display: flex; overflow-x: auto; gap: 16px; padding: 10px 4px 20px 4px; scroll-snap-type: x mandatory; align-items: stretch; }
+.tl-wrap::-webkit-scrollbar { height: 8px; }
+.tl-wrap::-webkit-scrollbar-track { background: var(--line); border-radius: 4px; }
+.tl-wrap::-webkit-scrollbar-thumb { background: var(--mute); border-radius: 4px; }
+.tl-day { display: flex; flex-direction: column; gap: 10px; min-width: 130px; max-width: 150px; flex-shrink: 0; scroll-snap-align: center; }
+.tl-head { text-align: center; font-weight: 700; font-size: 0.85rem; color: var(--mute); padding: 6px; border-bottom: 2px solid var(--line); }
+.tl-day.today .tl-head { color: #fff; background: var(--acc); border-bottom-color: var(--acc); border-radius: 6px; }
+.tl-itm { background: var(--card); border: 2px solid transparent; border-radius: 12px; padding: 16px 12px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; cursor: pointer; box-shadow: 0 1px 3px rgba(15,23,42,.06); transition: transform 0.1s, box-shadow 0.1s; flex: 1; justify-content: center; }
+.tl-itm:hover { transform: translateY(-3px); box-shadow: 0 4px 12px rgba(15,23,42,.1); }
+.tl-itm.ok { border-color: var(--ok); background: #ecfdf5; }
+.tl-itm.warn { border-color: var(--warn); background: #fff7ed; }
+.tl-itm.bad { border-color: var(--bad); background: #fef2f2; }
+.tl-ico { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 1.8rem; flex-shrink: 0; margin-bottom: 4px; }
+.tl-ico svg { width: 100%; height: 100%; border-radius: 8px; }
+.tl-name { font-size: 0.8rem; font-weight: 700; color: var(--ink); line-height: 1.2; word-break: break-word; }
+.tl-amt { font-size: 1rem; font-weight: 800; margin-top: auto; }
+.tl-itm.ok .tl-amt { color: var(--ok); }
+.tl-itm.warn .tl-amt { color: #d97706; } /* Orange ajusté pour lisibilité */
+.tl-itm.bad .tl-amt { color: var(--bad); }
 
 .pb{height:9px;background:var(--line);border-radius:6px;overflow:hidden;flex:1}.pb i{display:block;height:100%;transition:width .25s}
 .pr{display:flex;gap:10px;align-items:center}.pr b{width:46px;text-align:right;font-size:.8rem}
@@ -188,7 +192,7 @@ tfoot td{font-weight:800;border-top:2px solid var(--line);padding:10px 8px;backg
 
 [hidden]{display:none!important}
 .btn,.ib,.tab,.x,.half,.pill,.tag,.seg button,.dch{transition:background .15s,color .15s,border-color .15s,transform .1s,box-shadow .15s}
-.btn:active,.ib:active,.x:active,.half:active,.pill:active,.cal-itm:active,.dch:active{transform:scale(.95)}
+.btn:active,.ib:active,.x:active,.half:active,.pill:active,.dch:active{transform:scale(.95)}
 .btn{display:inline-flex;align-items:center;gap:6px;min-height:36px}
 .btn.p{box-shadow:0 1px 2px rgba(37,99,235,.3)}.btn.p:hover{box-shadow:0 4px 12px rgba(37,99,235,.35)}
 .tab{display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0}.tab:hover{background:var(--hov)}
@@ -202,7 +206,6 @@ tfoot td{font-weight:800;border-top:2px solid var(--line);padding:10px 8px;backg
 .pill:hover{border-color:var(--mute)}.pill.ok{background:rgba(5,150,105,.13);border-color:rgba(5,150,105,.4);color:var(--ok)}
 th.s{user-select:none}td:last-child{white-space:nowrap;text-align:right}.x{width:30px;height:30px}.x[data-a=dup]:hover{background:var(--line);color:var(--ink)}
 tr{transition:background .15s}
-.cal td[data-day]{cursor:pointer}.cal td[data-day]:hover{border-color:var(--acc);transform:translateY(-1px)}
 .ins{display:flex;gap:10px;flex-wrap:wrap}.ins span{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:.82rem;color:var(--mid)}
 .ins b{color:var(--ink)}.ins b.neg{color:var(--bad)}.ins .late{color:var(--bad);border-color:var(--bad)}
 #toast{display:flex;gap:14px;align-items:center}#toast.act{pointer-events:auto}#toast button{background:none;border:0;color:#93c5fd;font-weight:700;cursor:pointer}
@@ -339,7 +342,7 @@ dialog::backdrop{background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
           <h3 style="margin-bottom:12px; font-size:1rem;">Sauvegarde & Restauration</h3>
           <p style="font-size:0.8rem; color:var(--mute); margin-bottom:16px;">Exportez vos données pour les conserver ou les réimporter plus tard.</p>
           <button class="btn" style="width:100%; margin-bottom:8px;" data-a="export">⬇ Exporter au format JSON</button>
-          <button class="btn" style="width:100%; margin-bottom:8px;" data-a="import">⬆️ Importer un JSON</button>
+          <button class="btn" style="width:100%; margin-bottom:8px;" data-a="import">⬆️️ Importer un JSON</button>
           <input type="file" id="file" accept=".json,application/json" hidden>
           <button class="btn" style="width:100%; color:var(--warn); border-color:var(--warn);" data-a="reset">⚠ Réinitialiser le budget à zéro</button>
       </div>
@@ -417,7 +420,6 @@ document.getElementById('btn-login').onclick = () => {
   });
 };
 
-// Fonctions Utilisateur Avancées (Onglet Paramètres)
 window.changePassword = () => {
     const newPass = prompt("Entrez votre nouveau mot de passe (6 caractères minimum) :");
     if(newPass && newPass.length >= 6) {
@@ -502,7 +504,7 @@ auth.onAuthStateChanged(user => {
     currentUser = user;
     $('auth-screen').style.display = 'none';
     $('app-wrap').style.display = 'flex';
-    $('settings-email').textContent = user.email; // Mis dans Paramètres
+    $('settings-email').textContent = user.email;
     
     db.collection('users').doc(user.uid).collection('data').doc('budget').get().then(doc => {
       if(doc.exists && doc.data().budgetData) {
@@ -538,12 +540,11 @@ function month(k=mkey(cur)){
 }
 function prevKey(){const d=new Date(cur);d.setMonth(d.getMonth()-1);return mkey(d)}
 
-// Fonction de calcul de la cascade de trésorerie automatique
 function getChainBalance(targetKey) {
     const keys = Object.keys(S.months).sort();
     if(keys.length === 0) return 0;
     
-    let bal = num(S.months[keys[0]].bankBalance); // Seul le tout premier mois donne la base
+    let bal = num(S.months[keys[0]].bankBalance); 
     for(let i=0; i<keys.length; i++) {
         const key = keys[i];
         if(key === targetKey) return bal;
@@ -571,10 +572,7 @@ function calc(m, key){
   r.budLeft=sum(m.budgets,b=>Math.max(0,num(b.amount)-vspent(m,b.cat)));
   r.totSpent=r.fixPaid+r.varAll;
   r.saving=num(m.savingGoal);
-  
-  // Calcul automatique du solde initial
   r.computedInitBal = getChainBalance(key);
-  
   r.currentBalance = r.computedInitBal + r.incIn - r.outPaid;
   r.est = r.computedInitBal + r.incAll - (r.fixAll + r.varAll + r.budLeft + r.saving); 
   return r;
@@ -599,21 +597,20 @@ function getAutoCat(q) {
 
 function getBrandIcon(name) {
   const n = name.toLowerCase();
-  if(n.includes('apple') || n.includes('icloud') || n.includes('mac')) return `<svg class="br-icon" viewBox="0 0 384 512" style="fill:var(--ink)"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.3 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.3zM85.3 17.1c26.5 0 41.6 17.2 41.6 42.9 0 2.7-.2 5.4-.7 8.1-27.3.7-49.6-20-49.6-43.3 0-2.2.2-4.4.7-6.6C82 17.6 83.6 17.1 85.3 17.1z"/></svg>`;
-  if(n.includes('spotify')) return `<svg class="br-icon" viewBox="0 0 496 512"><path fill="#1ED760" d="M248 8C111.1 8 0 119.1 0 256s111.1 248 248 248 248-111.1 248-248S384.9 8 248 8zm100.7 364.9c-4.2 0-6.8-1.3-10.7-3.6-62.4-37.6-135-39.2-206.7-24.5-3.9 1-9 2.6-11.9 2.6-9.7 0-15.8-7.7-15.8-15.8 0-10.3 6.1-15.2 13.6-16.8 81.9-18.1 165.6-16.5 237 26.2 6.1 3.9 9.7 7.4 9.7 16.5s-7.1 15.4-15.2 15.4zm26.9-65.6c-5.2 0-8.7-2.3-12.3-4.2-72.5-47-158-52.6-248.8-29.3-5.2 1.3-10.3 2.6-13.9 2.6-12 0-19.4-9.4-19.4-19.4s5.2-17.8 15.5-20.7c102.1-26.2 196.4-19.7 279 32.3 5.5 3.6 9.4 8.7 9.4 17.1-.3 11-10 18.7-20 18.7zm31.6-69.6c-5.8 0-10-2.3-13.9-4.8-82.5-51.5-197.1-59.7-293.5-31-6.8 1.9-12 3.2-16.2 3.2-14.9 0-23.9-12-23.9-23.9 0-14.6 7.4-21.3 19.7-25.2 110.5-32.3 239.7-22.9 335.8 37.2 6.8 4.2 11.6 10 11.6 19.1 0 13.9-11 22.9-24.5 22.9z"/></svg>`;
-  if(n.includes('edf') || n.includes('electricite')) return `<svg class="br-icon" viewBox="0 0 100 100"><path fill="#FF5A00" d="M47 16c-4-7-14 3-10 13 4 9 17 0 10-13zm-16 23c-8-7-20 6-12 14 8 8 23-4 12-14zm5 28c-6 9 8 16 16 11 8-5-4-19-16-11zm29-4c7 8 20-5 13-14-7-8-22 3-13 14zm-3-28c5-9-8-16-16-11-8 6 3 19 16 11z"/><text x="50" y="65" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#001A70" text-anchor="middle">edf</text></svg>`;
-  if(n.includes('snap')) return `<svg class="br-icon" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#FFFC00"/><path fill="#000" d="M75.2 68c-2.4-1.6-6-3.4-10.6-3.9-1.8-.2-2.3-1-1.1-2.4.5-.6 1-1.1 1.5-1.4 2.5-1.9 4.3-3.3 4.3-5.6 0-2.2-1.7-3.6-4-4.5-1.3-.5-3.2-.8-5-.1-1.3-.2-2-.7-1.5-1.8 6.3-13.2 4.2-22.2-2.1-26.1-4.2-2.7-8.9-4.4-14.3-4.4H40c-6.1 0-10.7 1.8-13.1 5.3-2.9 3.9-5 12.9 1.4 26.1.5 1.1-.2 1.6-1.5 1.8-1.8-.2-3.7.3-5 .1-2.3.9-4 2.3-4 4.5 0 2.3 1.8 3.7 4.3 5.6.5.4 1.1.8 1.5 1.4 1.1 1.4.7 2.2-1.1 2.4-4.7.5-8.2 2.3-10.6 3.9-2.6 1.8-3.4 3.1-3.4 3.9 0 .4.2.9.6 1.4.7.9 1.9 1.5 3.3 1.8 1.4.3 3 .3 4.7.3.4 0 .7 0 1-.1.5 0 1 .2 1 .6-.1.7-.3 2.6 3.6 5.7 2.3 1.8 5.4 2.6 8.5 3.2 1.7.3 3.6.7 5.2 1.3 1.3.5 2 1.3 2.2 2.1 0 .3 0 .6.1.8 0 .5.1.9.2 1.3.2.3.6.7 1.5.9 1.7.5 4 .9 7 .9s5.3-.4 7-.9c.9-.3 1.3-.6 1.5-.9.2-.3.2-.8.2-1.3 0-.2.1-.5.1-.8.1-.9.8-1.6 2.2-2.1 1.6-.6 3.5-1 5.2-1.3 3.1-.6 6.2-1.4 8.5-3.2 3.8-3 3.6-5 3.6-5.7 0-.4.5-.6 1-.6.3 0 .7.1 1 .1 1.7 0 3.3 0 4.7-.3 1.4-.3 2.5-.9 3.3-1.8.4-.5.6-1 .6-1.4 0-.8-.8-2.1-3.4-3.9z"/></svg>`;
-  if(n.includes('free')) return `<svg class="br-icon" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#cc0000"/><text x="50" y="65" font-family="Arial, sans-serif" font-weight="bold" font-size="38" fill="#fff" text-anchor="middle">free</text></svg>`;
-  if(n.includes('velov') || n.includes('vélo')) return `<svg class="br-icon" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#E32322"/><text x="50" y="60" font-family="Arial, sans-serif" font-weight="bold" font-style="italic" font-size="28" fill="#fff" text-anchor="middle">vélo'v</text></svg>`;
-  if(n.includes('tcl')) return `<svg class="br-icon" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#E3051B"/><text x="50" y="66" font-family="Arial, sans-serif" font-weight="bold" font-size="36" fill="#fff" text-anchor="middle">TCL</text></svg>`;
-  if(n.includes('credit agricole') || n.includes('crédit agricole') || n.includes('banque')) return `<svg class="br-icon" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#007D8F"/><text x="50" y="68" font-family="Arial, sans-serif" font-weight="bold" font-size="42" fill="#fff" text-anchor="middle">CA</text></svg>`;
+  if(n.includes('apple') || n.includes('icloud') || n.includes('mac')) return `<svg viewBox="0 0 384 512" style="fill:var(--ink)"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.3 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.3zM85.3 17.1c26.5 0 41.6 17.2 41.6 42.9 0 2.7-.2 5.4-.7 8.1-27.3.7-49.6-20-49.6-43.3 0-2.2.2-4.4.7-6.6C82 17.6 83.6 17.1 85.3 17.1z"/></svg>`;
+  if(n.includes('spotify')) return `<svg viewBox="0 0 496 512"><path fill="#1ED760" d="M248 8C111.1 8 0 119.1 0 256s111.1 248 248 248 248-111.1 248-248S384.9 8 248 8zm100.7 364.9c-4.2 0-6.8-1.3-10.7-3.6-62.4-37.6-135-39.2-206.7-24.5-3.9 1-9 2.6-11.9 2.6-9.7 0-15.8-7.7-15.8-15.8 0-10.3 6.1-15.2 13.6-16.8 81.9-18.1 165.6-16.5 237 26.2 6.1 3.9 9.7 7.4 9.7 16.5s-7.1 15.4-15.2 15.4zm26.9-65.6c-5.2 0-8.7-2.3-12.3-4.2-72.5-47-158-52.6-248.8-29.3-5.2 1.3-10.3 2.6-13.9 2.6-12 0-19.4-9.4-19.4-19.4s5.2-17.8 15.5-20.7c102.1-26.2 196.4-19.7 279 32.3 5.5 3.6 9.4 8.7 9.4 17.1-.3 11-10 18.7-20 18.7zm31.6-69.6c-5.8 0-10-2.3-13.9-4.8-82.5-51.5-197.1-59.7-293.5-31-6.8 1.9-12 3.2-16.2 3.2-14.9 0-23.9-12-23.9-23.9 0-14.6 7.4-21.3 19.7-25.2 110.5-32.3 239.7-22.9 335.8 37.2 6.8 4.2 11.6 10 11.6 19.1 0 13.9-11 22.9-24.5 22.9z"/></svg>`;
+  if(n.includes('edf') || n.includes('electricite')) return `<svg viewBox="0 0 100 100"><path fill="#FF5A00" d="M47 16c-4-7-14 3-10 13 4 9 17 0 10-13zm-16 23c-8-7-20 6-12 14 8 8 23-4 12-14zm5 28c-6 9 8 16 16 11 8-5-4-19-16-11zm29-4c7 8 20-5 13-14-7-8-22 3-13 14zm-3-28c5-9-8-16-16-11-8 6 3 19 16 11z"/><text x="50" y="65" font-family="Arial, sans-serif" font-weight="900" font-size="42" fill="#001A70" text-anchor="middle">edf</text></svg>`;
+  if(n.includes('snap')) return `<svg viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#FFFC00"/><path fill="#000" d="M75.2 68c-2.4-1.6-6-3.4-10.6-3.9-1.8-.2-2.3-1-1.1-2.4.5-.6 1-1.1 1.5-1.4 2.5-1.9 4.3-3.3 4.3-5.6 0-2.2-1.7-3.6-4-4.5-1.3-.5-3.2-.8-5-.1-1.3-.2-2-.7-1.5-1.8 6.3-13.2 4.2-22.2-2.1-26.1-4.2-2.7-8.9-4.4-14.3-4.4H40c-6.1 0-10.7 1.8-13.1 5.3-2.9 3.9-5 12.9 1.4 26.1.5 1.1-.2 1.6-1.5 1.8-1.8-.2-3.7.3-5 .1-2.3.9-4 2.3-4 4.5 0 2.3 1.8 3.7 4.3 5.6.5.4 1.1.8 1.5 1.4 1.1 1.4.7 2.2-1.1 2.4-4.7.5-8.2 2.3-10.6 3.9-2.6 1.8-3.4 3.1-3.4 3.9 0 .4.2.9.6 1.4.7.9 1.9 1.5 3.3 1.8 1.4.3 3 .3 4.7.3.4 0 .7 0 1-.1.5 0 1 .2 1 .6-.1.7-.3 2.6 3.6 5.7 2.3 1.8 5.4 2.6 8.5 3.2 1.7.3 3.6.7 5.2 1.3 1.3.5 2 1.3 2.2 2.1 0 .3 0 .6.1.8 0 .5.1.9.2 1.3.2.3.6.7 1.5.9 1.7.5 4 .9 7 .9s5.3-.4 7-.9c.9-.3 1.3-.6 1.5-.9.2-.3.2-.8.2-1.3 0-.2.1-.5.1-.8.1-.9.8-1.6 2.2-2.1 1.6-.6 3.5-1 5.2-1.3 3.1-.6 6.2-1.4 8.5-3.2 3.8-3 3.6-5 3.6-5.7 0-.4.5-.6 1-.6.3 0 .7.1 1 .1 1.7 0 3.3 0 4.7-.3 1.4-.3 2.5-.9 3.3-1.8.4-.5.6-1 .6-1.4 0-.8-.8-2.1-3.4-3.9z"/></svg>`;
+  if(n.includes('free')) return `<svg viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#cc0000"/><text x="50" y="65" font-family="Arial, sans-serif" font-weight="bold" font-size="38" fill="#fff" text-anchor="middle">free</text></svg>`;
+  if(n.includes('velov') || n.includes('vélo')) return `<svg viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#E32322"/><text x="50" y="60" font-family="Arial, sans-serif" font-weight="bold" font-style="italic" font-size="28" fill="#fff" text-anchor="middle">vélo'v</text></svg>`;
+  if(n.includes('tcl')) return `<svg viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#E3051B"/><text x="50" y="66" font-family="Arial, sans-serif" font-weight="bold" font-size="36" fill="#fff" text-anchor="middle">TCL</text></svg>`;
+  if(n.includes('credit agricole') || n.includes('crédit agricole') || n.includes('banque')) return `<svg viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#007D8F"/><text x="50" y="68" font-family="Arial, sans-serif" font-weight="bold" font-size="42" fill="#fff" text-anchor="middle">CA</text></svg>`;
   return null;
 }
 
 function render(){
   const k=mkey(cur),m=month(k),c=calc(m, k);
   
-  // Affichage de la date du jour en haut
   const dOpts = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
   let dateStr = new Date().toLocaleDateString('fr-FR', dOpts);
   dateStr = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
@@ -630,7 +627,6 @@ function render(){
 
   if(document.activeElement!==$('saving'))$('saving').value=m.savingGoal??'';
   
-  // Gestion automatique du Solde Initial
   const keys = Object.keys(S.months).sort();
   const isFirstMonth = keys[0] === k;
   
@@ -649,7 +645,6 @@ function render(){
 
   const today = new Date(); today.setHours(0,0,0,0);
   const yr = cur.getFullYear(), mo = cur.getMonth();
-  let sDay = new Date(yr, mo, 1).getDay() - 1; if(sDay < 0) sDay = 6; 
   const dInM = new Date(yr, mo + 1, 0).getDate();
   const icons = {'Logement':'🏠','Énergie':'⚡','Assurance':'🛡️','Abonnement':'📱','Banque':'🏦','Alimentation':'🛒','Transport':'🚗','Santé':'💊','Loisirs':'🎬','Autre':'🏷️'};
   
@@ -663,52 +658,88 @@ function render(){
     eByD[d].push(e);
   });
 
-  let cal = `<div class="sh" style="margin-bottom:10px"><h2>📅 Échéancier (Charges fixes)</h2><div class="r" style="gap:12px">
-  <div class="tot ok" style="padding:6px 12px;margin:0;font-size:.85rem;min-width:130px;justify-content:center">Payé: <strong style="margin-left:4px">${eur(c.fixPaid)}</strong></div>
-  <div class="tot due" style="padding:6px 12px;margin:0;font-size:.85rem;min-width:130px;justify-content:center">À payer: <strong style="margin-left:4px">${eur(c.fixAll-c.fixPaid)}</strong></div>
-  </div></div><div class="cal-wrap"><table class="cal"><thead><tr><th>Lun</th><th>Mar</th><th>Mer</th><th>Jeu</th><th>Ven</th><th>Sam</th><th>Dim</th></tr></thead><tbody><tr>`;
+  // Calcul du pourcentage d'avancement des charges fixes
+  const pctFixes = c.fixAll > 0 ? (c.fixPaid / c.fixAll * 100) : 0;
   
-  let dC = 1;
-  for (let i = 0; i < 42; i++) {
-    if (i >= sDay && dC <= dInM) {
-      const isT = (yr === today.getFullYear() && mo === today.getMonth() && dC === today.getDate());
-      const isWE = (i % 7 === 5 || i % 7 === 6);
-      let classes = [];
-      if(isT) classes.push('today');
-      if(isWE) classes.push('we');
+  // NOUVEL ÉCHÉANCIER (TIMELINE)
+  let tl = `<div class="sh" style="margin-bottom:10px">
+    <h2>📅 Échéancier (Charges fixes)</h2>
+    <div class="r" style="gap:12px">
+      <div class="tot ok" style="padding:6px 12px;margin:0;font-size:.85rem;min-width:130px;justify-content:center">Payé: <strong style="margin-left:4px">${eur(c.fixPaid)}</strong></div>
+      <div class="tot due" style="padding:6px 12px;margin:0;font-size:.85rem;min-width:130px;justify-content:center;background:#fff7ed;color:#c2410c;">À payer: <strong style="margin-left:4px">${eur(c.fixAll-c.fixPaid)}</strong></div>
+    </div>
+  </div>
+  <div style="background:var(--line); height:6px; border-radius:3px; overflow:hidden; margin-bottom:16px;" title="${pctFixes.toFixed(0)}% des charges fixes payées">
+    <div style="background:var(--ok); height:100%; width:${pctFixes}%; transition: width 0.3s ease;"></div>
+  </div>
+  <div class="tl-wrap" id="tl-scroll">`;
 
-      cal += `<td class="${classes.join(' ')}" data-day="${dC}" title="Cliquer pour ajouter une dépense ce jour">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
-                  <div class="cal-d">${dC}</div>`;
-      
-      if (eByD[dC]) {
-        const daySum = eByD[dC].reduce((acc, e) => acc + eff(e), 0);
-        if (daySum > 0) cal += `<div style="font-size:.65rem; font-weight:700; color:var(--mute); padding-top:4px;">${eur(daySum)}</div>`;
-      }
-      cal += `</div><div class="cal-i">`;
-      if (eByD[dC]) {
-        eByD[dC].forEach(e => {
-          const brandSvg = getBrandIcon(e.name);
-          const iconHTML = brandSvg ? brandSvg : icons[e.cat] || '🏷️';
-          const st = e.status === 'Payé' ? 'ok' : 'pend';
-          cal += `<div class="cal-itm ${st}" data-a="toggle-st" data-id="${e.id}" title="${esc(e.name)} : ${eur(eff(e))} (Clic pour marquer comme payé/prévu)">
-                    ${iconHTML} <span>${esc(e.name)} • <b>${eur(eff(e))}</b></span>
-                  </div>`;
-        });
-      }
-      cal += `</div></td>`;
-      dC++;
-    } else {
-      cal += `<td class="empty"></td>`;
-    }
-    if ((i + 1) % 7 === 0) {
-      cal += '</tr>';
-      if (dC > dInM) break;
-      cal += '<tr>';
-    }
+  const currentViewDate = new Date(yr, mo, 1);
+  const isCurrentMonth = (yr === today.getFullYear() && mo === today.getMonth());
+  const tDay = today.getDate();
+  
+  // Déterminer quels jours afficher (jours avec prélèvements + aujourd'hui si on est dans le mois en cours)
+  const daysToRender = new Set(Object.keys(eByD).map(Number));
+  if (isCurrentMonth) daysToRender.add(tDay);
+  const sortedDays = Array.from(daysToRender).sort((a,b) => a - b);
+
+  if (sortedDays.length === 0) {
+      tl += `<div style="text-align:center; width:100%; color:var(--mute); padding: 20px;">Aucune charge fixe prévue ce mois-ci.</div>`;
   }
-  cal += '</tbody></table></div>';
-  $('trk').innerHTML = cal;
+
+  sortedDays.forEach(d => {
+      const isT = (isCurrentMonth && d === tDay);
+      const dateObj = new Date(yr, mo, d);
+      const dayName = dateObj.toLocaleDateString('fr-FR', { weekday: 'short' });
+      
+      tl += `<div class="tl-day ${isT ? 'today' : ''}" ${isT ? 'id="tl-today"' : ''}>
+              <div class="tl-head">${dayName.charAt(0).toUpperCase() + dayName.slice(1)} ${d}</div>`;
+      
+      if (eByD[d]) {
+          eByD[d].forEach(e => {
+              let stClass = '';
+              if (e.status === 'Payé') {
+                  stClass = 'ok'; // Vert
+              } else {
+                  if (isCurrentMonth) {
+                      stClass = d < tDay ? 'bad' : 'warn'; // Rouge si passé/ajd, Orange si futur
+                  } else if (currentViewDate < today) {
+                      stClass = 'bad'; // Mois passé
+                  } else {
+                      stClass = 'warn'; // Mois futur
+                  }
+              }
+              
+              const brandSvg = getBrandIcon(e.name);
+              const iconHTML = brandSvg ? brandSvg : icons[e.cat] || '🏷️';
+              
+              tl += `<div class="tl-itm ${stClass}" data-a="toggle-st" data-id="${e.id}" title="${esc(e.name)} : ${eur(eff(e))} (Clic pour marquer comme payé/prévu)">
+                      <div class="tl-ico">${iconHTML}</div>
+                      <div class="tl-name">${esc(e.name)}</div>
+                      <div class="tl-amt">${eur(eff(e))}</div>
+                    </div>`;
+          });
+      } else if (isT) {
+          tl += `<div style="font-size:0.75rem; color:var(--mute); text-align:center; padding:20px 10px; font-style:italic; border: 1px dashed var(--line); border-radius: 12px;">Rien à payer<br>aujourd'hui</div>`;
+      }
+      tl += `</div>`;
+  });
+  
+  tl += `</div>`;
+  $('trk').innerHTML = tl;
+
+  // Défilement automatique intelligent (Focus sur aujourd'hui ou le prochain prélèvement)
+  setTimeout(() => {
+      const scrollBox = $('tl-scroll');
+      if(!scrollBox) return;
+      let target = $('tl-today') || scrollBox.querySelector('.tl-itm.warn')?.closest('.tl-day') || scrollBox.querySelector('.tl-itm.bad')?.closest('.tl-day');
+      if (target) {
+          scrollBox.scrollTo({
+              left: target.offsetLeft - (scrollBox.clientWidth / 2) + (target.clientWidth / 2),
+              behavior: 'smooth'
+          });
+      }
+  }, 100);
 
   const q=$('q').value.trim().toLowerCase();
   const rows=m.expenses.filter(e=>!(hideFix&&e.isFixed)&&(!q||(e.name+' '+e.cat).toLowerCase().includes(q))&&(flt==='all'||(flt==='todo'&&e.status!=='Payé')||(flt==='paid'&&e.status==='Payé')||(flt==='var'&&!e.isFixed)));
@@ -936,7 +967,10 @@ function sortBy(k){SK.d=SK.k===k?-SK.d:1;SK.k=k;
 document.addEventListener('click',ev=>{
   const b=ev.target.closest('[data-a="add"],[data-a="fab-add"]');
   if(b&&(b.dataset.a==='fab-add'||b.dataset.t!=='budgets')){ev.stopPropagation();return openAdd(null,b.dataset.t==='incomes'?'incomes':'expenses')}
-  const td=ev.target.closest('td[data-day]');if(td&&!ev.target.closest('.cal-itm'))openAdd(td.dataset.day);
+  const td=ev.target.closest('.tl-day');if(td&&!ev.target.closest('.tl-itm')){
+      const dayTxt=td.querySelector('.tl-head').textContent.match(/\d+/);
+      if(dayTxt) openAdd(dayTxt[0]);
+  }
   const th=ev.target.closest('th[data-sort]');if(th)sortBy(th.dataset.sort)},true);
 
 function enhance(){
