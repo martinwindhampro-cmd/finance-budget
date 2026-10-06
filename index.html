@@ -121,7 +121,7 @@ h1{font-size:1.25rem;font-weight:800}header small{color:var(--acc);font-weight:7
 .tl-name { font-size: 0.8rem; font-weight: 700; color: var(--ink); line-height: 1.2; word-break: break-word; }
 .tl-amt { font-size: 1rem; font-weight: 800; margin-top: auto; }
 .tl-itm.ok .tl-amt { color: var(--ok); }
-.tl-itm.warn .tl-amt { color: #d97706; } /* Orange ajusté pour lisibilité */
+.tl-itm.warn .tl-amt { color: #d97706; }
 .tl-itm.bad .tl-amt { color: var(--bad); }
 
 .pb{height:9px;background:var(--line);border-radius:6px;overflow:hidden;flex:1}.pb i{display:block;height:100%;transition:width .25s}
@@ -203,7 +203,8 @@ tfoot td{font-weight:800;border-top:2px solid var(--line);padding:10px 8px;backg
 .seg button i{font-style:normal;font-size:.7rem;background:var(--line);border-radius:999px;padding:0 6px}
 .seg button.on{background:var(--card);color:var(--acc);box-shadow:0 1px 3px rgba(15,23,42,.15)}
 .pill{border:1px solid var(--line);background:var(--hov);color:var(--mid);border-radius:999px;padding:5px 12px;font-weight:700;font-size:.78rem;cursor:pointer;white-space:nowrap}
-.pill:hover{border-color:var(--mute)}.pill.ok{background:rgba(5,150,105,.13);border-color:rgba(5,150,105,.4);color:var(--ok)}
+.pill:hover:not(:disabled){border-color:var(--mute)}.pill.ok{background:rgba(5,150,105,.13);border-color:rgba(5,150,105,.4);color:var(--ok)}
+.pill:disabled{opacity:.5;cursor:not-allowed;background:transparent}
 th.s{user-select:none}td:last-child{white-space:nowrap;text-align:right}.x{width:30px;height:30px}.x[data-a=dup]:hover{background:var(--line);color:var(--ink)}
 tr{transition:background .15s}
 .ins{display:flex;gap:10px;flex-wrap:wrap}.ins span{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:.82rem;color:var(--mid)}
@@ -304,7 +305,7 @@ dialog::backdrop{background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
     <button class="btn" data-a="sort" data-t="expenses">Trier par date</button>
     <button class="btn p" data-a="add" data-t="expenses">+ Dépense</button></div></div>
   <div class="seg" id="seg"><button data-a="flt" data-v="all">Toutes <i></i></button><button data-a="flt" data-v="todo">À payer <i></i></button><button data-a="flt" data-v="paid">Payées <i></i></button><button data-a="flt" data-v="var">Variables <i></i></button></div>
-  <div class="tw"><table><thead><tr><th class="s" data-sort="date">Jour</th><th>Type</th><th class="s" data-sort="cat" style="width:22%">Catégorie</th><th class="s" data-sort="name" style="width:30%">Libellé</th><th class="s" data-sort="amount">Montant</th><th class="s" data-sort="status">Statut</th><th></th></tr></thead><tbody id="tb-expenses"></tbody></table></div>
+  <div class="tw"><table><thead><tr><th class="s" data-sort="date">Jour</th><th>Type</th><th class="s" data-sort="cat" style="width:22%">Catégorie</th><th class="s" data-sort="name" style="width:30%">Libellé</th><th class="s" data-sort="amount">Montant</th><th class="s" data-sort="status">Statut</th><th class="s" data-sort="cleared">Banque</th><th></th></tr></thead><tbody id="tb-expenses"></tbody></table></div>
   <div class="tsum" id="tsum"></div>
   <div class="sec" style="margin-top:26px"><div class="sh"><h2>Répartition par catégorie</h2></div>
     <div class="tw"><table class="ct"><thead><tr><th>Catégorie</th><th style="text-align:right">Fixes payées</th><th style="text-align:right">Variables</th><th style="text-align:right">Total</th><th style="text-align:center">Évol. M-1</th><th style="width:25%">Part des dépenses</th></tr></thead><tbody id="tb-cat"></tbody><tfoot id="tf-cat"></tfoot></table></div>
@@ -313,7 +314,7 @@ dialog::backdrop{background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
 
 <div id="pane-recettes" class="pane card">
   <div class="sh"><h2>Entrées d'argent</h2><div class="r"><button class="btn" data-a="sort" data-t="incomes">Trier par date</button><button class="btn p" data-a="add" data-t="incomes">+ Recette</button></div></div>
-  <div class="tw"><table><thead><tr><th>Jour</th><th>Type</th><th style="width:45%">Libellé</th><th>Montant</th><th>Statut</th><th></th></tr></thead><tbody id="tb-incomes"></tbody></table></div>
+  <div class="tw"><table><thead><tr><th>Jour</th><th>Type</th><th style="width:45%">Libellé</th><th>Montant</th><th>Statut</th><th class="s" data-sort="cleared">Banque</th><th></th></tr></thead><tbody id="tb-incomes"></tbody></table></div>
 </div>
 
 <div id="pane-budgets" class="pane card">
@@ -342,7 +343,7 @@ dialog::backdrop{background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
           <h3 style="margin-bottom:12px; font-size:1rem;">Sauvegarde & Restauration</h3>
           <p style="font-size:0.8rem; color:var(--mute); margin-bottom:16px;">Exportez vos données pour les conserver ou les réimporter plus tard.</p>
           <button class="btn" style="width:100%; margin-bottom:8px;" data-a="export">⬇ Exporter au format JSON</button>
-          <button class="btn" style="width:100%; margin-bottom:8px;" data-a="import">⬆️️ Importer un JSON</button>
+          <button class="btn" style="width:100%; margin-bottom:8px;" data-a="import">⬆ Importer un JSON</button>
           <input type="file" id="file" accept=".json,application/json" hidden>
           <button class="btn" style="width:100%; color:var(--warn); border-color:var(--warn);" data-a="reset">⚠ Réinitialiser le budget à zéro</button>
       </div>
@@ -469,7 +470,7 @@ function normalize(s){
   ['expenses','incomes','budgets'].forEach(k=>s.templates[k]=s.templates[k]||[]);
   const fix=e=>{const had=/ \(Divisé par 2\)/.test(e.name||'');
     if(e.isDivided&&had)e.amount=e.originalAmount!=null?num(e.originalAmount):num(e.amount)*2;
-    e.name=(e.name||'').replace(' (Divisé par 2)','');e.isDivided=!!e.isDivided;e.date=day(e.date);e.amount=num(e.amount);delete e.originalAmount;delete e.hasReceipt};
+    e.name=(e.name||'').replace(' (Divisé par 2)','');e.isDivided=!!e.isDivided;e.date=day(e.date);e.amount=num(e.amount);e.isCleared=!!e.isCleared;delete e.originalAmount;delete e.hasReceipt};
   Object.values(s.templates).forEach(a=>a.forEach(t=>{t.tmplId=t.tmplId||uid();fix(t)}));
   s.months=s.months||{};
   Object.values(s.months).forEach(m=>{
@@ -533,8 +534,8 @@ const monthsFrom=k=>Object.keys(S.months).filter(x=>x>=k);
 function month(k=mkey(cur)){
   if(!S.months[k]){const c=a=>JSON.parse(JSON.stringify(a));
     S.months[k]={bankBalance:null, savingGoal:null,
-      expenses:c(S.templates.expenses).map(e=>({...e,id:uid(),status:'Prévu',isFixed:true})),
-      incomes:c(S.templates.incomes).map(i=>({...i,id:uid(),status:'En attente',isFixed:true})),
+      expenses:c(S.templates.expenses).map(e=>({...e,id:uid(),status:'Prévu',isFixed:true,isCleared:false})),
+      incomes:c(S.templates.incomes).map(i=>({...i,id:uid(),status:'En attente',isFixed:true,isCleared:false})),
       budgets:c(S.templates.budgets).map(b=>({...b,id:uid()}))};save()}
   return S.months[k];
 }
@@ -565,7 +566,9 @@ function calc(m, key){
   const ex=m.expenses,inc=m.incomes,fx=ex.filter(e=>e.isFixed);
   const r={
     incAll:sum(inc), incIn:sum(inc.filter(i=>i.status==='Reçu')), incWait:sum(inc.filter(i=>i.status!=='Reçu')),
+    incCleared:sum(inc.filter(i=>i.status==='Reçu'&&i.isCleared)),
     outAll:sum(ex,eff), outPaid:sum(ex.filter(e=>e.status==='Payé'),eff), outPlan:sum(ex.filter(e=>e.status!=='Payé'),eff),
+    outCleared:sum(ex.filter(e=>e.status==='Payé'&&e.isCleared),eff),
     fixAll:sum(fx,eff), fixPaid:sum(fx.filter(e=>e.status==='Payé'),eff), budAll:sum(m.budgets)
   };
   r.varAll=sum(ex.filter(e=>!e.isFixed),eff);
@@ -573,7 +576,8 @@ function calc(m, key){
   r.totSpent=r.fixPaid+r.varAll;
   r.saving=num(m.savingGoal);
   r.computedInitBal = getChainBalance(key);
-  r.currentBalance = r.computedInitBal + r.incIn - r.outPaid;
+  r.currentBalance = r.computedInitBal + r.incIn - r.outPaid; // Virtual balance for internal use
+  r.realBankBalance = r.computedInitBal + r.incCleared - r.outCleared; // True bank balance
   r.est = r.computedInitBal + r.incAll - (r.fixAll + r.varAll + r.budLeft + r.saving); 
   return r;
 }
@@ -621,9 +625,13 @@ function render(){
   $('k-in').textContent = eur(c.incIn);$('k-in-s').textContent = 'sur ' + eur(c.incAll) + ' prévus';
   $('k-out').textContent = eur(c.outPaid);$('k-out-s').textContent = 'sur ' + eur(c.outAll) + ' engagés';
   $('k-plan').textContent = eur(c.outPlan);$('k-plan-s').textContent = 'dépenses prévues en attente';
-  $('k-bal').textContent = eur(c.currentBalance);
-  $('k-bal').style.color = c.currentBalance < 0 ? 'var(--bad)' : (c.currentBalance > 0 ? 'var(--ok)' : 'var(--ink)');
-  $('k-bal-s').textContent = 'solde calculé en temps réel';
+  
+  // NOUVEAU SOLDE : On utilise le Solde Réel Pointé avec la Banque
+  $('k-bal').textContent = eur(c.realBankBalance);
+  $('k-bal').style.color = c.realBankBalance < 0 ? 'var(--bad)' : (c.realBankBalance > 0 ? 'var(--ok)' : 'var(--ink)');
+  
+  const unCleared = (c.incIn - c.incCleared) - (c.outPaid - c.outCleared);
+  $('k-bal-s').innerHTML = unCleared !== 0 ? `Pointé (Diff. en attente: <b>${eur(unCleared)}</b>)` : 'Solde pointé et synchronisé';
 
   if(document.activeElement!==$('saving'))$('saving').value=m.savingGoal??'';
   
@@ -658,10 +666,8 @@ function render(){
     eByD[d].push(e);
   });
 
-  // Calcul du pourcentage d'avancement des charges fixes
   const pctFixes = c.fixAll > 0 ? (c.fixPaid / c.fixAll * 100) : 0;
   
-  // NOUVEL ÉCHÉANCIER (TIMELINE)
   let tl = `<div class="sh" style="margin-bottom:10px">
     <h2>📅 Échéancier (Charges fixes)</h2>
     <div class="r" style="gap:12px">
@@ -678,7 +684,6 @@ function render(){
   const isCurrentMonth = (yr === today.getFullYear() && mo === today.getMonth());
   const tDay = today.getDate();
   
-  // Déterminer quels jours afficher (jours avec prélèvements + aujourd'hui si on est dans le mois en cours)
   const daysToRender = new Set(Object.keys(eByD).map(Number));
   if (isCurrentMonth) daysToRender.add(tDay);
   const sortedDays = Array.from(daysToRender).sort((a,b) => a - b);
@@ -699,14 +704,14 @@ function render(){
           eByD[d].forEach(e => {
               let stClass = '';
               if (e.status === 'Payé') {
-                  stClass = 'ok'; // Vert
+                  stClass = 'ok';
               } else {
                   if (isCurrentMonth) {
-                      stClass = d < tDay ? 'bad' : 'warn'; // Rouge si passé/ajd, Orange si futur
+                      stClass = d < tDay ? 'bad' : 'warn';
                   } else if (currentViewDate < today) {
-                      stClass = 'bad'; // Mois passé
+                      stClass = 'bad';
                   } else {
-                      stClass = 'warn'; // Mois futur
+                      stClass = 'warn';
                   }
               }
               
@@ -728,7 +733,6 @@ function render(){
   tl += `</div>`;
   $('trk').innerHTML = tl;
 
-  // Défilement automatique intelligent (Focus sur aujourd'hui ou le prochain prélèvement)
   setTimeout(() => {
       const scrollBox = $('tl-scroll');
       if(!scrollBox) return;
@@ -750,7 +754,8 @@ function render(){
 <td data-label="Libellé"><input data-f="name" value="${esc(e.name)}" placeholder="Libellé" ${d} aria-label="Libellé"></td>
 <td data-label="Montant"><div class="amt"><input type="number" step="0.01" min="0" data-f="amount" value="${num(e.amount)}" ${d} aria-label="Montant"><button class="half ${e.isDivided?'on':''}" data-a="half" ${L?'disabled':''} title="Ne compter que ma moitié">½</button></div>${e.isDivided?`<small>Ma part : ${eur(eff(e))}</small>`:''}</td>
 <td data-label="Statut"><button class="pill ${e.status==='Payé'?'ok':''}" data-a="tst" aria-label="Changer le statut">${e.status==='Payé'?'✓ Payé':'○ Prévu'}</button></td>
-<td data-label="Action">${L?'':'<button class="x" data-a="dup" title="Dupliquer" aria-label="Dupliquer">⧉</button><button class="x" data-a="del" title="Supprimer" aria-label="Supprimer">✕</button>'}</td></tr>`}).join('')||`<tr><td colspan="7" class="empty">${m.expenses.length?'Aucun résultat.':'Aucune dépense. Ajoutez-en une ou créez des charges fixes dans Modèles.'}</td></tr>`;
+<td data-label="Banque"><button class="pill ${e.isCleared?'ok':''}" data-a="tclear" ${e.status!=='Payé'?'disabled':''} aria-label="Pointer l'opération">🏦 ${e.isCleared?'Pointé':'À pointer'}</button></td>
+<td data-label="Action">${L?'':'<button class="x" data-a="dup" title="Dupliquer" aria-label="Dupliquer">⧉</button><button class="x" data-a="del" title="Supprimer" aria-label="Supprimer">✕</button>'}</td></tr>`}).join('')||`<tr><td colspan="8" class="empty">${m.expenses.length?'Aucun résultat.':'Aucune dépense. Ajoutez-en une ou créez des charges fixes dans Modèles.'}</td></tr>`;
 
   $('tb-incomes').innerHTML=m.incomes.map(i=>{const L=i.isFixed,d=L?'disabled':'';return `<tr data-t="incomes" data-id="${i.id}">
 <td data-label="Jour"><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(i.date)}" ${d} aria-label="Jour"></td>
@@ -758,7 +763,8 @@ function render(){
 <td data-label="Libellé"><input data-f="name" value="${esc(i.name)}" placeholder="Libellé" ${d} aria-label="Libellé"></td>
 <td data-label="Montant"><input type="number" step="0.01" min="0" data-f="amount" value="${num(i.amount)}" ${d} aria-label="Montant"></td>
 <td data-label="Statut"><button class="pill ${i.status==='Reçu'?'ok':''}" data-a="tst" aria-label="Changer le statut">${i.status==='Reçu'?'✓ Reçu':'○ En attente'}</button></td>
-<td data-label="Action">${L?'':'<button class="x" data-a="dup" title="Dupliquer" aria-label="Dupliquer">⧉</button><button class="x" data-a="del" title="Supprimer" aria-label="Supprimer">✕</button>'}</td></tr>`}).join('')||'<tr><td colspan="6" class="empty">Aucune recette. Ajoutez un salaire dans Modèles pour le retrouver chaque mois.</td></tr>';
+<td data-label="Banque"><button class="pill ${i.isCleared?'ok':''}" data-a="tclear" ${i.status!=='Reçu'?'disabled':''} aria-label="Pointer l'opération">🏦 ${i.isCleared?'Pointé':'À pointer'}</button></td>
+<td data-label="Action">${L?'':'<button class="x" data-a="dup" title="Dupliquer" aria-label="Dupliquer">⧉</button><button class="x" data-a="del" title="Supprimer" aria-label="Supprimer">✕</button>'}</td></tr>`}).join('')||'<tr><td colspan="7" class="empty">Aucune recette. Ajoutez un salaire dans Modèles pour le retrouver chaque mois.</td></tr>';
 
   $('chips').innerHTML=m.budgets.map(b=>{const r=num(b.amount)-vspent(m,b.cat);return `<span class="chip ${r<0?'b':r<num(b.amount)*.15?'w':''}">${esc(b.cat)} : ${r<0?'dépassé de '+eur(-r):'reste '+eur(r)}</span>`}).join('');
   $('tsum').innerHTML=`<div><span>Charges fixes payées</span><strong>${eur(c.fixPaid)}</strong></div><div><span>+ Charges variables ajoutées</span><strong>${eur(c.varAll)}</strong></div><div class="big"><span>= Total des dépenses</span><strong>${eur(c.totSpent)}</strong></div>`;
@@ -879,21 +885,36 @@ document.addEventListener('click',ev=>{
     case'today':cur=new Date();cur.setDate(1);break;
     case'hidefix':hideFix=!hideFix;break;
     case'flt':flt=b.dataset.v;break;
-    case'tst':{const e=rec();e.status=t==='incomes'?(e.status==='Reçu'?'En attente':'Reçu'):(e.status==='Payé'?'Prévu':'Payé');toast(e.status);break}
-    case'dup':{const e=rec();m[t].splice(m[t].indexOf(e)+1,0,{...e,id:uid(),status:t==='incomes'?'En attente':'Prévu'});toast('Dupliqué');break}
+    case'tst':{
+      const e=rec();
+      e.status=t==='incomes'?(e.status==='Reçu'?'En attente':'Reçu'):(e.status==='Payé'?'Prévu':'Payé');
+      if(e.status!=='Payé' && e.status!=='Reçu') e.isCleared = false; // Désactiver le pointage si repassé en prévu
+      toast(e.status);
+      break;
+    }
+    case'tclear':{
+      const e=rec();
+      if(t==='incomes' && e.status!=='Reçu') return toast('L\'opération doit être "Reçue" d\'abord');
+      if(t==='expenses' && e.status!=='Payé') return toast('L\'opération doit être "Payée" d\'abord');
+      e.isCleared = !e.isCleared;
+      toast(e.isCleared ? 'Opération pointée avec la banque' : 'Pointage annulé');
+      break;
+    }
+    case'dup':{const e=rec();m[t].splice(m[t].indexOf(e)+1,0,{...e,id:uid(),status:t==='incomes'?'En attente':'Prévu',isCleared:false});toast('Dupliqué');break}
     case'sort':m[t].sort(byDay);break;
     case'fab-add':tab('depenses');document.querySelector('[data-a="add"][data-t="expenses"]').click();window.scrollTo(0,0);return;
     case'toggle-st':{
       const e = m.expenses.find(x => x.id === b.dataset.id);
       if (e) {
           e.status = e.status === 'Payé' ? 'Prévu' : 'Payé';
+          if(e.status !== 'Payé') e.isCleared = false;
           toast(e.status === 'Payé' ? 'Facture réglée ✅' : 'Facture en attente ⏳');
       }
       break;
     }
     case'add':
-      if(t==='expenses')m.expenses.unshift({id:uid(),date:'',cat:S.categories[0]||'Autre',name:'',amount:0,status:'Prévu',isFixed:false,isDivided:false});
-      if(t==='incomes')m.incomes.unshift({id:uid(),date:'',name:'',amount:0,status:'En attente',isFixed:false});
+      if(t==='expenses')m.expenses.unshift({id:uid(),date:'',cat:S.categories[0]||'Autre',name:'',amount:0,status:'Prévu',isFixed:false,isDivided:false,isCleared:false});
+      if(t==='incomes')m.incomes.unshift({id:uid(),date:'',name:'',amount:0,status:'En attente',isFixed:false,isCleared:false});
       if(t==='budgets')m.budgets.unshift({id:uid(),tmplId:uid(),cat:S.categories[0]||'Autre',amount:0});break;
     case'del':{const i=m[t].indexOf(rec());m[t].splice(i,1);toast('Supprimé');break}
     case'half':{const e=rec();e.isDivided=!e.isDivided;break}
@@ -902,7 +923,7 @@ document.addEventListener('click',ev=>{
       if(t==='expenses')Object.assign(n,{date:'',cat:S.categories[0]||'Autre',name:'Nouvelle charge fixe',isDivided:false});
       if(t==='incomes')Object.assign(n,{date:'',name:'Nouvelle recette fixe'});
       if(t==='budgets')n.cat=S.categories[0]||'Autre';
-      T[t].push(n);monthsFrom(k).forEach(mk=>{const mm=S.months[mk];mm[t].push({...n,id:uid(),...(t==='expenses'?{status:'Prévu',isFixed:true}:t==='incomes'?{status:'En attente',isFixed:true}:{})})});break}
+      T[t].push(n);monthsFrom(k).forEach(mk=>{const mm=S.months[mk];mm[t].push({...n,id:uid(),...(t==='expenses'?{status:'Prévu',isFixed:true,isCleared:false}:t==='incomes'?{status:'En attente',isFixed:true,isCleared:false}:{})})});break}
     case'thalf':{const x=tpl();x.isDivided=!x.isDivided;sync('expenses',x,['isDivided']);break}
     case'tdel':{if(!confirm('Supprimer ce modèle ? Les éléments non réglés seront retirés du mois affiché et des suivants.'))return;
       const ty=tr.dataset.tpl,x=tpl();S.templates[ty]=S.templates[ty].filter(y=>y!==x);
@@ -951,7 +972,7 @@ function openAdd(d,type='expenses'){
 function submit(){
   const a=parseFloat(g('da').value);if(!(a>0)){g('da').focus();return toast('Saisissez un montant')}
   const ex=D.type==='expenses',m=month(),n=g('dn').value.trim();
-  const r={id:uid(),date:day(g('dd').value),name:n||(ex?D.cat:'Recette'),amount:a,status:ex?(D.paid?'Payé':'Prévu'):(D.paid?'Reçu':'En attente'),isFixed:false};
+  const r={id:uid(),date:day(g('dd').value),name:n||(ex?D.cat:'Recette'),amount:a,status:ex?(D.paid?'Payé':'Prévu'):(D.paid?'Reçu':'En attente'),isFixed:false,isCleared:false};
   if(ex)Object.assign(r,{cat:D.cat,isDivided:D.half});
   m[D.type].unshift(r);dlg.close();save();all();tab(ex?'depenses':'recettes');toast((ex?'Dépense':'Recette')+' ajoutée · '+eur(ex?eff(r):a))}
 dlg.addEventListener('click',ev=>{if(ev.target===dlg)return dlg.close();const b=ev.target.closest('button');if(!b)return;
@@ -962,7 +983,7 @@ dlg.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT
 g('dn').addEventListener('input',()=>{const c=getAutoCat(g('dn').value.trim().toLowerCase());if(c&&D.type==='expenses'){D.cat=c;paint()}});
 
 function sortBy(k){SK.d=SK.k===k?-SK.d:1;SK.k=k;
-  const f={date:e=>parseInt(e.date)||99,amount:eff,status:e=>e.status==='Payé'?1:0,cat:e=>e.cat||'',name:e=>(e.name||'').toLowerCase()}[k];
+  const f={date:e=>parseInt(e.date)||99,amount:eff,status:e=>e.status==='Payé'?1:0,cleared:e=>e.isCleared?1:0,cat:e=>e.cat||'',name:e=>(e.name||'').toLowerCase()}[k];
   month().expenses.sort((a,b)=>{const x=f(a),y=f(b);return(x>y?1:x<y?-1:0)*SK.d});save();render()}
 document.addEventListener('click',ev=>{
   const b=ev.target.closest('[data-a="add"],[data-a="fab-add"]');
