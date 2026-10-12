@@ -679,6 +679,8 @@ function saveUser() {
   userSaveTimer = setTimeout(() => { userSaveTimer = null; userDoc().set({ savAcc: U.savAcc, savings: U.savings, savIncl: U.savIncl }, { merge: true }).catch(e => toast('⚠ Épargne non enregistrée (' + (e.code || 'erreur') + ')')); }, 600);
 }
 const isSavAcc = (id = active) => ACC[id]?.kind === 'epargne';
+// La session affichée est-elle toujours celle de l'utilisateur connecté ? (autre onglet connecté avec un autre compte)
+const sameUser = () => !!currentUser && !!auth.currentUser && auth.currentUser.uid === currentUser.uid;
 const isShared = (id = active) => (ACC[id]?.members || []).length > 1;
 const accName = (id = active) => ACC[id]?.name || 'Compte';
 
@@ -742,9 +744,10 @@ function summaryOf() {
   const k = nowK(), c = calc(month(k), k);
   return { k, current: Math.round(c.current * 100) / 100, est: Math.round(c.est * 100) / 100, rav: Math.round(c.rav * 100) / 100 };
 }
+let allowDeletes = false;   // vrai seulement juste après une réinitialisation, une restauration ou un import
 function pushCloud() {
   saveTimer = null;
-  if (!currentUser || !loaded || !active) return Promise.resolve();
+  if (!currentUser || !loaded || !active || !sameUser()) return Promise.resolve();
   const id = active, p = parts(), batch = db.batch(), now = Date.now(), me = currentUser.uid;
   let n = 0, waiting = false;
   for (const [k, v] of Object.entries(p)) {
@@ -754,7 +757,8 @@ function pushCloud() {
     sent[k] = v; n++;
     batch.set(monthCol(id).doc(k), { data: v, updatedAt: now, updatedBy: me });
   }
-  Object.keys(sent).filter(k => k !== 'meta' && !(k in p)).forEach(k => { batch.delete(monthCol(id).doc(k)); delete sent[k]; delete base[k]; n++; });
+  if (allowDeletes) Object.keys(sent).filter(k => k !== 'meta' && !(k in p)).forEach(k => { batch.delete(monthCol(id).doc(k)); delete sent[k]; delete base[k]; n++; });
+  allowDeletes = false;
   if (!n) { if (waiting) saveTimer = setTimeout(pushCloud, 1500); return Promise.resolve(); }
   const upd = { summary: summaryOf(), updatedAt: now, updatedBy: me };
   if (sent.meta !== p.meta) { upd.meta = p.meta; sent.meta = p.meta; }
@@ -843,6 +847,7 @@ function openAccount(id) {
     let ch = false, by = null;
     q.docChanges().forEach(c => {
       if (c.doc.metadata.hasPendingWrites) return;
+      if (c.type === 'removed' && q.metadata.fromCache) return;
       const k = c.doc.id;
       if (c.type === 'removed') { if (sent[k] !== undefined) { delete S.months[k]; delete sent[k]; delete base[k]; ch = true; } return; }
       if (onRemote(k, c.doc.data().data)) { ch = true; by = c.doc.data().updatedBy; }
@@ -854,9 +859,10 @@ function remoteToast(by) {
   render();
   if (by && by !== currentUser.uid) toast('🔄 Modifié par ' + (ACC[active]?.memberEmails?.[by] || 'un autre membre'));
 }
+// Compte illisible (supprimé, partage retiré ou session changée) : masqué ici, JAMAIS retiré automatiquement de la liste
 function accountGone(id) {
-  delete ACC[id];
-  if (USER && (USER.accounts || []).includes(id)) userDoc().update({ accounts: FV.arrayRemove(id) }).catch(() => {});
+  if (!sameUser()) return;
+  delete ACC[id]; accIds = accIds.filter(x => x !== id);
   if (active === id) { stopAccount(); active = null; const nx = accIds.find(x => x !== id); if (nx) openAccount(nx); }
   toast('Un compte n\'est plus accessible (supprimé ou partage retiré).');
 }
@@ -882,12 +888,16 @@ function syncAccountList(ids) {
 async function migrateOrCreate() {
   if (migrating) return; migrating = true;
   try {
+    // Sécurité : liste vérifiée sur le serveur + comptes dont je suis membre, avant de créer quoi que ce soit
+    const ud = await userDoc().get({ source: 'server' });
+    if (ud.exists && (ud.data().accounts || []).length) return;
+    if (await repairAccounts()) return;
     let legacy = null;
     try { const d = await legacyDoc().get({ source: 'server' }); if (d.exists) legacy = d.data().budgetData || null; } catch (e) {}
     const o = legacy ? normalize(JSON.parse(legacy)) : normalize(fresh());
     const id = db.collection('accounts').doc().id, now = Date.now(), me = currentUser.uid, batch = db.batch();
     batch.set(accDoc(id), { name: 'Compte principal', bank: '', color: '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(o), createdAt: now, updatedAt: now, updatedBy: me });
-    batch.set(userDoc(), { email: currentUser.email, emailLower: myEmail(), accounts: [id], migratedFromV1: !!legacy, createdAt: now }, { merge: true });
+    batch.set(userDoc(), { email: currentUser.email, emailLower: myEmail(), accounts: FV.arrayUnion(id), migratedFromV1: !!legacy, createdAt: now }, { merge: true });
     await batch.commit();
     const ks = Object.keys(o.months);                               // les mois après la création du compte (règles de sécurité)
     for (let i = 0; i < ks.length; i += 400) {
@@ -901,6 +911,17 @@ async function migrateOrCreate() {
 }
 
 /* ---------- Créer, renommer, partager, quitter, supprimer un compte ---------- */
+// Retrouve les comptes dont je suis membre et les remet dans ma liste s'ils en ont disparu
+async function repairAccounts() {
+  try {
+    const q = await db.collection('accounts').where('members', 'array-contains', currentUser.uid).get();
+    const have = new Set((USER && USER.accounts) || []), miss = q.docs.map(d => d.id).filter(id => !have.has(id));
+    if (!miss.length || !sameUser()) return q.docs.length > 0;
+    await userDoc().set({ accounts: FV.arrayUnion(...miss) }, { merge: true });
+    toast('🔧 ' + miss.length + ' compte' + (miss.length > 1 ? 's' : '') + ' retrouvé' + (miss.length > 1 ? 's' : '') + ' et remis dans ta liste');
+    return true;
+  } catch (e) { console.warn('Réparation', e.code); return false; }
+}
 async function createAccount({ name, bank, color, site, kind }) {
   const id = db.collection('accounts').doc().id, now = Date.now(), me = currentUser.uid, batch = db.batch();
   batch.set(accDoc(id), { name: name || 'Nouveau compte', bank: bank || '', site: site || '', kind: kind === 'epargne' ? 'epargne' : 'courant', color: color || '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(normalize(fresh())), createdAt: now, updatedAt: now, updatedBy: me });
@@ -1004,7 +1025,10 @@ function pruneBackups() {
 }
 
 /* ---------- Connexion ---------- */
+let lastUid = null;
 auth.onAuthStateChanged(user => {
+  if (lastUid && user && user.uid !== lastUid) { stopAll(); return location.reload(); }   // un autre onglet a changé d'utilisateur
+  lastUid = user ? user.uid : lastUid;
   stopAll(); closePanel(true);
   if (!user) { currentUser = null; S = normalize(fresh()); showScreen('auth'); return; }
   currentUser = user; startedAt = Date.now();
@@ -1015,6 +1039,7 @@ auth.onAuthStateChanged(user => {
     const ids = d.exists ? (d.data().accounts || []) : [];
     if (!ids.length) { if (!d.metadata.fromCache) migrateOrCreate(); return; }
     USER = d.data(); loadU(USER);
+    if (!repairAccounts.done) { repairAccounts.done = true; repairAccounts(); }
     if (!USER.emailLower) userDoc().set({ email: user.email, emailLower: myEmail() }, { merge: true }).catch(() => {});
     syncAccountList(ids);
     if (loaded) renderChrome();
@@ -1751,7 +1776,7 @@ function restoreBackup(id) {
   if (!confirm("Remplacer tes données actuelles par cette sauvegarde ?\nL'état actuel sera sauvegardé avant, au cas où.")) return;
   backupNow('avant restauration');
   try { S = normalize(JSON.parse(data)); } catch (e) { return toast('Sauvegarde illisible'); }
-  undoSnap = null; save(); flush(); render(); toast('✅ Sauvegarde restaurée'); listBackups();
+  undoSnap = null; allowDeletes = true; save(); flush(); render(); toast('✅ Sauvegarde restaurée'); listBackups();
 }
 
 /* ============================== 9. FICHE D'ÉDITION & DIALOGUES ============================== */
@@ -2209,7 +2234,7 @@ document.addEventListener('click', ev => {
     case 'export': download('budget_perso_' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json'); return toast('Export téléchargé');
     case 'import': return $('file').click();
     case 'reset': if (!confirm('Effacer TOUT ton budget ? Une sauvegarde sera faite juste avant. Ton compte n\'est pas supprimé.')) return;
-      backupNow('avant réinitialisation'); return mutate(() => { S = normalize(fresh()); }, 'Budget réinitialisé');
+      backupNow('avant réinitialisation'); allowDeletes = true; return mutate(() => { S = normalize(fresh()); }, 'Budget réinitialisé');
     case 'addcat': { const v = $('newcat').value.trim(); if (!v || S.categories.includes(v)) return toast('Catégorie vide ou déjà existante'); return mutate(() => S.categories.push(v), 'Catégorie ajoutée'); }
     case 'delcat': { const c = S.categories[+b.dataset.i]; if (!confirm(`Supprimer la catégorie « ${c} » ? Les mouvements existants la gardent.`)) return; return mutate(() => S.categories.splice(+b.dataset.i, 1), 'Catégorie supprimée'); }
     case 'tadd': { const n = t === 'expenses' ? { tmplId: uid(), date: '', cat: S.categories[0] || 'Autre', name: 'Nouvelle charge', amount: 0, isDivided: false }
@@ -2258,7 +2283,7 @@ function importFile(f) {
   r.onload = () => {
     try { const d = JSON.parse(r.result); if (!d.templates || !d.months) throw 0;
       if (!confirm('Remplacer tes données par ce fichier ? Une sauvegarde sera faite juste avant.')) return;
-      backupNow('avant import'); mutate(() => { S = normalize(d); }, 'Import réussi');
+      backupNow('avant import'); allowDeletes = true; mutate(() => { S = normalize(d); }, 'Import réussi');
     } catch (e) { toast('Fichier invalide'); }
   };
   r.readAsText(f); $('file').value = '';
