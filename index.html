@@ -2369,6 +2369,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
+const APP_VERSION = '13 oct. · v3';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2387,7 +2388,7 @@ function installHTML() {
   const tb = (v, l) => `<button class="${th === v ? 'on' : ''}" data-a="theme" data-v="${v}">${l}</button>`;
   return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Application</h2>
     <div class="fl">Apparence<div class="seg" role="group" aria-label="Apparence">${tb('auto', 'Auto')}${tb('light', 'Clair')}${tb('dark', 'Sombre')}</div><small>Auto = suit le réglage de l'appareil. Choix propre à cet appareil.</small></div>
-    ${body}</section>`;
+    ${body}<small class="note" style="font-size:12px">Version ${APP_VERSION}</small></section>`;
 }
 
 

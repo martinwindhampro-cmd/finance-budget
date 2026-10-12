@@ -2,7 +2,7 @@
    • La page (index.html) : réseau d'abord → toujours la dernière version publiée ; copie de secours hors ligne.
    • Bibliothèques (Firebase, Chart.js, polices) et icônes : copie locale d'abord (leurs adresses ont un numéro de version).
    • Les données (Firestore, connexion) ne passent PAS par ici : Firebase gère lui-même le hors-ligne. */
-const V = 'budget-v1';
+const V = 'budget-v2';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 const LIBS = /^https:\/\/(www\.gstatic\.com\/firebasejs\/|cdn\.jsdelivr\.net\/npm\/|fonts\.googleapis\.com\/|fonts\.gstatic\.com\/)/;
 
@@ -16,7 +16,8 @@ self.addEventListener('fetch', e => {
   const r = e.request; if (r.method !== 'GET') return;
   const url = new URL(r.url);
   if (r.mode === 'navigate' || (url.origin === location.origin && /\/(index\.html)?$/.test(url.pathname))) {
-    e.respondWith(fetch(r).then(res => { const cp = res.clone(); caches.open(V).then(c => c.put('./index.html', cp)); return res; })
+    // « no-store » : on ignore toute copie gardée par le navigateur → toujours la version publiée sur GitHub
+    e.respondWith(fetch(r.url, { cache: 'no-store', credentials: 'same-origin' }).then(res => { if (!res.ok) throw 0; const cp = res.clone(); caches.open(V).then(c => c.put('./index.html', cp)); return res; })
       .catch(() => caches.match('./index.html')));
     return;
   }
