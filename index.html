@@ -221,7 +221,9 @@ tr.go:hover td{background:var(--hov)}
 /* Comptes : sélecteur, menu, avatars */
 .accsw{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--card);text-align:left;margin-bottom:14px;box-shadow:var(--shadow)}
 .accsw:hover{border-color:var(--mute)}
-.accsw>i,.accmenu .am>i{width:32px;height:32px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--c);color:#fff}
+.accsw>i,.accmenu .am>i,.accbig>i{width:32px;height:32px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--c);color:#fff;position:relative;overflow:hidden}
+.accbig>i{width:40px;height:40px;border-radius:12px}
+.accsw>i img,.accmenu .am>i img,.accbig>i img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;padding:5px;background:#fff;box-shadow:inset 0 0 0 2px var(--c);border-radius:inherit}
 .accsw span,.accmenu .am span{flex:1;min-width:0;display:flex;flex-direction:column}
 .accsw b,.accmenu b{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .accsw small,.accmenu small{font-size:11.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -882,9 +884,9 @@ async function migrateOrCreate() {
 }
 
 /* ---------- Créer, renommer, partager, quitter, supprimer un compte ---------- */
-async function createAccount({ name, bank, color }) {
+async function createAccount({ name, bank, color, site }) {
   const id = db.collection('accounts').doc().id, now = Date.now(), me = currentUser.uid, batch = db.batch();
-  batch.set(accDoc(id), { name: name || 'Nouveau compte', bank: bank || '', color: color || '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(normalize(fresh())), createdAt: now, updatedAt: now, updatedBy: me });
+  batch.set(accDoc(id), { name: name || 'Nouveau compte', bank: bank || '', site: site || '', color: color || '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(normalize(fresh())), createdAt: now, updatedAt: now, updatedBy: me });
   batch.update(userDoc(), { accounts: FV.arrayUnion(id) });
   await batch.commit();
   return id;
@@ -1521,7 +1523,7 @@ function vEpargne() {
   const keys = [...new Set(A.flatMap(a => Object.keys(a.hist || {})))].sort();
   const rows = A.map(a => {
     const [col, ic] = AT[a.type] || AT.Autre, b = aBal(a), lk = aLast(a);
-    return `<div class="row"><button class="rowb" data-a="acc" data-id="${a.id}"><span class="ico" style="--c:${col}">${svg(ic)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.type)}${num(a.rate) ? ' · ' + String(num(a.rate)).replace('.', ',') + ' %' : ''}${lk ? ' · mis à jour ' + mshort(lk) : ''}</span></span>
+    return `<div class="row"><button class="rowb" data-a="sav-acc" data-id="${a.id}"><span class="ico" style="--c:${col}">${svg(ic)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.type)}${num(a.rate) ? ' · ' + String(num(a.rate)).replace('.', ',') + ' %' : ''}${lk ? ' · mis à jour ' + mshort(lk) : ''}</span></span>
       <span class="bar" style="width:110px;display:block"><i style="width:${tot > 0 ? b / tot * 100 : 0}%;--c:${col}"></i></span><span class="ra num" style="width:110px;text-align:right">${eur(b)}</span></button></div>`;
   }).join('') || '<p class="empty">Ajoute tes livrets, PEA, assurance-vie… pour suivre ton épargne réelle.</p>';
   const it = sum(A, a => aBal(a) * num(a.rate) / 100);
@@ -1540,7 +1542,7 @@ function vEpargne() {
         <div class="hb"><i style="width:${gp}%"></i></div><span style="font-size:12px;color:var(--sav-t)">${eta}</span></div>` : ''}
     </section>
     <section class="card" aria-label="Mes comptes" style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:2px">
-      <div class="ch"><h2>Mes comptes</h2><div class="chips">${A.length ? '<button class="btn sm" data-a="acc-bal">Mettre à jour mes soldes</button>' : ''}<button class="btn sm" data-a="acc-new">${svg('plus', 16)} Compte</button></div></div>
+      <div class="ch"><h2>Mes comptes</h2><div class="chips">${A.length ? '<button class="btn sm" data-a="sav-bal">Mettre à jour mes soldes</button>' : ''}<button class="btn sm" data-a="sav-new">${svg('plus', 16)} Compte d'épargne</button></div></div>
       ${rows}
     </section>
   </div>
@@ -1905,6 +1907,16 @@ function alertsDialog() {
 
 /* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */
 const ACOL = [['Indigo','#4338CA'],['Vert','#0F766E'],['Bleu','#0369A1'],['Violet','#6D28D9'],['Rose','#BE185D'],['Orange','#C2410C'],['Ardoise','#334155']];
+// Site web connu pour les banques courantes (modifiable) → logo automatique
+const BANKS = [[/cr[ée]dit\s*agricole|\bca\b/i,'credit-agricole.fr'],[/bourso/i,'boursobank.com'],[/revolut/i,'revolut.com'],[/soci[ée]t[ée]\s*g[ée]n[ée]rale|\bsg\b/i,'societegenerale.fr'],
+  [/bnp/i,'mabanque.bnpparibas'],[/\blcl\b/i,'lcl.fr'],[/caisse\s*d.?[ée]pargne/i,'caisse-epargne.fr'],[/banque\s*populaire/i,'banquepopulaire.fr'],[/banque\s*postale/i,'labanquepostale.fr'],
+  [/cr[ée]dit\s*mutuel/i,'creditmutuel.fr'],[/\bcic\b/i,'cic.fr'],[/\bn26\b/i,'n26.com'],[/fortuneo/i,'fortuneo.fr'],[/hello\s*bank/i,'hellobank.fr'],[/monabanq/i,'monabanq.com'],[/nickel/i,'nickel.eu'],[/qonto/i,'qonto.com']];
+const guessSite = (...t) => { const s = t.filter(Boolean).join(' '); const f = BANKS.find(([r]) => r.test(s)); return f ? f[1] : ''; };
+// Pastille d'un compte : logo de la banque (si site) sur fond de couleur
+function accBadge(a, size = 14) {
+  const site = a.site || '';
+  return `<i style="--c:${a.color || '#4338CA'}">${(a.members || []).length > 1 ? svg('users', size, 2.2) : svg('wallet', size, 2.2)}${site ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(site)}&amp;sz=64" data-site="${esc(site)}" alt="" referrerpolicy="no-referrer" onload="logoOk(this)" onerror="logoKo(this)">` : ''}</i>`;
+}
 const initials = e => String(e || '?').trim().charAt(0).toUpperCase();
 function membersOf(id) { const a = ACC[id] || {}; return (a.members || []).map(u => ({ uid: u, email: a.memberEmails?.[u] || '?', owner: u === a.owner, me: u === currentUser?.uid })); }
 function accSub(id) {
@@ -1913,7 +1925,7 @@ function accSub(id) {
 }
 function accSwitcherHTML() {
   const a = ACC[active] || {};
-  return `<button class="accsw" data-a="accmenu" aria-haspopup="menu" aria-expanded="${!!$('accmenu')}"><i style="--c:${a.color || '#4338CA'}">${isShared() ? svg('users', 14, 2.2) : svg('wallet', 14, 2.2)}</i><span><b>${esc(a.name || 'Compte')}</b><small>${esc(accSub(active))}</small></span>${svg('down', 16, 2.2)}</button>`;
+  return `<button class="accsw" data-a="accmenu" aria-haspopup="menu" aria-expanded="${!!$('accmenu')}">${accBadge(a)}<span><b>${esc(a.name || 'Compte')}</b><small>${esc(accSub(active))}</small></span>${svg('down', 16, 2.2)}</button>`;
 }
 function accMenu(btn) {
   const old = $('accmenu'); if (old) { old.remove(); return; }
@@ -1921,7 +1933,7 @@ function accMenu(btn) {
   mnu.id = 'accmenu'; mnu.className = 'accmenu'; mnu.setAttribute('role', 'menu');
   mnu.style.top = Math.min(r.bottom + 6, innerHeight - 80) + 'px'; mnu.style.left = Math.max(8, Math.min(r.left, innerWidth - 300)) + 'px';
   mnu.innerHTML = accIds.filter(id => ACC[id]).map(id => { const a = ACC[id], sm = a.summary;
-      return `<button role="menuitem" class="am${id === active ? ' on' : ''}" data-a="acc-open" data-id="${id}"><i style="--c:${a.color || '#4338CA'}">${isShared(id) ? svg('users', 14, 2.2) : svg('wallet', 14, 2.2)}</i><span><b>${esc(a.name)}</b><small>${esc(accSub(id))}</small></span><em class="num">${sm ? eur0(sm.current) : ''}</em></button>`; }).join('')
+      return `<button role="menuitem" class="am${id === active ? ' on' : ''}" data-a="acc-open" data-id="${id}">${accBadge(a)}<span><b>${esc(a.name)}</b><small>${esc(accSub(id))}</small></span><em class="num">${sm ? eur0(sm.current) : ''}</em></button>`; }).join('')
     + `<hr><button role="menuitem" class="am" data-a="comptes">${svg('layers', 18)}<span><b>Tous mes comptes</b></span></button><button role="menuitem" class="am" data-a="acc-new">${svg('plus', 18)}<span><b>Nouveau compte</b></span></button>`;
   document.body.append(mnu);
   mnu.querySelector('button')?.focus();
@@ -1940,7 +1952,7 @@ function vComptes() {
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px">
     ${ids.map(id => { const a = ACC[id], sm = a.summary, mem = membersOf(id);
       return `<button class="card" data-a="acc-open" data-id="${id}" style="border:0;text-align:left;display:flex;flex-direction:column;gap:14px;${id === active ? 'box-shadow:inset 0 0 0 2px ' + (a.color || '#4338CA') : ''}">
-        <span style="display:flex;align-items:center;gap:12px"><span class="ico" style="--c:${a.color || '#4338CA'}">${mem.length > 1 ? svg('users') : svg('wallet')}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.bank || (mem.length > 1 ? 'Compte partagé' : 'Compte personnel'))}</span></span></span>
+        <span style="display:flex;align-items:center;gap:12px" class="accbig">${accBadge(a, 20)}<span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.bank || (mem.length > 1 ? 'Compte partagé' : 'Compte personnel'))}</span></span></span>
         <span style="display:flex;justify-content:space-between;gap:10px"><span><span class="note" style="display:block;font-size:12px">Solde actuel</span><b class="num" style="font-size:20px">${sm ? eur(sm.current) : '—'}</b></span><span style="text-align:right"><span class="note" style="display:block;font-size:12px">Fin de mois</span><b class="num" style="font-size:15px">${sm ? eur(sm.est) : '—'}</b></span></span>
         ${mem.length > 1 ? `<span class="chips">${mem.map(m => `<span class="chip" style="min-height:28px;padding:3px 10px;font-size:12px"><span class="avatar">${initials(m.email)}</span>${esc(m.me ? 'Moi' : m.email)}</span>`).join('')}</span>` : ''}
       </button>`; }).join('')}
@@ -1955,8 +1967,9 @@ function accountSettingsHTML() {
   return `<section class="card" style="flex:1 1 340px;display:flex;flex-direction:column;gap:12px"><h2>Ce compte</h2>
     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
       <label class="fl">Nom<input class="in" data-acc="name" value="${esc(a.name || '')}" placeholder="ex. Crédit Agricole"></label>
-      <label class="fl">Banque<input class="in" data-acc="bank" value="${esc(a.bank || '')}" placeholder="ex. Compte courant"></label>
+      <label class="fl">Banque<input class="in" data-acc="bank" value="${esc(a.bank || '')}" placeholder="ex. Crédit Agricole"></label>
     </div>
+    <label class="fl">Logo · site web de la banque<span style="display:flex;gap:10px;align-items:center"><span class="accbig">${accBadge(a, 20)}</span><input class="in" data-acc="site" value="${esc(a.site || '')}" placeholder="ex. credit-agricole.fr (rempli tout seul pour les banques connues)" style="font-weight:500"></span></label>
     <div class="fl">Couleur<div class="chips">${ACOL.map(([n, c]) => `<button class="chip cat${(a.color || '#4338CA') === c ? ' on' : ''}" style="--c:${c}" data-a="acc-color" data-v="${c}" aria-label="${n}"><i></i>${n}</button>`).join('')}</div></div>
     <div class="fl">Membres
       ${mem.map(m => `<div class="row" style="padding:4px 2px"><span class="avatar lg">${initials(m.email)}</span><span class="rt"><span class="rn">${esc(m.email)}${m.me ? ' (moi)' : ''}</span><span class="rs">${m.owner ? 'Propriétaire' : 'Membre'}</span></span>${owner && !m.me ? `<button class="btn sm danger" data-a="acc-kick" data-id="${m.uid}">Retirer</button>` : ''}</div>`).join('')}
@@ -2000,13 +2013,14 @@ function vMessages() {
 /* ---------- Actions comptes & messagerie ---------- */
 function newAccountDialog() {
   formDialog({ title: 'Nouveau compte', intro: 'Un compte = un compte bancaire, avec ses propres mouvements, charges fixes et budgets.',
-    fields: [{ id: 'name', label: 'Nom', ph: 'ex. Revolut perso' }, { id: 'bank', label: 'Banque / type (facultatif)', ph: 'ex. Revolut' },
+    fields: [{ id: 'name', label: 'Nom', ph: 'ex. Revolut perso' }, { id: 'bank', label: 'Banque', ph: 'ex. Revolut, Crédit Agricole, Boursorama…' },
+      { id: 'site', label: 'Site web de la banque (logo, facultatif)', ph: 'rempli tout seul pour les banques connues' },
       { id: 'color', label: 'Couleur', type: 'select', options: ACOL.map(c => c[0]), value: ACOL[(accIds.length) % ACOL.length][0] },
       { id: 'email', label: 'Partager avec (facultatif)', ph: 'email de l\'autre personne', hint: 'Pour un compte joint. Tu pourras aussi inviter plus tard.' }],
     ok: 'Créer',
     onSave: v => {
       if (!v.name) { toast('Donne un nom au compte'); return false; }
-      createAccount({ name: v.name, bank: v.bank, color: (ACOL.find(c => c[0] === v.color) || ACOL[0])[1] }).then(id => {
+      createAccount({ name: v.name, bank: v.bank, site: cleanSite(v.site) || guessSite(v.bank, v.name), color: (ACOL.find(c => c[0] === v.color) || ACOL[0])[1] }).then(id => {
         if (v.email) inviteMember(v.email, id, v.name).then(() => toast('Compte créé · invitation envoyée à ' + v.email)).catch(e => toast(e.message));
         else toast('Compte « ' + v.name + ' » créé');
         UI.view = 'accueil'; openAccount(id);
@@ -2044,8 +2058,10 @@ document.addEventListener('click', ev => {
 });
 document.addEventListener('change', ev => {
   const el = ev.target; if (!el.dataset.acc || !active) return;
-  const v = el.value.trim(); if (el.dataset.acc === 'name' && !v) return render();
-  accDoc(active).update({ [el.dataset.acc]: v }).then(() => toast('Compte mis à jour')).catch(e => toast('⚠ ' + (e.code || e.message)));
+  const f = el.dataset.acc; let v = el.value.trim(); if (f === 'name' && !v) return render();
+  const upd = { [f]: f === 'site' ? cleanSite(v) : v };
+  if ((f === 'bank' || f === 'name') && !ACC[active]?.site) { const g = guessSite(v); if (g) upd.site = g; }   // logo automatique
+  accDoc(active).update(upd).then(() => toast('Compte mis à jour')).catch(e => toast('⚠ ' + (e.code || e.message)));
 });
 
 /* ============================== 10. ÉVÉNEMENTS ============================== */
@@ -2076,9 +2092,9 @@ document.addEventListener('click', ev => {
     case 'calday': UI.calDay = UI.calDay === +b.dataset.v ? null : +b.dataset.v; return render();
     case 'showpaid': UI.showPaid = true; return render();
     // Épargne
-    case 'acc': return accountDialog(id);
-    case 'acc-new': return accountDialog(null);
-    case 'acc-bal': return balancesDialog();
+    case 'sav-acc': return accountDialog(id);
+    case 'sav-new': return accountDialog(null);
+    case 'sav-bal': return balancesDialog();
     case 'svmode': sv().mode = b.dataset.v; save(); return render();
     case 'svmore': UI.svMore = !UI.svMore; return render();
     case 'sv-use': { const tot = sum(accs(), x => aBal(x)), A = accs(); const w = tot > 0 ? sum(A, x => aBal(x) * num(x.rate)) / tot : 0;
