@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F3F4F8" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0D1020" media="(prefers-color-scheme: dark)">
+<script>/* thème choisi sur cet appareil (avant l'affichage, pour éviter un flash) */
+function applyTheme(t){try{t=t||localStorage.getItem('theme')||'auto'}catch(e){t='auto'}var r=document.documentElement;if(t==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',t);
+var dk=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.setAttribute('content',dk?'#0D1020':'#F3F4F8');m.removeAttribute('media')});}
+applyTheme();</script>
 <title>Budget</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
@@ -36,7 +40,7 @@
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){
-  :root{
+  :root:not([data-theme="light"]){
     --bg:#0D1020; --card:#171B2E; --soft:#1F2439; --hov:#1C2135;
     --ink:#E8EAF4; --ink2:#B8BDD3; --mute:#8D93AD; --line:#2A2F48;
     --acc:#6366F1; --acc-d:#A5B4FC; --acc-s:#262A55; --acc-l:#818CF8;
@@ -45,6 +49,15 @@
     --shadow:0 1px 2px rgba(0,0,0,.3);
     color-scheme:dark;
   }
+}
+:root[data-theme="dark"]{
+    --bg:#0D1020; --card:#171B2E; --soft:#1F2439; --hov:#1C2135;
+    --ink:#E8EAF4; --ink2:#B8BDD3; --mute:#8D93AD; --line:#2A2F48;
+    --acc:#6366F1; --acc-d:#A5B4FC; --acc-s:#262A55; --acc-l:#818CF8;
+    --ok:#34D399; --ok-s:#0F2E26; --warn:#FBBF24; --warn-s:#33270F; --bad:#F87171; --bad-s:#3A1A1A;
+    --hero:#1B1846; --hero-line:#34316E;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+    color-scheme:dark;
 }
 
 /* ============================================================
@@ -2370,7 +2383,11 @@ function installHTML() {
       <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px"><li>Touche le bouton <b>Partager</b> <span style="display:inline-block;vertical-align:-3px">${'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>'}</span> en bas de l'écran</li><li>Fais défiler et choisis <b>« Sur l'écran d'accueil »</b></li><li>Touche <b>Ajouter</b>, puis ouvre Budget depuis son icône</li></ol>
       <p class="note" style="font-size:12px">Tu devras te reconnecter une fois dans l'application.</p>`;
   else body = '<p class="note">Dans <b>Chrome</b> ou <b>Edge</b> : clique sur l\'icône d\'installation à droite de la barre d\'adresse (un écran avec une flèche), ou menu ⋮ › <b>Installer Budget</b> (Edge : ⋯ › Applications › Installer).</p>';
-  return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Application</h2>${body}</section>`;
+  let th = 'auto'; try { th = localStorage.getItem('theme') || 'auto'; } catch (e) {}
+  const tb = (v, l) => `<button class="${th === v ? 'on' : ''}" data-a="theme" data-v="${v}">${l}</button>`;
+  return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Application</h2>
+    <div class="fl">Apparence<div class="seg" role="group" aria-label="Apparence">${tb('auto', 'Auto')}${tb('light', 'Clair')}${tb('dark', 'Sombre')}</div><small>Auto = suit le réglage de l'appareil. Choix propre à cet appareil.</small></div>
+    ${body}</section>`;
 }
 
 
@@ -2562,6 +2579,7 @@ document.addEventListener('click', ev => {
         nm + ' : ' + (t === 'incomes' ? (was ? 'en attente' : 'reçu ✓') : (was ? 'à payer' : 'payé ✓')) + ' · ' + eur(t === 'incomes' ? num(x0.amount) : eff(x0))); }
     case 'flt': UI.flt = b.dataset.v; return render();
     case 'alerts': return go('messages');
+    case 'theme': try { localStorage.setItem('theme', b.dataset.v); } catch (e) {} applyTheme(b.dataset.v); render(); return toast({ auto: 'Apparence automatique', light: 'Mode clair', dark: 'Mode sombre' }[b.dataset.v]);
     case 'install': if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; render(); }); } return;
     case 'al-new': return alertNewDialog();
     case 'al-edit': return alertDialog(null, id);
@@ -2674,7 +2692,7 @@ document.addEventListener('keydown', e => {
   if (MONTH_VIEWS.includes(UI.view) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { cur.setMonth(cur.getMonth() + (e.key === 'ArrowRight' ? 1 : -1)); render(); }
   if (e.key === 'Enter' && e.target.matches && e.target.matches('tr[data-a=gom]')) goMonth(e.target.dataset.v);
 });
-matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => render());
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { applyTheme(); render(); });
 
 /* ---------- Démarrage ---------- */
 try { const v = localStorage.getItem('bt'); if (VIEWS.some(x => x[0] === v)) UI.view = v; } catch (e) {}
