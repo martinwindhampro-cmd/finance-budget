@@ -395,6 +395,12 @@ dialog::backdrop{background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
           <button class="btn" style="width:100%; margin-bottom:8px;" data-a="import">⬆️️ Importer un JSON</button>
           <input type="file" id="file" accept=".json,application/json" hidden>
           <button class="btn" style="width:100%; color:var(--warn); border-color:var(--warn);" data-a="reset">⚠ Réinitialiser le budget à zéro</button>
+          <hr class="hr" style="margin:16px 0">
+          <h3 style="margin-bottom:6px; font-size:1rem;">☁️ Sauvegardes automatiques</h3>
+          <p style="font-size:0.8rem; color:var(--mute); margin-bottom:12px;">Une copie chaque jour à la connexion, et avant chaque import, réinitialisation ou restauration. Les 40 dernières sont gardées.</p>
+          <button class="btn" style="width:100%; margin-bottom:8px;" data-a="bk-now">💾 Sauvegarder maintenant</button>
+          <button class="btn" style="width:100%;" data-a="bk-list">🕘 Voir / restaurer une sauvegarde</button>
+          <div id="bk-list" style="margin-top:10px"></div>
       </div>
   </div>
 
@@ -520,6 +526,8 @@ window.deleteAccount = () => pwdDialog({
   action: async () => {
     const u = currentUser.uid;
     stopSync();                      // plus aucune sauvegarde ne doit recréer le document
+    const bq = await bkCol(u).get(); // les sauvegardes partent avec le compte
+    await Promise.all(bq.docs.map(d => d.ref.delete()));
     await docRef(u).delete();        // ré-authentifié juste avant : la suppression du compte ne peut plus échouer pour "connexion trop ancienne"
     await currentUser.delete();
     try { localStorage.removeItem(cacheKey(u)); } catch(e) {}
@@ -619,10 +627,68 @@ function startWith(str, msg, push) {
   try { S = normalize(str ? JSON.parse(str) : fresh()); }
   catch(e) { console.error(e); S = normalize(fresh()); push = false; msg = '⚠ Données illisibles : rien n\'a été écrasé'; }
   lastSent = str; loaded = true;
-  try { localStorage.removeItem(LS); } catch(e) {}   // ancien cache partagé entre comptes : supprimé
-  showScreen('app'); all();
+  if (str && !push) dailyBackup(str);           // copie de l'état à la connexion, avant toute modification du jour
+  showScreen('app'); all(); toast('', true); $('toast').classList.remove('show');
   if (push) save();
-  if (msg) toast(msg);
+  if (msg) toast(msg, true);
+}
+
+// ==========================================
+// 5. SAUVEGARDES AUTOMATIQUES (cloud : users/{uid}/backups)
+// ==========================================
+const BK_MAX = 40;
+let bkCache = {};
+const bkCol = (u = currentUser.uid) => db.collection('users').doc(u).collection('backups');
+const dayKey = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+const hasContent = str => { try { const d = JSON.parse(str); return Object.keys(d.months||{}).length > 0 || ['expenses','incomes','budgets'].some(k => (d.templates?.[k]||[]).length); } catch(e) { return false; } };
+
+// La donnée est figée au moment de l'appel (avant la modification qui suit)
+function backupNow(kind, data = snapshot()) {
+  if (!currentUser || !loaded || !hasContent(data)) return Promise.resolve(false);
+  const id = kind === 'quotidienne' ? dayKey() : dayKey() + '_' + Date.now();
+  return bkCol().doc(id).set({ budgetData: data, kind, createdAt: Date.now() })
+    .then(() => { pruneBackups(); return true; })
+    .catch(e => { console.error('Sauvegarde', e); return false; });
+}
+function dailyBackup(data) {
+  bkCol().doc(dayKey()).get({ source: 'server' })        // hors-ligne : on ne fait rien
+    .then(d => { if (!d.exists) return backupNow('quotidienne', data); })
+    .catch(() => {});
+}
+function pruneBackups() {
+  bkCol().orderBy('createdAt', 'desc').get({ source: 'server' })
+    .then(q => q.docs.slice(BK_MAX).forEach(d => d.ref.delete())).catch(() => {});
+}
+function listBackups() {
+  const box = $('bk-list'); box.innerHTML = '<p class="note">Chargement…</p>';
+  bkCol().orderBy('createdAt', 'desc').limit(BK_MAX).get().then(q => {
+    bkCache = {};
+    box.innerHTML = q.docs.map(d => {
+      const v = d.data(); bkCache[d.id] = v.budgetData;
+      let info = '';
+      try { const j = JSON.parse(v.budgetData); info = Object.keys(j.months||{}).length + ' mois · ' + (j.templates?.expenses||[]).length + ' charges fixes'; } catch(e) { info = 'illisible'; }
+      const dt = new Date(v.createdAt).toLocaleString('fr-FR', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+      return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <div style="flex:1;min-width:0"><b style="font-size:.85rem">${esc(dt)}</b> <span class="tag fx" style="font-size:.68rem">${esc(v.kind||'')}</span><br><small style="color:var(--mute)">${esc(info)}</small></div>
+        <button class="x" data-a="bk-dl" data-id="${esc(d.id)}" title="Télécharger en JSON" aria-label="Télécharger">⬇</button>
+        <button class="btn" data-a="bk-res" data-id="${esc(d.id)}">Restaurer</button></div>`;
+    }).join('') || '<p class="note">Aucune sauvegarde pour l\'instant.</p>';
+  }).catch(e => { box.innerHTML = '<p class="note b">Impossible de lister les sauvegardes (' + esc(e.code || '') + '). Vérifie les règles Firestore.</p>'; });
+}
+function restoreBackup(id) {
+  const data = bkCache[id]; if (!data) return;
+  if (!confirm("Remplacer vos données actuelles par cette sauvegarde ?\nL'état actuel sera sauvegardé avant, au cas où.")) return;
+  backupNow('avant restauration');
+  try { S = normalize(JSON.parse(data)); } catch(e) { return toast('Sauvegarde illisible', true); }
+  save(); flush(); all();
+  toast('✅ Sauvegarde restaurée', true);
+  listBackups();
+}
+function downloadBackup(id) {
+  const data = bkCache[id]; if (!data) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(JSON.parse(data), null, 2)], { type: 'application/json' }));
+  a.download = 'budget_sauvegarde_' + id.slice(0, 10) + '.json'; a.click();
 }
 
 auth.onAuthStateChanged(user => {
@@ -651,7 +717,7 @@ auth.onAuthStateChanged(user => {
     try { S = normalize(JSON.parse(remote)); } catch(e) { return; }
     lastSent = remote;
     try { localStorage.setItem(cacheKey(u), remote); } catch(e) {}
-    all(); toast('🔄 Mis à jour depuis un autre appareil');
+    all(); toast('🔄 Mis à jour depuis un autre appareil', true);
   }, err => {
     console.error(err);
     if (loaded) return toast('⚠ Synchro interrompue : ' + err.code);
@@ -1043,14 +1109,18 @@ document.addEventListener('click',ev=>{
     case'delcat':{const c=S.categories[b.dataset.i];if(!confirm(`Supprimer « ${c} » ? Les lignes existantes la conservent.`))return;S.categories.splice(b.dataset.i,1);break}
     case'export':{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([JSON.stringify(JSON.parse(snapshot()),null,2)],{type:'application/json'}));l.download='budget_perso_'+new Date().toISOString().slice(0,10)+'.json';l.click();return toast('Export téléchargé')}
     case'import':return $('file').click();
+    case'bk-now':backupNow('manuelle').then(ok=>{toast(ok?'💾 Sauvegarde créée':'Rien à sauvegarder',true);if(ok&&$('bk-list').innerHTML)listBackups()});return;
+    case'bk-list':return listBackups();
+    case'bk-res':return restoreBackup(b.dataset.id);
+    case'bk-dl':return downloadBackup(b.dataset.id);
     case'logout':{const u=currentUser&&currentUser.uid;
       Promise.race([flush(),new Promise(r=>setTimeout(r,1500))]).finally(()=>{stopSync();try{if(u)localStorage.removeItem(cacheKey(u))}catch(e){}auth.signOut()});
       return toast('Déconnexion…')}
-    case'reset':if(confirm('⚠ Effacer TOUT votre budget (Cloud et Local) ? Votre compte ne sera pas supprimé.')){S = normalize(fresh());save();all();}return;
+    case'reset':if(confirm('⚠ Effacer TOUT votre budget (Cloud et Local) ? Votre compte ne sera pas supprimé.')){backupNow('avant réinitialisation');S = normalize(fresh());save();all();}return;
   }
   save();all();
 });
-function importFile(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.templates||!d.months)throw 0;if(!confirm('Remplacer vos données par ce fichier ?'))return;S=normalize(d);save();all();toast('Import réussi')}catch(e){toast('Fichier invalide')}};r.readAsText(f);$('file').value=''}
+function importFile(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.templates||!d.months)throw 0;if(!confirm('Remplacer vos données par ce fichier ?'))return;backupNow('avant import');S=normalize(d);save();all();toast('Import réussi')}catch(e){toast('Fichier invalide')}};r.readAsText(f);$('file').value=''}
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='newcat')document.querySelector('[data-a=addcat]').click()});
 </script>
 <script>
@@ -1059,7 +1129,8 @@ const ICO={'Logement':'🏠','Énergie':'⚡','Assurance':'🛡','Abonnement':'�
 let pre=null,undo=null,tt,SK={k:null,d:1};
 const ser=()=>snapshot(),hide=()=>{$('toast').classList.remove('show');undo=null};
 ['click','change'].forEach(t=>document.addEventListener(t,()=>{pre=ser()},true));
-toast=function(msg){const e=$('toast');e.textContent=msg;
+toast=function(msg,noUndo){const e=$('toast');e.textContent=msg;
+  if(noUndo)pre=null; // chargement / synchro : jamais d'annulation possible
   if(pre&&pre!==ser()){const p=pre;undo=()=>{S=normalize(JSON.parse(p));save();all();hide();toast('Annulé')};const b=document.createElement('button');b.textContent='Annuler';b.onclick=undo;e.append(b)}
   const has=!!e.querySelector('button');e.classList.add('show');e.classList.toggle('act',has);clearTimeout(tt);tt=setTimeout(hide,has?5000:2200)};
 
