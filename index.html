@@ -671,6 +671,14 @@ let subs = [], accSubs = [], listSubs = {}, actSubs = {};
 let base = {}, sent = {};           // par clé ('meta' ou 'AAAA-MM') : dernière version serveur intégrée / dernière envoyée
 let saveTimer = null, synced = false, migrating = false, startedAt = 0;
 let INV = { in: [], out: [] }, ACT = {};
+// Épargne personnelle (comptes d'épargne simples, simulateur, choix d'inclusion) : rattachée à l'utilisateur, pas à un compte
+let U = { savAcc: [], savings: null, savIncl: {} }, userSaveTimer = null;
+function loadU(d) { if (userSaveTimer) return; U = { savAcc: (d && d.savAcc) || [], savings: (d && d.savings) || null, savIncl: (d && d.savIncl) || {} }; }
+function saveUser() {
+  if (!currentUser) return; clearTimeout(userSaveTimer);
+  userSaveTimer = setTimeout(() => { userSaveTimer = null; userDoc().set({ savAcc: U.savAcc, savings: U.savings, savIncl: U.savIncl }, { merge: true }).catch(e => toast('⚠ Épargne non enregistrée (' + (e.code || 'erreur') + ')')); }, 600);
+}
+const isSavAcc = (id = active) => ACC[id]?.kind === 'epargne';
 const isShared = (id = active) => (ACC[id]?.members || []).length > 1;
 const accName = (id = active) => ACC[id]?.name || 'Compte';
 
@@ -720,7 +728,7 @@ function mergeMeta(b, l, r) {
   o.categories = (r.categories || []).filter(c => !(bc.has(c) && !lc.includes(c))).concat(lc.filter(c => !bc.has(c) && !(r.categories || []).includes(c)));
   o.templates = {}; ['expenses','incomes','budgets'].forEach(t => o.templates[t] = mergeList(b.templates?.[t], l.templates?.[t], r.templates?.[t], 'tmplId'));
   o.savAcc = mergeList(b.savAcc, l.savAcc, r.savAcc);
-  ['savings','alerts'].forEach(f => o[f] = pick(b[f], l[f], r[f]));
+  ['savings','alerts','goal'].forEach(f => { const v = pick(b[f], l[f], r[f]); if (v === undefined) delete o[f]; else o[f] = v; });
   return o;
 }
 
@@ -786,6 +794,7 @@ function stopAll() {
   Object.values(listSubs).forEach(u => u()); listSubs = {};
   Object.values(actSubs).forEach(u => u()); actSubs = {};
   ACC = {}; accIds = []; active = null; USER = null; INV = { in: [], out: [] }; ACT = {};
+  clearTimeout(userSaveTimer); userSaveTimer = null; U = { savAcc: [], savings: null, savIncl: {} };
 }
 function showScreen(w) {
   $('auth-screen').hidden = w !== 'auth';
@@ -809,7 +818,15 @@ function openAccount(id) {
     S = normalize(o);
     Object.keys(months).forEach(k => { base[k] = sent[k] = canon(S.months[k]); });   // versions normalisées : pas de réécriture inutile
     if (meta) base.meta = sent.meta = metaOf(S);
-    loaded = true; showScreen('app'); render();
+    loaded = true;
+    // Ancienne épargne stockée dans le compte → déplacée vers l'utilisateur (une seule fois)
+    if ((S.savAcc || []).length || S.savings) {
+      const have = new Set(U.savAcc.map(a => a.id)); (S.savAcc || []).forEach(a => { if (!have.has(a.id)) U.savAcc.push(a); });
+      if (S.savings && !U.savings) U.savings = S.savings;
+      delete S.savAcc; delete S.savings; saveUser(); save();
+    }
+    if (UI.view === 'budgets' && isSavAcc(id)) UI.view = 'accueil';
+    showScreen('app'); render();
     if (!meta) save();
     setTimeout(() => { if (active === id && loaded) { dailyBackup(); const s = summaryOf(); if (js(s) !== js(ACC[id]?.summary)) accDoc(id).update({ summary: s }).catch(() => {}); } }, 1500);
   };
@@ -884,9 +901,9 @@ async function migrateOrCreate() {
 }
 
 /* ---------- Créer, renommer, partager, quitter, supprimer un compte ---------- */
-async function createAccount({ name, bank, color, site }) {
+async function createAccount({ name, bank, color, site, kind }) {
   const id = db.collection('accounts').doc().id, now = Date.now(), me = currentUser.uid, batch = db.batch();
-  batch.set(accDoc(id), { name: name || 'Nouveau compte', bank: bank || '', site: site || '', color: color || '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(normalize(fresh())), createdAt: now, updatedAt: now, updatedBy: me });
+  batch.set(accDoc(id), { name: name || 'Nouveau compte', bank: bank || '', site: site || '', kind: kind === 'epargne' ? 'epargne' : 'courant', color: color || '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(normalize(fresh())), createdAt: now, updatedAt: now, updatedBy: me });
   batch.update(userDoc(), { accounts: FV.arrayUnion(id) });
   await batch.commit();
   return id;
@@ -997,7 +1014,7 @@ auth.onAuthStateChanged(user => {
     if (d.metadata.hasPendingWrites) return;
     const ids = d.exists ? (d.data().accounts || []) : [];
     if (!ids.length) { if (!d.metadata.fromCache) migrateOrCreate(); return; }
-    USER = d.data();
+    USER = d.data(); loadU(USER);
     if (!USER.emailLower) userDoc().set({ email: user.email, emailLower: myEmail() }, { merge: true }).catch(() => {});
     syncAccountList(ids);
     if (loaded) renderChrome();
@@ -1228,7 +1245,8 @@ function chartOpts(extra = {}) {
 function rowHTML(x, type, k, opt = {}) {
   const inc = type === 'incomes', st = dueState(x, type, k);
   const name = x.name || (inc ? 'Recette' : x.cat);
-  const meta = [inc ? 'Recette' : esc(x.cat), x.isFixed ? 'fixe' : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', opt.sub || ''].filter(Boolean).join(' · ');
+  const sav = isSavAcc(), by = x.by && isShared() ? 'par ' + esc(x.by === currentUser?.email ? 'moi' : x.by.split('@')[0]) : '';
+  const meta = [sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
   const amount = inc ? '+' + eur(num(x.amount)) : minus(eff(x));
   let pill = '';
   if (opt.pill !== false && (st !== 'ok' || x.isFixed)) {
@@ -1260,7 +1278,7 @@ function render() {
   });
 }
 function renderChrome() {
-  $('navlist').innerHTML = VIEWS.map(([v, l, i]) => `<button class="nav${UI.view === v ? ' on' : ''}" data-view="${v}"${UI.view === v ? ' aria-current="page"' : ''}>${svg(i)}<span>${l}</span></button>`).join('');
+  $('navlist').innerHTML = VIEWS.filter(([v]) => !(v === 'budgets' && isSavAcc())).map(([v, l, i]) => `<button class="nav${UI.view === v ? ' on' : ''}" data-view="${v}"${UI.view === v ? ' aria-current="page"' : ''}>${svg(i)}<span>${l}</span></button>`).join('');
   const mv = MONTH_VIEWS.includes(UI.view), k = ck(), mn = MN[cur.getMonth()];
   $$('[data-a=prev],[data-a=next]').forEach(b => b.hidden = !mv);
   $$('[data-a=prev]')[0].innerHTML = svg('left', 18, 2.2); $$('[data-a=next]')[0].innerHTML = svg('right', 18, 2.2);
@@ -1276,6 +1294,7 @@ function renderChrome() {
 
 /* ---------- ACCUEIL ---------- */
 function vAccueil() {
+  if (isSavAcc()) return vSavAccueil();
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil');
   const empty = !S.templates.expenses.length && !S.templates.incomes.length && !m.expenses.length && !m.incomes.length;
   const ravTip = tip('reste à vivre', 'Reste à vivre', c.past ? 'Mois terminé : ce qui restait sur le compte en fin de mois.' + eq([['Fin de mois', eur(c.est)]], ['= Reste à vivre', eur(c.rav)]) : "Ce qu'il te restera en fin de mois si tu ne dépenses plus rien. Tes budgets (courses, loisirs…) se dépensent là-dedans." + eq([
@@ -1399,14 +1418,14 @@ function groups(m, k, flt, q) {
 function vMouvements() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-mouvements');
   const cnt = f => groups(m, k, f, '').reduce((s, g) => s + g.items.length, 0);
-  const F = [['all', 'Tout'], ['todo', 'À payer'], ['fixed', 'Fixes'], ['var', 'Variables'], ['inc', 'Recettes']];
+  const F = isSavAcc() ? [['all', 'Tout'], ['inc', 'Versements'], ['var', 'Retraits'], ['fixed', 'Automatiques']] : [['all', 'Tout'], ['todo', 'À payer'], ['fixed', 'Fixes'], ['var', 'Variables'], ['inc', 'Recettes']];
   const gs = groups(m, k, UI.flt, UI.q.trim().toLowerCase());
   const list = gs.map(g => `<div class="lbl">${g.label}</div>` + g.items.map(([x, t]) => rowHTML(x, t, k)).join('')).join('')
     || `<p class="empty">${UI.q ? 'Aucun résultat pour « ' + esc(UI.q) + ' ».' : 'Aucun mouvement ici. Clique sur « + Ajouter ».'}</p>`;
   const searchFocused = document.activeElement && document.activeElement.id === 'q';
   V.innerHTML = `
   <div class="tiles">
-    <div class="kp"><span>Recettes</span><b style="color:var(--ok)">+${eur(c.incAll)}</b><small>${eur(c.incIn)} reçues</small></div>
+    <div class="kp"><span>${isSavAcc() ? 'Versements' : 'Recettes'}</span><b style="color:var(--ok)">+${eur(c.incAll)}</b><small>${eur(c.incIn)} reçues</small></div>
     <div class="kp"><span>Dépenses ${tip('dépenses', 'Dépenses du mois', eq([['Charges fixes', eur(c.fixAll)], ['+ Dépenses variables', eur(c.varAll)]], ['= Total', eur(c.outAll)], 'Montants « ½ » comptés pour ta part seulement.'))}</span><b>${minus(c.outAll)}</b><small>${eur(c.outPaid)} payées</small></div>
     <div class="kp"><span>Reste à payer ${tip('reste à payer', 'Reste à payer', 'Dépenses de ce mois pas encore marquées « Payé », charges fixes comprises. Clique sur l\'étiquette d\'une ligne pour changer son statut.', 'lf')}</span><b style="color:var(--warn)">${eur(c.outPlan)}</b><small>${m.expenses.filter(e => e.status !== 'Payé').length} élément(s)</small></div>
   </div>
@@ -1490,11 +1509,11 @@ function vBudgets() {
 /* ---------- ÉPARGNE ---------- */
 const AT = { 'Livret A': ['#14B8A6','bank'], 'LDDS': ['#10B981','sprout'], 'LEP': ['#84CC16','coin'], 'PEL': ['#6366F1','home'], 'PEA': ['#8B5CF6','trend'],
   'Assurance-vie': ['#0EA5E9','shield'], 'CTO': ['#A855F7','trend'], 'Crypto': ['#F59E0B','coin'], 'Autre': ['#94A3B8','tag'] };
-const accs = () => S.savAcc = S.savAcc || [];
+const accs = () => U.savAcc = U.savAcc || [];
 const aBal = (a, k = nowK()) => { const ks = Object.keys(a.hist || {}).sort().filter(x => x <= k); return ks.length ? num(a.hist[ks[ks.length - 1]]) : 0; };
 const aLast = a => { const ks = Object.keys(a.hist || {}).sort(); return ks.length ? ks[ks.length - 1] : null; };
 const svD = () => ({ capital: 0, monthly: 200, mode: 'fix', salary: 0, salGrowth: 2, pct: 10, raise: 0, bonus: 0, rate: 4, infl: 2, years: 20, goal: 50000 });
-const sv = () => S.savings = Object.assign(svD(), S.savings || {});
+const sv = () => U.savings = Object.assign(svD(), U.savings || {});
 
 // Simulation mois par mois (versements en fin de mois, intérêts composés mensuellement)
 function svSim(p, r, base) {
@@ -1515,8 +1534,13 @@ function svSim(p, r, base) {
 }
 const gmTxt = gm => { const y = Math.floor(gm / 12), mo = gm % 12; return [y ? y + ' an' + (y > 1 ? 's' : '') : '', mo ? mo + ' mois' : ''].filter(Boolean).join(' '); };
 
+// Comptes bancaires de type Épargne (dont les comptes partagés) et choix de les compter dans mon épargne
+const savBankIds = () => accIds.filter(id => ACC[id] && isSavAcc(id));
+const savIncluded = id => U.savIncl[id] !== false;
 function vEpargne() {
-  const V = $('v-epargne'), A = accs(), p = sv(), tot = sum(A, a => aBal(a)), m = month(nowK());
+  const V = $('v-epargne'), A = accs(), p = sv(), m = month(nowK());
+  const SB = savBankIds(), simple = sum(A, a => aBal(a)), bankInc = sum(SB.filter(savIncluded), id => num(ACC[id].summary?.current));
+  const tot = simple + bankInc;
   const goalSim = svSim(Object.assign({}, p, { capital: tot || p.capital, years: 60 }), num(p.rate));
   const gp = num(p.goal) > 0 ? Math.min(100, pct(tot || p.capital, p.goal)) : 0;
   const eta = num(p.goal) > 0 ? ((tot || p.capital) >= num(p.goal) ? 'Objectif atteint' : goalSim.gm ? (() => { const d = new Date(); d.setMonth(d.getMonth() + goalSim.gm); return 'Atteint vers ' + MS[d.getMonth()] + ' ' + d.getFullYear() + ' au rythme simulé'; })() : 'Non atteint en 60 ans au rythme simulé') : '';
@@ -1533,7 +1557,7 @@ function vEpargne() {
     <section class="hero sav" aria-label="Épargne totale" style="flex:1 1 300px">
       <div class="deco"><i style="right:-50px;top:-70px;width:220px;height:220px;background:var(--sav-2);opacity:.7"></i></div>
       <div style="display:flex;flex-direction:column;gap:6px">
-        <span class="t">Épargne totale ${tip('épargne totale', 'Épargne totale', 'Somme des derniers soldes saisis sur tes comptes d\'épargne.' + eq(A.map(a => [esc(a.name), eur(aBal(a))]), ['= Total', eur(tot)], it > 0 ? `Intérêts estimés sur un an : ${eur(it)} (selon les taux saisis).` : ''), 'dn rt')}</span>
+        <span class="t">Épargne totale ${tip('épargne totale', 'Épargne totale', 'Tes comptes d\'épargne simples + les comptes Épargne que tu as choisi d\'inclure.' + eq(A.map(a => [esc(a.name), eur(aBal(a))]).concat(SB.filter(savIncluded).map(id => [esc(ACC[id].name) + (isShared(id) ? ' (partagé)' : ''), eur(ACC[id].summary?.current)])), ['= Total', eur(tot)], it > 0 ? `Intérêts estimés sur un an (comptes simples) : ${eur(it)}.` : ''), 'dn rt')}</span>
         <span class="v num" style="font-size:46px">${eur(tot)}</span>
         <span class="s">Épargne prévue ce mois : <b class="num">${eur(num(m.savingGoal))}</b></span>
       </div>
@@ -1541,10 +1565,21 @@ function vEpargne() {
         <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sav-t)"><span>Objectif ${eur0(p.goal)}</span><b class="num" style="color:#fff">${Math.round(gp)} %</b></div>
         <div class="hb"><i style="width:${gp}%"></i></div><span style="font-size:12px;color:var(--sav-t)">${eta}</span></div>` : ''}
     </section>
-    <section class="card" aria-label="Mes comptes" style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:2px">
-      <div class="ch"><h2>Mes comptes</h2><div class="chips">${A.length ? '<button class="btn sm" data-a="sav-bal">Mettre à jour mes soldes</button>' : ''}<button class="btn sm" data-a="sav-new">${svg('plus', 16)} Compte d'épargne</button></div></div>
+    <div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:20px">
+    <section class="card" aria-label="Comptes épargne bancaires" style="display:flex;flex-direction:column;gap:2px">
+      <div class="ch"><h2>Comptes Épargne ${tip('comptes épargne', 'Comptes Épargne', 'Les comptes du sélecteur dont le type est « Épargne » (Paramètres › Ce compte), partagés ou non. Leur solde se met à jour à chaque versement ou retrait. Coche ceux à compter dans ton épargne perso.', 'rt')}</h2><button class="btn sm" data-a="acc-new-sav">${svg('plus', 16)} Compte Épargne</button></div>
+      ${SB.map(id => { const a = ACC[id], inc = savIncluded(id), mem = membersOf(id);
+        return `<div class="row"><button class="rowb" data-a="acc-open" data-id="${id}"><span class="accbig">${accBadge(a, 20)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(accSub(id))}</span></span>
+          ${mem.length > 1 ? `<span style="display:flex">${mem.map(x => `<span class="avatar" style="margin-left:-4px;box-shadow:0 0 0 2px var(--card)">${initials(x.email)}</span>`).join('')}</span>` : ''}
+          <span class="ra num" style="width:110px;text-align:right;${inc ? '' : 'color:var(--mute);text-decoration:line-through'}">${a.summary ? eur(a.summary.current) : '—'}</span></button>
+          <label class="chk" style="min-height:0;font-size:12px;padding-right:8px" title="Compter ce compte dans mon épargne totale"><input type="checkbox" data-a="sav-incl" data-id="${id}" ${inc ? 'checked' : ''}>Inclure</label></div>`; }).join('')
+        || '<p class="empty" style="padding:14px">Aucun compte de type Épargne. Crée-en un, ou change le type d\'un compte existant dans Paramètres › Ce compte.</p>'}
+    </section>
+    <section class="card" aria-label="Mes comptes d'épargne simples" style="display:flex;flex-direction:column;gap:2px">
+      <div class="ch"><h2>Comptes d'épargne simples ${tip('comptes simples', 'Comptes simples', 'Un solde que tu mets à jour toi-même (Livret A, PEA, assurance-vie…). Personnels, visibles par toi seul.', 'rt')}</h2><div class="chips">${A.length ? '<button class="btn sm" data-a="sav-bal">Mettre à jour mes soldes</button>' : ''}<button class="btn sm" data-a="sav-new">${svg('plus', 16)} Compte d'épargne</button></div></div>
       ${rows}
     </section>
+    </div>
   </div>
   ${keys.length > 1 ? `<section class="card"><div class="ch"><h2>Évolution de mon épargne</h2></div><div class="cvh"><canvas id="c-acc"></canvas></div></section>` : ''}
   <section class="card" aria-label="Simulateur d'épargne" style="display:flex;flex-wrap:wrap;gap:28px">
@@ -1729,6 +1764,7 @@ function openPanel(type, id, opt = {}) {
     d: x ? JSON.parse(JSON.stringify(x)) : { name: '', amount: '', cat: opt.cat || S.categories[0] || 'Autre', date: opt.day != null ? String(opt.day) : isCur ? String(today()) : '',
       status: opt.repeat ? (type === 'incomes' ? 'En attente' : 'Prévu') : (type === 'incomes' ? 'Reçu' : 'Payé'), isDivided: false } };
   P.icon = P.d.img ? 'img' : P.d.site ? 'site' : 'cat';
+  if (!x && isSavAcc() && !opt.keepType) { P.type = type = 'incomes'; P.d.status = opt.repeat ? 'En attente' : 'Reçu'; }
   P.d.amount = fmtIn(P.d.amount);
   paintPanel();
   $('scrim').classList.add('on'); $('panel').classList.add('on'); $('panel').setAttribute('aria-hidden', 'false');
@@ -1740,23 +1776,23 @@ function closePanel(silent) {
 }
 function paintPanel() {
   if (!P) return;
-  const d = P.d, ex = P.type === 'expenses', fixed = !P.isNew && P.id && month()[P.type].find(e => e.id === P.id)?.isFixed;
+  const sav = isSavAcc(), d = P.d, ex = P.type === 'expenses' && !sav, fixed = !P.isNew && P.id && month()[P.type].find(e => e.id === P.id)?.isFixed;
   const names = [...new Set(Object.values(S.months).flatMap(m => m[P.type].map(e => e.name)).filter(Boolean))].slice(-80);
   const paid = isPaid(d, P.type);
   $('panel').innerHTML = `
   <div class="pbody">
     <div class="dh"><h2 id="pn-title">${P.isNew ? 'Nouveau mouvement' : 'Modifier'}</h2><button class="ib sm" data-p="close" aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
-    ${P.isNew ? `<div class="seg" role="group" aria-label="Type"><button class="${ex ? 'on' : ''}" data-p="type" data-v="expenses">Dépense</button><button class="${!ex ? 'on' : ''}" data-p="type" data-v="incomes">Recette</button></div>` : ''}
+    ${P.isNew ? `<div class="seg" role="group" aria-label="Type">${sav ? `<button class="${P.type === 'incomes' ? 'on' : ''}" data-p="type" data-v="incomes">Versement</button><button class="${P.type === 'expenses' ? 'on' : ''}" data-p="type" data-v="expenses">Retrait</button>` : `<button class="${ex ? 'on' : ''}" data-p="type" data-v="expenses">Dépense</button><button class="${!ex ? 'on' : ''}" data-p="type" data-v="incomes">Recette</button>`}</div>` : ''}
     <label class="amt"><input id="pn-a" inputmode="decimal" placeholder="0,00" aria-label="Montant" value="${esc(d.amount)}" data-pf="amount"><span>€</span></label>
     ${ex ? `<div style="display:flex;justify-content:center;margin-top:-8px"><button class="tog half${d.isDivided ? ' on' : ''}" data-p="half" aria-pressed="${!!d.isDivided}">½ Partagé${d.isDivided ? ' · ma part ' + eur(parseAmt(d.amount) / 2) : ''}</button></div>` : ''}
     <label class="fl">Libellé<input class="in" id="pn-n" list="pn-dl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="${ex ? 'ex. Courses' : 'ex. Salaire'}"><datalist id="pn-dl">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
     ${ex ? `<div class="fl">Catégorie<div class="chips">${S.categories.map(c => `<button class="chip cat${c === d.cat ? ' on' : ''}" style="--c:${catInfo(c).col}" data-p="cat" data-v="${esc(c)}"><i></i>${esc(c)}</button>`).join('')}<button class="chip" data-p="addcat">+ Nouvelle</button></div>
       ${P.addCat ? `<span style="display:flex;gap:8px"><input class="in" id="pn-nc" placeholder="Nom de la catégorie"><button class="btn" data-p="addcat-ok">Ajouter</button></span>` : ''}</div>` : ''}
-    <div class="fl">Icône
+    ${sav ? '' : `<div class="fl">Icône
       <div class="seg" role="group" aria-label="Icône"><button class="${P.icon === 'cat' ? 'on' : ''}" data-p="icon" data-v="cat">${ex ? 'Catégorie' : 'Par défaut'}</button><button class="${P.icon === 'site' ? 'on' : ''}" data-p="icon" data-v="site">Logo du site</button><button class="${P.icon === 'img' ? 'on' : ''}" data-p="icon" data-v="img">Mon image</button></div>
       ${P.icon === 'site' ? `<span style="display:flex;gap:10px;align-items:center">${ico({ cat: d.cat, site: cleanSite(d.site) }, P.type)}<input class="in" id="pn-site" value="${esc(d.site || '')}" data-pf="site" placeholder="Site web, ex. monfournisseur.fr" style="font-weight:500"></span><small>L'icône est fournie par le site lui-même (service d'icônes de Google).</small>` : ''}
       ${P.icon === 'img' ? `<span style="display:flex;gap:10px;align-items:center">${ico({ cat: d.cat, img: d.img }, P.type)}<button class="btn sm" data-p="pickimg">${d.img ? 'Changer l\'image' : 'Choisir une image'}</button></span>` : ''}
-    </div>
+    </div>`}
     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
       <label class="fl">Jour du mois<input class="in" id="pn-d" type="number" min="1" max="31" inputmode="numeric" value="${esc(d.date)}" data-pf="date" placeholder="sans date"></label>
       <div class="fl">Statut<button class="tog${paid ? ' ok' : ''}" data-p="status">${paid ? '✓ ' + (ex ? 'Payé' : 'Reçu') : (ex ? '○ À payer' : '○ En attente')}</button></div>
@@ -1764,7 +1800,7 @@ function paintPanel() {
     ${fixed ? `<div class="fixinfo"><b>Élément récurrent (chaque mois)</b>
         <label class="chk" style="min-height:0;color:inherit"><input type="checkbox" data-p="future" ${P.future ? 'checked' : ''}>Appliquer aussi aux mois suivants</label>
         <button class="lnk" data-p="stop" style="align-self:flex-start;color:inherit;text-decoration:underline">Arrêter la récurrence à partir du mois prochain</button></div>`
-      : `<label class="chk"><input type="checkbox" data-p="repeat" ${P.repeat ? 'checked' : ''}>Répéter chaque mois (${ex ? 'charge' : 'recette'} fixe)</label>`}
+      : `<label class="chk"><input type="checkbox" data-p="repeat" ${P.repeat ? 'checked' : ''}>Répéter chaque mois (${sav ? (P.type === 'incomes' ? 'versement automatique' : 'retrait automatique') : ex ? 'charge fixe' : 'recette fixe'})</label>`}
   </div>
   <div class="pfoot">
     <button class="btn p" style="flex:1" data-p="save">Enregistrer</button>
@@ -1799,10 +1835,10 @@ function savePanel() {
   mutate(() => {
     const m = month(k);
     const clean = { name: d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat), amount: Math.round(amt * 100) / 100, date: day(d.date), status: d.status };
-    if (t === 'expenses') Object.assign(clean, { cat: d.cat, isDivided: !!d.isDivided });
+    if (t === 'expenses') Object.assign(clean, isSavAcc() ? { cat: 'Autre', isDivided: false } : { cat: d.cat, isDivided: !!d.isDivided });
     const setIcon = x => { delete x.site; delete x.img; if (icon === 'site' && cleanSite(d.site)) x.site = cleanSite(d.site); if (icon === 'img' && d.img) x.img = d.img; };
     let x;
-    if (isNew) { x = { id: uid(), ...clean, isFixed: false }; setIcon(x); m[t].unshift(x); }
+    if (isNew) { x = { id: uid(), ...clean, isFixed: false }; if (isShared()) x.by = currentUser.email; setIcon(x); m[t].unshift(x); }
     else {
       x = m[t].find(e => e.id === id); Object.assign(x, clean); setIcon(x);
       if (x.isFixed && future) {
@@ -1811,7 +1847,7 @@ function savePanel() {
       }
     }
     if (!x.isFixed && repeat) { const tp = tplFrom(t, x); x.isFixed = true; x.tmplId = tp.tmplId; tplAdd(t, tp, shiftK(k, 1)); }
-  }, (isNew ? (t === 'incomes' ? 'Recette ajoutée : ' : 'Dépense ajoutée : ') : 'Modifié : ') + (d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat)) + ' · ' + eur(t === 'expenses' && d.isDivided ? amt / 2 : amt));
+  }, (isNew ? (isSavAcc() ? (t === 'incomes' ? 'Versement : ' : 'Retrait : ') : t === 'incomes' ? 'Recette ajoutée : ' : 'Dépense ajoutée : ') : 'Modifié : ') + (d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat)) + ' · ' + eur(t === 'expenses' && d.isDivided ? amt / 2 : amt));
   closePanel();
 }
 // Image perso → redimensionnée en 96 px (stockée avec les données)
@@ -1883,17 +1919,19 @@ function accountDialog(id) {
   formDialog({ title: a ? a.name : 'Nouveau compte d\'épargne',
     fields: [{ id: 'name', label: 'Nom', value: a ? a.name : '', ph: 'ex. Livret A' }, { id: 'type', label: 'Type', type: 'select', options: Object.keys(AT), value: a ? a.type : 'Livret A' },
       { id: 'bal', label: 'Solde actuel', type: 'num', value: a ? aBal(a) : '' }, { id: 'rate', label: 'Taux annuel (%)', type: 'num', value: a ? a.rate : '', hint: 'Sert à estimer les intérêts et le rendement moyen.' }],
-    onSave: v => mutate(() => {
+    onSave: v => userMut(() => {
       const x = a ? accs().find(y => y.id === id) : (accs().push({ id: uid(), hist: {} }), accs()[accs().length - 1]);
       x.name = v.name || v.type; x.type = v.type; x.rate = num(v.rate); x.hist = x.hist || {}; x.hist[nowK()] = num(v.bal);
     }, a ? 'Compte mis à jour' : 'Compte ajouté'),
-    onDelete: a ? () => { if (confirm('Supprimer ce compte et son historique ?')) mutate(() => { S.savAcc = accs().filter(x => x.id !== id); }, 'Compte supprimé'); } : null });
+    onDelete: a ? () => { if (confirm('Supprimer ce compte et son historique ?')) userMut(() => { U.savAcc = accs().filter(x => x.id !== id); }, 'Compte supprimé'); } : null });
 }
 function balancesDialog() {
   const A = accs();
   formDialog({ title: 'Mes soldes · ' + mlab(nowK()), intro: 'Saisis le solde actuel de chaque compte. L\'historique mois par mois est conservé.',
     fields: A.map(a => ({ id: a.id, label: esc(a.name), type: 'num', value: aBal(a) })),
-    onSave: v => mutate(() => { accs().forEach(a => { if (v[a.id] != null) { a.hist = a.hist || {}; a.hist[nowK()] = v[a.id]; } }); }, 'Soldes mis à jour') });
+    onSave: v => userMut(() => { accs().forEach(a => { if (v[a.id] != null) { a.hist = a.hist || {}; a.hist[nowK()] = v[a.id]; } }); }, 'Soldes mis à jour') });
+}
+function userMut(fn, msg) { fn(); saveUser(); render(); if (msg) toast(msg);
 }
 function alertsDialog() {
   const L = alerts(nowK()), d = $('dlg');
@@ -1903,6 +1941,53 @@ function alertsDialog() {
   d.querySelector('[data-x]').onclick = () => d.close();
   d.onclick = e => { const b = e.target.closest('[data-al-i]'); if (!b) return; const a = L[+b.dataset.alI]; d.close(); cur = keyDate(nowK()); go(a.go, { flt: a.flt || 'all', q: a.q || '' }); };
   d.showModal();
+}
+
+/* ---------- ACCUEIL D'UN COMPTE ÉPARGNE ---------- */
+function vSavAccueil() {
+  const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil'), a = ACC[active] || {}, G = S.goal || {};
+  const inMo = sum(m.incomes.filter(i => i.status === 'Reçu')), outMo = sum(m.expenses.filter(e => e.status === 'Payé'), eff);
+  // Variation moyenne sur les derniers mois écoulés (pour estimer la date de l'objectif)
+  const past = Object.keys(S.months).sort().filter(x => x < nowK() && !isDraft(S.months[x])).slice(-6);
+  const avg = past.length ? sum(past, x => calc(S.months[x], x).flow) / past.length : c.flow;
+  const goal = num(G.amount), gp = goal > 0 ? Math.min(100, pct(c.current, goal)) : 0;
+  let eta = '';
+  if (goal > 0) { if (c.current >= goal) eta = 'Objectif atteint 🎉'; else if (avg > 0) { const n = Math.ceil((goal - c.current) / avg), d = new Date(); d.setMonth(d.getMonth() + n); eta = `Atteint vers ${MS[d.getMonth()]} ${d.getFullYear()} au rythme moyen (${eur0(avg)} / mois)`; } else eta = 'Rythme actuel insuffisant pour estimer une date'; }
+  const ks = Object.keys(S.months).sort().filter(x => x <= nowK() && !isDraft(S.months[x]));
+  const recent = []; groups(m, k, 'all', '').filter(g => g.key !== 'next').forEach(g => g.items.forEach(it => recent.push([g, it])));
+  let lastG = null;
+  const recentHTML = recent.slice(0, 8).map(([g, [x, t]]) => { const h = g !== lastG ? `<div class="lbl">${g.label}</div>` : ''; lastG = g; return h + rowHTML(x, t, k, { pill: false }); }).join('') || '<p class="empty">Aucun versement ce mois-ci. Clique sur « + Ajouter ».</p>';
+  const mem = membersOf(active);
+  V.innerHTML = `
+  <div class="grid2">
+    <section class="hero sav" aria-label="Solde du compte épargne" style="background:color-mix(in srgb,${a.color || '#0F766E'} 45%,#03221F)">
+      <div class="deco"><i style="right:-50px;top:-70px;width:240px;height:240px;background:rgba(255,255,255,.08)"></i></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span class="t">${esc(a.name || 'Épargne')} · solde actuel ${tip('solde', 'Solde du compte', eq([['Solde au 1er ' + MN[cur.getMonth()].toLowerCase(), eur(c.init)], ['+ Versements reçus', eur(inMo)], ['− Retraits', eur(outMo)]], ['= Solde actuel', eur(c.current)], c.bankSet ? '' : 'Solde du 1er calculé depuis le mois précédent.'), 'dn rt')}</span>
+        <span class="v num">${eur(c.current)}</span>
+        <span class="s">Ce mois : <b class="num">+${eur(inMo)}</b> versés · <b class="num">−${eur(outMo)}</b> retirés</span>
+      </div>
+      ${goal > 0 ? `<div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sav-t)"><span>${esc(G.name || 'Objectif')} · ${eur0(goal)}</span><b class="num" style="color:#fff">${Math.round(gp)} %</b></div>
+        <div class="hb"><i style="width:${gp}%"></i></div><span style="font-size:12px;color:var(--sav-t)">${eta}</span></div>` : ''}
+      <div style="display:flex;gap:14px;flex-wrap:wrap"><button class="bk" data-a="sav-goal">${goal > 0 ? 'Modifier l\'objectif' : '+ Fixer un objectif commun'}</button><button class="bk" data-a="bank">Solde de départ : ${eur(c.init)} ${c.bankSet ? '(saisi)' : '(calculé)'}</button></div>
+    </section>
+    <section class="card small" style="display:flex;flex-direction:column;gap:12px"><h2>${mem.length > 1 ? 'Membres' : 'Compte personnel'}</h2>
+      ${mem.map(x => `<div class="row" style="padding:2px"><span class="avatar lg">${initials(x.email)}</span><span class="rt"><span class="rn">${esc(x.me ? 'Moi' : x.email)}</span><span class="rs">${x.owner ? 'Propriétaire' : 'Membre'}</span></span></div>`).join('')}
+      <label class="chk" style="font-size:13px"><input type="checkbox" data-a="sav-incl" data-id="${active}" ${savIncluded(active) ? 'checked' : ''}>Compter dans mon épargne totale</label>
+      ${mem.length < 2 ? '<button class="lnk" data-view="parametres" style="align-self:flex-start">Partager ce compte</button>' : ''}
+    </section>
+  </div>
+  ${ks.length > 1 ? `<section class="card"><div class="ch"><h2>Évolution du solde</h2></div><div class="cvh" style="height:240px"><canvas id="c-savacc"></canvas></div></section>` : ''}
+  <section class="card" style="display:flex;flex-direction:column;gap:2px"><div class="ch"><h2>Versements et retraits · ${MN[cur.getMonth()]}</h2><button class="lnk" data-view="mouvements">Tout voir</button></div>${recentHTML}</section>`;
+  if (ks.length > 1) chart('c-savacc', { type: 'line', data: { labels: ks.map(mshort), datasets: [{ label: 'Solde fin de mois', data: ks.map(x => Math.round(calc(S.months[x], x).est)), borderColor: a.color || '#0F766E', backgroundColor: 'transparent', tension: .3, borderWidth: 3, pointRadius: 3 }] }, options: chartOpts({ plugins: { legend: { display: false }, tooltip: { callbacks: { label: x => ' ' + eur(x.raw) } } } }) });
+}
+function savGoalDialog() {
+  const G = S.goal || {};
+  formDialog({ title: 'Objectif du compte', intro: isShared() ? 'Objectif commun, visible par tous les membres.' : 'Objectif de ce compte.',
+    fields: [{ id: 'name', label: 'Nom', value: G.name || '', ph: 'ex. Vacances, apport maison…' }, { id: 'amount', label: 'Montant visé', type: 'num', value: G.amount || '' }],
+    onSave: v => mutate(() => { if (!(v.amount > 0)) delete S.goal; else S.goal = { name: v.name, amount: v.amount }; }, v.amount > 0 ? 'Objectif : ' + (v.name || '') + ' ' + eur0(v.amount) : 'Objectif retiré'),
+    onDelete: G.amount ? () => mutate(() => { delete S.goal; }, 'Objectif retiré') : null, delLabel: 'Retirer' });
 }
 
 /* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */
@@ -1921,7 +2006,7 @@ const initials = e => String(e || '?').trim().charAt(0).toUpperCase();
 function membersOf(id) { const a = ACC[id] || {}; return (a.members || []).map(u => ({ uid: u, email: a.memberEmails?.[u] || '?', owner: u === a.owner, me: u === currentUser?.uid })); }
 function accSub(id) {
   const a = ACC[id] || {}, others = membersOf(id).filter(m => !m.me);
-  return [a.bank, others.length ? 'partagé avec ' + others.map(m => m.email.split('@')[0]).join(', ') : ''].filter(Boolean).join(' · ') || 'Compte personnel';
+  return [a.kind === 'epargne' ? 'Épargne' : '', a.bank, others.length ? 'partagé avec ' + others.map(m => m.email.split('@')[0]).join(', ') : ''].filter(Boolean).join(' · ') || 'Compte personnel';
 }
 function accSwitcherHTML() {
   const a = ACC[active] || {};
@@ -1952,7 +2037,7 @@ function vComptes() {
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px">
     ${ids.map(id => { const a = ACC[id], sm = a.summary, mem = membersOf(id);
       return `<button class="card" data-a="acc-open" data-id="${id}" style="border:0;text-align:left;display:flex;flex-direction:column;gap:14px;${id === active ? 'box-shadow:inset 0 0 0 2px ' + (a.color || '#4338CA') : ''}">
-        <span style="display:flex;align-items:center;gap:12px" class="accbig">${accBadge(a, 20)}<span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.bank || (mem.length > 1 ? 'Compte partagé' : 'Compte personnel'))}</span></span></span>
+        <span style="display:flex;align-items:center;gap:12px" class="accbig">${accBadge(a, 20)}<span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc([a.kind === 'epargne' ? 'Épargne' : 'Courant', a.bank].filter(Boolean).join(' · '))}</span></span></span>
         <span style="display:flex;justify-content:space-between;gap:10px"><span><span class="note" style="display:block;font-size:12px">Solde actuel</span><b class="num" style="font-size:20px">${sm ? eur(sm.current) : '—'}</b></span><span style="text-align:right"><span class="note" style="display:block;font-size:12px">Fin de mois</span><b class="num" style="font-size:15px">${sm ? eur(sm.est) : '—'}</b></span></span>
         ${mem.length > 1 ? `<span class="chips">${mem.map(m => `<span class="chip" style="min-height:28px;padding:3px 10px;font-size:12px"><span class="avatar">${initials(m.email)}</span>${esc(m.me ? 'Moi' : m.email)}</span>`).join('')}</span>` : ''}
       </button>`; }).join('')}
@@ -1970,6 +2055,7 @@ function accountSettingsHTML() {
       <label class="fl">Banque<input class="in" data-acc="bank" value="${esc(a.bank || '')}" placeholder="ex. Crédit Agricole"></label>
     </div>
     <label class="fl">Logo · site web de la banque<span style="display:flex;gap:10px;align-items:center"><span class="accbig">${accBadge(a, 20)}</span><input class="in" data-acc="site" value="${esc(a.site || '')}" placeholder="ex. credit-agricole.fr (rempli tout seul pour les banques connues)" style="font-weight:500"></span></label>
+    <div class="fl">Type de compte<div class="seg" role="group" aria-label="Type de compte"><button class="${a.kind !== 'epargne' ? 'on' : ''}" data-a="acc-kind" data-v="courant">Courant</button><button class="${a.kind === 'epargne' ? 'on' : ''}" data-a="acc-kind" data-v="epargne">Épargne</button></div><small>Épargne : écran simplifié (solde, versements, objectif commun) et compté dans l'onglet Épargne.</small></div>
     <div class="fl">Couleur<div class="chips">${ACOL.map(([n, c]) => `<button class="chip cat${(a.color || '#4338CA') === c ? ' on' : ''}" style="--c:${c}" data-a="acc-color" data-v="${c}" aria-label="${n}"><i></i>${n}</button>`).join('')}</div></div>
     <div class="fl">Membres
       ${mem.map(m => `<div class="row" style="padding:4px 2px"><span class="avatar lg">${initials(m.email)}</span><span class="rt"><span class="rn">${esc(m.email)}${m.me ? ' (moi)' : ''}</span><span class="rs">${m.owner ? 'Propriétaire' : 'Membre'}</span></span>${owner && !m.me ? `<button class="btn sm danger" data-a="acc-kick" data-id="${m.uid}">Retirer</button>` : ''}</div>`).join('')}
@@ -2011,16 +2097,17 @@ function vMessages() {
 }
 
 /* ---------- Actions comptes & messagerie ---------- */
-function newAccountDialog() {
+function newAccountDialog(kind) {
   formDialog({ title: 'Nouveau compte', intro: 'Un compte = un compte bancaire, avec ses propres mouvements, charges fixes et budgets.',
     fields: [{ id: 'name', label: 'Nom', ph: 'ex. Revolut perso' }, { id: 'bank', label: 'Banque', ph: 'ex. Revolut, Crédit Agricole, Boursorama…' },
       { id: 'site', label: 'Site web de la banque (logo, facultatif)', ph: 'rempli tout seul pour les banques connues' },
+      { id: 'kind', label: 'Type', type: 'select', options: ['Courant', 'Épargne'], value: kind === 'epargne' ? 'Épargne' : 'Courant' },
       { id: 'color', label: 'Couleur', type: 'select', options: ACOL.map(c => c[0]), value: ACOL[(accIds.length) % ACOL.length][0] },
       { id: 'email', label: 'Partager avec (facultatif)', ph: 'email de l\'autre personne', hint: 'Pour un compte joint. Tu pourras aussi inviter plus tard.' }],
     ok: 'Créer',
     onSave: v => {
       if (!v.name) { toast('Donne un nom au compte'); return false; }
-      createAccount({ name: v.name, bank: v.bank, site: cleanSite(v.site) || guessSite(v.bank, v.name), color: (ACOL.find(c => c[0] === v.color) || ACOL[0])[1] }).then(id => {
+      createAccount({ name: v.name, bank: v.bank, site: cleanSite(v.site) || guessSite(v.bank, v.name), color: (ACOL.find(c => c[0] === v.color) || ACOL[0])[1], kind: v.kind === 'Épargne' ? 'epargne' : 'courant' }).then(id => {
         if (v.email) inviteMember(v.email, id, v.name).then(() => toast('Compte créé · invitation envoyée à ' + v.email)).catch(e => toast(e.message));
         else toast('Compte « ' + v.name + ' » créé');
         UI.view = 'accueil'; openAccount(id);
@@ -2036,6 +2123,10 @@ document.addEventListener('click', ev => {
     case 'acc-open': $('accmenu')?.remove(); if (id !== active) openAccount(id); return go(UI.view === 'comptes' || UI.view === 'messages' ? 'accueil' : UI.view);
     case 'comptes': $('accmenu')?.remove(); return go('comptes');
     case 'acc-new': $('accmenu')?.remove(); return newAccountDialog();
+    case 'acc-new-sav': return newAccountDialog('epargne');
+    case 'acc-kind': return accDoc(active).update({ kind: b.dataset.v }).then(() => { if (b.dataset.v === 'epargne' && UI.view === 'budgets') UI.view = 'accueil'; toast(b.dataset.v === 'epargne' ? 'Compte passé en Épargne' : 'Compte passé en Courant'); }).catch(fail);
+    case 'sav-incl': { ev.stopPropagation(); U.savIncl[id] = b.checked; saveUser(); render(); return toast(b.checked ? 'Compté dans ton épargne' : 'Retiré de ton épargne totale'); }
+    case 'sav-goal': return savGoalDialog();
     case 'acc-color': return accDoc(active).update({ color: b.dataset.v }).catch(fail);
     case 'inv-send': { const e = $('inv-email').value; return inviteMember(e).then(() => { toast('Invitation envoyée à ' + e.trim()); $('inv-email').value = ''; }).catch(fail); }
     case 'inv-cancel': return db.collection('invites').doc(id).delete().then(() => toast('Invitation supprimée')).catch(fail);
@@ -2095,12 +2186,12 @@ document.addEventListener('click', ev => {
     case 'sav-acc': return accountDialog(id);
     case 'sav-new': return accountDialog(null);
     case 'sav-bal': return balancesDialog();
-    case 'svmode': sv().mode = b.dataset.v; save(); return render();
+    case 'svmode': sv().mode = b.dataset.v; saveUser(); return render();
     case 'svmore': UI.svMore = !UI.svMore; return render();
     case 'sv-use': { const tot = sum(accs(), x => aBal(x)), A = accs(); const w = tot > 0 ? sum(A, x => aBal(x) * num(x.rate)) / tot : 0;
-      sv().capital = Math.round(tot * 100) / 100; if (w > 0) sv().rate = Math.round(w * 10) / 10; save(); render(); return toast('Départ : ' + eur(tot)); }
+      sv().capital = Math.round(tot * 100) / 100; if (w > 0) sv().rate = Math.round(w * 10) / 10; saveUser(); render(); return toast('Départ : ' + eur(tot)); }
     case 'sv-apply': { const v = Math.round(svSim(sv(), num(sv().rate)).d1 * 100) / 100; return mutate(() => { month(nowK()).savingGoal = v; }, 'Épargne prévue de ' + mlab(nowK()) + ' : ' + eur(v)); }
-    case 'sv-take': sv().monthly = num(month(nowK()).savingGoal); sv().mode = 'fix'; save(); render(); return toast('Versement repris : ' + eur(sv().monthly));
+    case 'sv-take': sv().monthly = num(month(nowK()).savingGoal); sv().mode = 'fix'; saveUser(); render(); return toast('Versement repris : ' + eur(sv().monthly));
     // Historique
     case 'hp': UI.hp = +b.dataset.v; return render();
     case 'hy': UI.hy += +b.dataset.v; return render();
@@ -2151,7 +2242,7 @@ document.addEventListener('change', ev => {
   if (el.id === 'file') return importFile(el.files[0]);
   if (el.id === 'imgfile') return readImage(el.files[0]);
   if (el.id === 'pn-site' && P) return paintPanel();
-  if (el.dataset.sv) return save();
+  if (el.dataset.sv) return saveUser();
   if (el.dataset.al) { const f = el.dataset.al, v = parseFloat(el.value) || 0; return mutate(() => { AL()[f] = v; }, 'Seuil d\'alerte enregistré'); }
   const tr = el.closest('[data-tpl]'), f = el.dataset.f;
   if (tr && f) {
