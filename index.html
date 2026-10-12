@@ -559,13 +559,17 @@ function calc(m, key) {
   r.fixLeft = r.fixAll - r.fixPaid;
   r.spent = r.fixPaid + r.varAll;
   r.planned = r.fixAll + r.budAll + r.varOut;
-  r.rav = r.incAll - r.fixAll - r.budEff - r.varOut - r.saving;               // reste à vivre (non affecté)
+  r.free = r.incAll - r.fixAll - r.budEff - r.varOut - r.saving;              // part des recettes non affectée (écran Budgets)
   r.init = chainBalance(key);
   r.bankSet = m.bankBalance != null;
   r.current = r.init + r.incIn - r.outPaid;
   r.flow = monthFlow(m, key);
   r.est = r.init + r.flow;
   r.past = key < nowK();
+  r.incWait = r.incAll - r.incIn;
+  // Reste à vivre = solde actuel + recettes à venir − dépenses à payer − épargne prévue
+  // (= ce qu'il restera fin de mois si tu ne dépenses plus rien ; les budgets se dépensent dedans)
+  r.rav = r.past ? r.est : r.current + r.incWait - r.outPlan - r.saving;
   r.left = daysLeft(key);
   r.perDay = r.left > 0 ? Math.max(0, r.rav) / r.left : null;
   return r;
@@ -596,7 +600,7 @@ function alerts(k = ck()) {
     if (late.length) o.push({ lvl: 'bad', text: `${late.length} charge${late.length > 1 ? 's' : ''} fixe${late.length > 1 ? 's' : ''} en retard · ${eur(sum(late, eff))}`, go: 'mouvements', flt: 'todo' });
   }
   if (!c.past && c.est < num(A.thr)) o.push({ lvl: 'bad', text: `Fin de mois estimée : ${eur(c.est)} (seuil ${eur(A.thr)})`, go: 'accueil' });
-  if (!c.past && c.rav < 0) o.push({ lvl: 'bad', text: `Reste à vivre négatif : ${eur(c.rav)}`, go: 'budgets' });
+  if (!c.past && c.rav < 0) o.push({ lvl: 'bad', text: `Reste à vivre négatif : ${eur(c.rav)}`, go: 'accueil' });
   m.budgets.forEach(b => {
     const s = vspent(m, b.cat), q = num(b.amount);
     if (q > 0 && s > q) o.push({ lvl: 'bad', text: `Budget ${b.cat} dépassé de ${eur(s - q)}`, go: 'budgets' });
@@ -854,11 +858,28 @@ function catInfo(c) {
   let h = 0; for (const ch of String(c)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return { col: XPAL[h % XPAL.length], ic: 'tag' };
 }
+// Logo lié au NOM : dès qu'un libellé a un site ou une image (charge fixe ou mouvement), tous les mouvements du même nom l'affichent
+let logoMap = null;
+function logoFor(name) {
+  const n = String(name || '').trim().toLowerCase(); if (!n) return null;
+  if (!logoMap) {
+    logoMap = {};
+    const add = x => { const k = String(x.name || '').trim().toLowerCase(); if (!k || !(x.site || x.img)) return; logoMap[k] = x.img ? { img: x.img } : { site: x.site }; };
+    Object.keys(S.months).sort().forEach(k => { const m = S.months[k]; m.expenses.concat(m.incomes).forEach(add); });
+    S.templates.expenses.concat(S.templates.incomes).forEach(add);      // les charges fixes ont le dernier mot
+  }
+  return logoMap[n] || null;
+}
+// Icône du site : Google, puis DuckDuckGo si Google ne renvoie que l'icône générique ; sinon icône de catégorie
+const ddg = s => 'https://icons.duckduckgo.com/ip3/' + encodeURIComponent(s) + '.ico';
+function logoOk(im) { if (im.naturalWidth && im.naturalWidth < 24 && !im.dataset.alt) { im.dataset.alt = 1; im.src = ddg(im.dataset.site); } }
+function logoKo(im) { if (!im.dataset.alt) { im.dataset.alt = 1; im.src = ddg(im.dataset.site); } else im.remove(); }
 // Icône d'un mouvement : image perso > icône du site web > icône de catégorie
 function ico(x, type, cls = '') {
   const ci = type === 'incomes' ? { col: '#10B981', ic: 'up' } : catInfo(x.cat);
-  const over = x.img ? `<img src="${esc(x.img)}" alt="">`
-    : x.site ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(x.site)}&amp;sz=64" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
+  const lg = (x.img || x.site) ? x : (logoFor(x.name) || {});
+  const over = lg.img ? `<img src="${esc(lg.img)}" alt="">`
+    : lg.site ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(lg.site)}&amp;sz=64" data-site="${esc(lg.site)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="logoOk(this)" onerror="logoKo(this)">` : '';
   return `<span class="ico ${cls}" style="--c:${ci.col}">${svg(ci.ic, cls ? 17 : 20)}${over}</span>`;
 }
 
@@ -943,6 +964,7 @@ function go(v, opt = {}) {
 }
 function render() {
   if (!loaded) return;
+  logoMap = null;
   keepFocus(() => {
     renderChrome();
     VIEWS.forEach(([v]) => $('v-' + v).hidden = v !== UI.view);
@@ -966,9 +988,8 @@ function renderChrome() {
 function vAccueil() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil');
   const empty = !S.templates.expenses.length && !S.templates.incomes.length && !m.expenses.length && !m.incomes.length;
-  const ravTip = tip('reste à vivre', 'Reste à vivre', "Ce qu'il te reste pour vivre ce mois, une fois tout le prévu mis de côté." + eq([
-      ['Recettes du mois', eur(c.incAll)], ['− Charges fixes', eur(c.fixAll)], ['− Budgets', eur(c.budEff)],
-      c.varOut > 0 && ['− Dépenses hors budget', eur(c.varOut)], ['− Épargne prévue', eur(c.saving)]],
+  const ravTip = tip('reste à vivre', 'Reste à vivre', c.past ? 'Mois terminé : ce qui restait sur le compte en fin de mois.' + eq([['Fin de mois', eur(c.est)]], ['= Reste à vivre', eur(c.rav)]) : "Ce qu'il te restera en fin de mois si tu ne dépenses plus rien. Tes budgets (courses, loisirs…) se dépensent là-dedans." + eq([
+      ['Solde actuel', eur(c.current)], c.incWait > 0 && ['+ Recettes à venir', eur(c.incWait)], ['− Dépenses à payer', eur(c.outPlan)], ['− Épargne prévue', eur(c.saving)]],
       ['= Reste à vivre', eur(c.rav)], c.perDay != null ? `Par jour : ${eur(Math.max(0, c.rav))} ÷ ${c.left} jour${c.left > 1 ? 's' : ''} restant${c.left > 1 ? 's' : ''} = ${eur(c.perDay)}.` : ''), 'dn rt');
   const depTip = tip('dépensé', 'Dépensé ce mois', eq([['Charges fixes payées', eur(c.fixPaid)], ['+ Dépenses variables', eur(c.varAll)]], ['= Dépensé', eur(c.spent)],
       `Prévu = charges fixes (${eur(c.fixAll)}) + budgets (${eur(c.budAll)})${c.varOut > 0 ? ` + hors budget (${eur(c.varOut)})` : ''} = ${eur(c.planned)}.`), 'lf');
@@ -980,9 +1001,8 @@ function vAccueil() {
       ['= Reste à payer', eur(c.outPlan)]));
   const finTip = tip('fin de mois estimée', 'Fin de mois estimée', c.past
       ? 'Ce mois est terminé : calcul sur ce qui a réellement été reçu et payé.' + eq([['Solde au 1er', eur(c.init)], ['+ Recettes reçues', eur(c.incIn)], ['− Dépenses payées', eur(c.outPaid)], ['− Épargne', eur(c.saving)]], ['= Fin de mois', eur(c.est)])
-      : `Ce qu'il devrait rester sur ton compte le ${dim(k)} ${MN[cur.getMonth()].toLowerCase()}.` + eq([['Solde au 1er', eur(c.init)], ['+ Recettes du mois', eur(c.incAll)], ['− Charges fixes', eur(c.fixAll)],
-        ['− Dépenses variables', eur(c.varAll)], ['− Reste des budgets', eur(c.budLeft)], ['− Épargne prévue', eur(c.saving)]], ['= Fin de mois', eur(c.est)],
-        'On suppose que tes budgets seront dépensés en entier : c\'est une estimation prudente.'), 'lf');
+      : `Ce qu'il devrait rester sur ton compte le ${dim(k)} ${MN[cur.getMonth()].toLowerCase()} si tu dépenses tes budgets jusqu'au bout.` + eq([['Reste à vivre', eur(c.rav)], ['− Reste des budgets', eur(c.budLeft)]], ['= Fin de mois', eur(c.est)],
+        c.budLeft > 0 ? 'Estimation prudente : si tu dépenses moins que tes budgets, tu finiras plus haut (au mieux ' + eur(c.rav) + ').' : ''), 'lf');
 
   // Prochains prélèvements
   const isCur = k === nowK();
@@ -1114,7 +1134,7 @@ function vMouvements() {
 function vBudgets() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-budgets'), isCur = k === nowK();
   const base = Math.max(c.incAll, c.fixAll + c.budEff + c.varOut + c.saving) || 1;
-  const seg = [['Charges fixes', c.fixAll, '#6366F1'], ['Budgets', c.budEff, '#10B981'], ['Hors budget', c.varOut, '#F97316'], ['Épargne', c.saving, '#14B8A6'], ['Libre', Math.max(0, c.rav), 'color-mix(in srgb,var(--mute) 35%,var(--soft))']].filter(s => s[1] > 0);
+  const seg = [['Charges fixes', c.fixAll, '#6366F1'], ['Budgets', c.budEff, '#10B981'], ['Hors budget', c.varOut, '#F97316'], ['Épargne', c.saving, '#14B8A6'], ['Libre', Math.max(0, c.free), 'color-mix(in srgb,var(--mute) 35%,var(--soft))']].filter(s => s[1] > 0);
   const cards = m.budgets.map(b => {
     const s = vspent(m, b.cat), a = num(b.amount), p = pct(s, a), ci = catInfo(b.cat), r = a - s;
     const col = p > 100 ? 'var(--bad)' : p > 85 ? '#F97316' : ci.col;
@@ -1147,11 +1167,11 @@ function vBudgets() {
   const paidTot = sum(fixed.filter(e => e.status === 'Payé'), eff), todoTot = sum(fixed.filter(e => e.status !== 'Payé'), eff);
 
   V.innerHTML = `
-  <section class="card" aria-label="D'où vient le reste à vivre" style="display:flex;flex-direction:column;gap:14px">
-    <div class="ch" style="margin:0"><h2>D'où vient le reste à vivre</h2><button class="btn sm" data-a="saving">Épargne prévue : ${eur(c.saving)} · modifier</button></div>
+  <section class="card" aria-label="Répartition des recettes" style="display:flex;flex-direction:column;gap:14px">
+    <div class="ch" style="margin:0"><h2>Répartition de tes recettes ${tip('répartition', 'Répartition des recettes', 'Comment tes recettes du mois sont réparties entre ce qui est prévu (charges fixes, budgets, épargne) et ce qui reste libre.' + eq([['Recettes', eur(c.incAll)], ['− Charges fixes', eur(c.fixAll)], ['− Budgets', eur(c.budEff)], c.varOut > 0 && ['− Hors budget', eur(c.varOut)], ['− Épargne', eur(c.saving)]], ['= Libre', eur(c.free)]), 'rt')}</h2><button class="btn sm" data-a="saving">Épargne prévue : ${eur(c.saving)} · modifier</button></div>
     <div class="stack" style="height:26px;border-radius:8px">${seg.map(([, v, col]) => `<i style="flex:${v / base};--c:${col}"></i>`).join('')}</div>
     <div class="legend">${seg.map(([l, v, col]) => `<span><i style="--c:${col}"></i>${l} <b class="num">${eur(v)}</b></span>`).join('')}<span style="margin-left:auto">sur <b class="num">${eur(c.incAll)}</b> de recettes</span></div>
-    ${c.rav < 0 ? `<div class="alert bad">${svg('warn')}<span>Ce mois-ci, le prévu dépasse les recettes de <b>${eur(-c.rav)}</b>.</span></div>` : ''}
+    ${c.free < 0 ? `<div class="alert bad">${svg('warn')}<span>Ce mois-ci, le prévu dépasse les recettes de <b>${eur(-c.free)}</b>.</span></div>` : ''}
     ${outCats.length ? `<p class="note">Dépenses sans budget : ${outCats.map(esc).join(', ')} (${eur(c.varOut)}). <button class="lnk" data-a="bud-new" data-v="${esc(outCats[0])}">Créer un budget ${esc(outCats[0])}</button></p>` : ''}
   </section>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px">
