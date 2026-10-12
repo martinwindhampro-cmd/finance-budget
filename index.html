@@ -3,8 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F3F4F8">
+<meta name="theme-color" content="#F3F4F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0D1020" media="(prefers-color-scheme: dark)">
 <title>Budget</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -230,6 +239,8 @@ tr.go:hover td{background:var(--hov)}
 .top-sw{display:none}
 .tdate{font-size:13px;font-weight:600;color:var(--ink2);background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:7px 12px;white-space:nowrap}
 .tdate .tds{display:none}
+@media (max-width:760px){input:not(#pn-a),select,textarea{font-size:16px!important}}   /* iPhone : évite le zoom automatique quand on touche un champ */
+@media (display-mode: standalone){body{-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}input,textarea,[contenteditable]{-webkit-user-select:text;user-select:text}}
 @media (max-width:760px){.tdate .tdl{display:none}.tdate .tds{display:inline}.tdate{padding:6px 10px;font-size:12px}}
 .hero .stats>div>small{display:block;margin-top:2px}
 .accmenu{position:fixed;z-index:70;width:300px;max-width:calc(100% - 16px);background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 16px 40px rgba(13,16,32,.22);padding:6px;display:flex;flex-direction:column}
@@ -1052,7 +1063,13 @@ function markSeen() {
   if (Object.keys(upd).length) userDoc().update(upd).catch(() => {});
 }
 function browserNotify(title, body) {
-  try { if (window.Notification && Notification.permission === 'granted' && document.visibilityState === 'hidden') new Notification(title, { body }); } catch (e) {}
+  try {
+    if (!window.Notification || Notification.permission !== 'granted' || document.visibilityState !== 'hidden') return;
+    const o = { body, icon: 'icon-192.png', badge: 'icon-192.png' };
+    // iPhone (app installée) et Android n'acceptent les notifications que via le service worker
+    if (navigator.serviceWorker?.controller) navigator.serviceWorker.ready.then(r => r.showNotification(title, o)).catch(() => {});
+    else new Notification(title, o);
+  } catch (e) {}
 }
 
 /* ---------- Sauvegardes automatiques (par compte) ---------- */
@@ -1799,6 +1816,7 @@ function vParametres() {
       <button class="btn" data-a="logout">${svg('out', 18)} Se déconnecter</button>
       <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
     </section>
+    ${installHTML()}
     <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Données & sauvegardes</h2>
       <p class="note">Une copie automatique chaque jour à la connexion, et avant chaque import, réinitialisation ou restauration (40 dernières gardées).</p>
       <div class="chips"><button class="btn sm" data-a="bk-now">Sauvegarder maintenant</button><button class="btn sm" data-a="bk-list">Voir / restaurer</button></div>
@@ -2337,6 +2355,24 @@ async function receiveTransfer(t) {
   finally { xfBusy.delete(t.id); }
 }
 
+/* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installEvt = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (loaded && UI.view === 'parametres') render(); });
+addEventListener('appinstalled', () => { installEvt = null; toast('✅ Application installée'); if (loaded) render(); });
+if ('serviceWorker' in navigator && window.isSecureContext) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW', e)));
+function installHTML() {
+  let body;
+  if (standalone()) body = '<p class="note"><b style="color:var(--ok)">✓ Tu utilises l\'application installée.</b> Elle se met à jour toute seule à chaque ouverture.</p>';
+  else if (installEvt) body = '<p class="note">Ajoute Budget à ton ordinateur ou ton téléphone : une icône, sa propre fenêtre, sans barre d\'adresse.</p><button class="btn p" data-a="install">Installer l\'application</button>';
+  else if (isIOS()) body = `<p class="note">Sur iPhone, l'installation se fait depuis <b>Safari</b> :</p>
+      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px"><li>Touche le bouton <b>Partager</b> <span style="display:inline-block;vertical-align:-3px">${'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>'}</span> en bas de l'écran</li><li>Fais défiler et choisis <b>« Sur l'écran d'accueil »</b></li><li>Touche <b>Ajouter</b>, puis ouvre Budget depuis son icône</li></ol>
+      <p class="note" style="font-size:12px">Tu devras te reconnecter une fois dans l'application.</p>`;
+  else body = '<p class="note">Dans <b>Chrome</b> ou <b>Edge</b> : clique sur l\'icône d\'installation à droite de la barre d\'adresse (un écran avec une flèche), ou menu ⋮ › <b>Installer Budget</b> (Edge : ⋯ › Applications › Installer).</p>';
+  return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Application</h2>${body}</section>`;
+}
+
 
 /* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */
 const ACOL = [['Indigo','#4338CA'],['Vert','#0F766E'],['Bleu','#0369A1'],['Violet','#6D28D9'],['Rose','#BE185D'],['Orange','#C2410C'],['Ardoise','#334155']];
@@ -2526,6 +2562,7 @@ document.addEventListener('click', ev => {
         nm + ' : ' + (t === 'incomes' ? (was ? 'en attente' : 'reçu ✓') : (was ? 'à payer' : 'payé ✓')) + ' · ' + eur(t === 'incomes' ? num(x0.amount) : eff(x0))); }
     case 'flt': UI.flt = b.dataset.v; return render();
     case 'alerts': return go('messages');
+    case 'install': if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; render(); }); } return;
     case 'al-new': return alertNewDialog();
     case 'al-edit': return alertDialog(null, id);
     case 'xf-hide': (U.xfHide = U.xfHide || []).push(id); saveUser(); return render();
