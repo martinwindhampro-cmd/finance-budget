@@ -218,6 +218,25 @@ tr.go:hover td{background:var(--hov)}
 .x:hover{background:var(--bad-s);color:var(--bad)}
 .cvh{position:relative;height:280px}
 
+/* Comptes : sélecteur, menu, avatars */
+.accsw{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--card);text-align:left;margin-bottom:14px;box-shadow:var(--shadow)}
+.accsw:hover{border-color:var(--mute)}
+.accsw>i,.accmenu .am>i{width:32px;height:32px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--c);color:#fff}
+.accsw span,.accmenu .am span{flex:1;min-width:0;display:flex;flex-direction:column}
+.accsw b,.accmenu b{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.accsw small,.accmenu small{font-size:11.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top-sw{display:none}
+.accmenu{position:fixed;z-index:70;width:300px;max-width:calc(100% - 16px);background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 16px 40px rgba(13,16,32,.22);padding:6px;display:flex;flex-direction:column}
+.accmenu .am{display:flex;align-items:center;gap:10px;padding:9px 10px;border:0;background:none;border-radius:10px;text-align:left;color:var(--ink);min-height:44px}
+.accmenu .am:hover,.accmenu .am:focus-visible{background:var(--soft)}
+.accmenu .am.on{background:var(--acc-s)}
+.accmenu em{font-style:normal;font-weight:700;font-size:13px;color:var(--ink2)}
+.accmenu hr{border:0;border-top:1px solid var(--line);margin:6px 4px}
+.avatar{--c:var(--acc);width:20px;height:20px;border-radius:50%;background:var(--c);color:#fff;font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.avatar.lg{width:36px;height:36px;font-size:14px;margin-right:10px}
+#bell.on{background:var(--acc-s);color:var(--acc-d)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
 /* Fiche latérale d'édition */
 .scrim{position:fixed;inset:0;background:rgba(13,16,32,.45);z-index:60;opacity:0;pointer-events:none;transition:opacity .2s}
 .scrim.on{opacity:1;pointer-events:auto}
@@ -265,7 +284,9 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 @media (max-width:900px){
   .app{padding:16px 14px calc(96px + env(safe-area-inset-bottom,0px));gap:0}
   .side{position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;z-index:50;flex-direction:row;background:var(--card);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom,0px));gap:2px}
-  .side .brand,.side .who{display:none}
+  .side .brand,.side .who,.side-sw{display:none}
+  .top-sw{display:block}
+  .top-sw .accsw{margin-bottom:0}
   .nav{flex:1;flex-direction:column;gap:3px;font-size:10.5px;padding:7px 2px;justify-content:center;text-align:center;min-height:52px}
   .top h1{font-size:21px}
   .hero{padding:22px}
@@ -313,10 +334,12 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 <div class="app" id="app" hidden>
   <nav class="side" aria-label="Navigation principale">
     <div class="brand"><i><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></i>Budget</div>
+    <div class="accsw-slot side-sw"></div>
     <div id="navlist" style="display:contents"></div>
     <div class="who" id="who"></div>
   </nav>
   <main>
+    <div class="accsw-slot top-sw"></div>
     <header class="top">
       <div class="mnav">
         <button class="ib" data-a="prev" aria-label="Mois précédent" title="Mois précédent (←)"></button>
@@ -335,6 +358,8 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
     <section class="view" id="v-epargne" hidden></section>
     <section class="view" id="v-historique" hidden></section>
     <section class="view" id="v-parametres" hidden></section>
+    <section class="view" id="v-messages" hidden></section>
+    <section class="view" id="v-comptes" hidden></section>
   </main>
 </div>
 
@@ -618,112 +643,372 @@ function alerts(k = ck()) {
   return o.sort((a, b) => (a.lvl === 'bad' ? 0 : 1) - (b.lvl === 'bad' ? 0 : 1));
 }
 
-/* ============================== 5. SYNCHRO & SAUVEGARDES ============================== */
-const cacheKey = u => LS + '_' + u;
-const docRef = (u = currentUser.uid) => db.collection('users').doc(u).collection('data').doc('budget');
-let loaded = false, unsub = null, saveTimer = null, waitTimer = null, lastSent = null;
+/* ============================== 5. COMPTES, SYNCHRO & SAUVEGARDES ==============================
+   Firestore :
+     users/{uid}                    profil : email, liste des comptes, dernières lectures (messagerie)
+     accounts/{id}                  un compte bancaire : nom, banque, membres, réglages (meta), résumé
+     accounts/{id}/months/{AAAA-MM} un document par mois (mouvements, budgets, solde du 1er…)
+     accounts/{id}/activity/…       journal des modifications (comptes partagés)
+     accounts/{id}/backups/…        sauvegardes automatiques
+     invites/{compte}_{email}       invitations à rejoindre un compte
+   Chaque modification n'envoie que les mois changés. Si quelqu'un d'autre a modifié le même mois
+   entre-temps, les deux versions sont fusionnées élément par élément (rien n'est écrasé).            */
+const FV = firebase.firestore.FieldValue;
+const accDoc = id => db.collection('accounts').doc(id);
+const monthCol = id => accDoc(id).collection('months');
+const userDoc = (u = currentUser.uid) => db.collection('users').doc(u);
+const legacyDoc = (u = currentUser.uid) => userDoc(u).collection('data').doc('budget');
+const myEmail = () => String(currentUser?.email || '').toLowerCase();
 
-// État à sauvegarder (sans les mois seulement consultés)
-function snapshot() {
-  const months = {};
+let loaded = false;                 // compte actif chargé
+let ACC = {};                       // comptes connus : id -> document (nom, banque, membres, résumé…)
+let accIds = [];                    // comptes de l'utilisateur, dans l'ordre
+let active = null;                  // compte affiché
+let USER = null;                    // document users/{uid}
+let subs = [], accSubs = [], listSubs = {}, actSubs = {};
+let base = {}, sent = {};           // par clé ('meta' ou 'AAAA-MM') : dernière version serveur intégrée / dernière envoyée
+let saveTimer = null, synced = false, migrating = false, startedAt = 0;
+let INV = { in: [], out: [] }, ACT = {};
+const isShared = (id = active) => (ACC[id]?.members || []).length > 1;
+const accName = (id = active) => ACC[id]?.name || 'Compte';
+
+/* ---------- Découpage des données : réglages + un bloc par mois ---------- */
+// Texte canonique (clés triées) : deux versions identiques donnent toujours le même texte, sur tous les appareils
+const sortKeys = o => Array.isArray(o) ? o.map(sortKeys) : (o && typeof o === 'object') ? Object.keys(o).sort().reduce((r, k) => (r[k] = sortKeys(o[k]), r), {}) : o;
+const canon = o => JSON.stringify(sortKeys(o));
+function metaOf(s) { const o = {}; Object.keys(s).forEach(k => { if (k !== 'months') o[k] = s[k]; }); return canon(o); }
+function parts() {
+  const p = { meta: metaOf(S) };
   for (const [k, m] of Object.entries(S.months)) {
-    if (m._snap !== undefined) { if (JSON.stringify(m) === m._snap) continue; delete m._snap; }
-    months[k] = m;
+    if (m._snap !== undefined) { if (JSON.stringify(m) === m._snap) continue; delete m._snap; }   // mois seulement consulté
+    p[k] = canon(m);
   }
-  return JSON.stringify({ ...S, months });
+  return p;
 }
+function snapshot() {
+  const p = parts(), o = JSON.parse(p.meta); o.months = {};
+  Object.keys(p).sort().forEach(k => { if (k !== 'meta') o.months[k] = JSON.parse(p[k]); });
+  return JSON.stringify(o);
+}
+
+/* ---------- Fusion de deux versions (base commune, la mienne, la distante) ---------- */
+const J = s => s ? JSON.parse(s) : null;
+const js = x => JSON.stringify(x);
+function mergeList(b = [], l = [], r = [], key = 'id') {
+  const bm = new Map(b.map(x => [x[key], js(x)])), lm = new Map(l.map(x => [x[key], x])), rm = new Map(r.map(x => [x[key], x]));
+  const out = [];
+  r.forEach(x => {
+    const id = x[key], bx = bm.get(id), lx = lm.get(id), rs = js(x);
+    if (!lx) { if (bx !== undefined && bx === rs) return; out.push(x); return; }        // supprimé chez moi
+    out.push(js(lx) !== bx && rs === bx ? lx : x);                                       // modifié seulement chez moi
+  });
+  l.forEach((x, i) => { const id = x[key]; if (rm.has(id) || bm.has(id)) return; i === 0 ? out.unshift(x) : out.push(x); });  // ajouts
+  return out;
+}
+const pick = (b, l, r) => js(l) !== js(b) ? l : r;
+function mergeMonth(b, l, r) {
+  b = b || {}; const o = Object.assign({}, r);
+  ['expenses','incomes','budgets'].forEach(f => o[f] = mergeList(b[f], l[f], r[f]));
+  ['bankBalance','savingGoal'].forEach(f => o[f] = pick(b[f], l[f], r[f]));
+  return o;
+}
+function mergeMeta(b, l, r) {
+  b = b || {}; const o = Object.assign({}, r);
+  const bc = new Set(b.categories || []), lc = l.categories || [];
+  o.categories = (r.categories || []).filter(c => !(bc.has(c) && !lc.includes(c))).concat(lc.filter(c => !bc.has(c) && !(r.categories || []).includes(c)));
+  o.templates = {}; ['expenses','incomes','budgets'].forEach(t => o.templates[t] = mergeList(b.templates?.[t], l.templates?.[t], r.templates?.[t], 'tmplId'));
+  o.savAcc = mergeList(b.savAcc, l.savAcc, r.savAcc);
+  ['savings','alerts'].forEach(f => o[f] = pick(b[f], l[f], r[f]));
+  return o;
+}
+
+/* ---------- Envoi ---------- */
 function save() {
-  if (!currentUser || !loaded) return;                    // jamais avant le chargement des vraies données
-  const data = snapshot();
-  try { localStorage.setItem(cacheKey(currentUser.uid), data); } catch (e) { toast('⚠ Sauvegarde locale impossible'); }
+  if (!currentUser || !loaded || !active) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(pushCloud, 800);                 // regroupe les modifications rapprochées
+  saveTimer = setTimeout(pushCloud, 800);                     // regroupe les modifications rapprochées
+}
+function summaryOf() {
+  const k = nowK(), c = calc(month(k), k);
+  return { k, current: Math.round(c.current * 100) / 100, est: Math.round(c.est * 100) / 100, rav: Math.round(c.rav * 100) / 100 };
 }
 function pushCloud() {
   saveTimer = null;
-  if (!currentUser || !loaded) return Promise.resolve();
-  const data = snapshot(); lastSent = data;
-  return docRef().set({ budgetData: data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
-    .catch(e => { console.error(e); toast('⚠ Synchro cloud refusée — données gardées sur cet appareil'); });
+  if (!currentUser || !loaded || !active) return Promise.resolve();
+  const id = active, p = parts(), batch = db.batch(), now = Date.now(), me = currentUser.uid;
+  let n = 0, waiting = false;
+  for (const [k, v] of Object.entries(p)) {
+    if (sent[k] === v) continue;
+    if (k === 'meta') { n++; continue; }                       // réglages : envoyés avec le document du compte
+    if (k !== 'meta' && base[k] === undefined && !synced) { waiting = true; continue; }   // mois pas encore reçu du serveur : on attend
+    sent[k] = v; n++;
+    batch.set(monthCol(id).doc(k), { data: v, updatedAt: now, updatedBy: me });
+  }
+  Object.keys(sent).filter(k => k !== 'meta' && !(k in p)).forEach(k => { batch.delete(monthCol(id).doc(k)); delete sent[k]; delete base[k]; n++; });
+  if (!n) { if (waiting) saveTimer = setTimeout(pushCloud, 1500); return Promise.resolve(); }
+  const upd = { summary: summaryOf(), updatedAt: now, updatedBy: me };
+  if (sent.meta !== p.meta) { upd.meta = p.meta; sent.meta = p.meta; }
+  batch.update(accDoc(id), upd);
+  if (waiting) saveTimer = setTimeout(pushCloud, 1500);
+  return batch.commit().catch(e => { console.error(e); toast('⚠ Synchro refusée (' + (e.code || 'erreur') + ') — vérifie ta connexion'); });
 }
 function flush() { if (!saveTimer) return Promise.resolve(); clearTimeout(saveTimer); return pushCloud(); }
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
 addEventListener('pagehide', () => flush());
-function stopSync() {
-  if (unsub) { unsub(); unsub = null; }
-  clearTimeout(saveTimer); saveTimer = null; clearTimeout(waitTimer); waitTimer = null;
-  loaded = false; lastSent = null;
+
+/* ---------- Réception ---------- */
+// Intègre une version distante d'une clé ; renvoie true si l'affichage doit changer
+function onRemote(key, R) {
+  if (R == null) return false;
+  if (R === sent[key]) { base[key] = R; return false; }        // écho de notre propre envoi
+  const curStr = key === 'meta' ? metaOf(S) : (S.months[key] && !isDraft(S.months[key]) ? canon(S.months[key]) : null);
+  let next = R;
+  if (curStr != null && curStr !== base[key] && curStr !== R)
+    next = canon(key === 'meta' ? mergeMeta(J(base[key]), J(curStr), J(R)) : mergeMonth(J(base[key]), J(curStr), J(R)));
+  if (key === 'meta') { const o = JSON.parse(next); o.months = S.months; S = normalize(o); }
+  else { S.months[key] = JSON.parse(next); S = normalize(S); }
+  const norm = key === 'meta' ? metaOf(S) : canon(S.months[key]);
+  if (next === R) { base[key] = sent[key] = norm; }
+  else { base[key] = R; sent[key] = undefined; save(); }        // version fusionnée à renvoyer
+  return true;
 }
-const readCache = u => { try { return localStorage.getItem(cacheKey(u)); } catch (e) { return null; } };
+
+function stopAccount() {
+  accSubs.forEach(u => u()); accSubs = [];
+  clearTimeout(saveTimer); saveTimer = null;
+  loaded = false; base = {}; sent = {}; synced = false;
+}
+function stopAll() {
+  stopAccount();
+  subs.forEach(u => u()); subs = [];
+  Object.values(listSubs).forEach(u => u()); listSubs = {};
+  Object.values(actSubs).forEach(u => u()); actSubs = {};
+  ACC = {}; accIds = []; active = null; USER = null; INV = { in: [], out: [] }; ACT = {};
+}
 function showScreen(w) {
   $('auth-screen').hidden = w !== 'auth';
   $('loading').hidden = w !== 'loading';
   $('app').hidden = w !== 'app';
 }
 
-/* ---------- Sauvegardes automatiques (users/{uid}/backups) ---------- */
+// Ouvre un compte : réglages + tous ses mois, puis écoute les modifications
+function openAccount(id) {
+  if (!id) return;
+  if (active && active !== id) flush();
+  stopAccount(); closePanel(true);
+  active = id; undoSnap = null; UI.calDay = null;
+  try { localStorage.setItem('acc_' + currentUser.uid, id); } catch (e) {}
+  if ($('app').hidden) showScreen('loading');
+  let meta = null, gotMeta = false, gotMonths = false, months = {};
+  const start = () => {
+    if (loaded || !gotMeta || !gotMonths || active !== id) return;
+    const o = meta ? JSON.parse(meta) : fresh(); o.months = {};
+    Object.entries(months).forEach(([k, v]) => { o.months[k] = JSON.parse(v); });
+    S = normalize(o);
+    Object.keys(months).forEach(k => { base[k] = sent[k] = canon(S.months[k]); });   // versions normalisées : pas de réécriture inutile
+    if (meta) base.meta = sent.meta = metaOf(S);
+    loaded = true; showScreen('app'); render();
+    if (!meta) save();
+    setTimeout(() => { if (active === id && loaded) { dailyBackup(); const s = summaryOf(); if (js(s) !== js(ACC[id]?.summary)) accDoc(id).update({ summary: s }).catch(() => {}); } }, 1500);
+  };
+  accSubs.push(accDoc(id).onSnapshot({ includeMetadataChanges: true }, d => {
+    if (!d.exists) { if (!d.metadata.fromCache) accountGone(id); return; }
+    ACC[id] = d.data();
+    if (d.metadata.hasPendingWrites) return;
+    if (!loaded) { meta = d.data().meta || null; gotMeta = true; return start(); }
+    if (onRemote('meta', d.data().meta || null)) remoteToast(d.data().updatedBy); else renderChrome();
+  }, err => { console.error(err); accountGone(id); }));
+  accSubs.push(monthCol(id).onSnapshot({ includeMetadataChanges: true }, q => {
+    if (!q.metadata.fromCache && !synced) { synced = true; }
+    if (!loaded) { q.docs.forEach(d => months[d.id] = d.data().data); gotMonths = true; return start(); }
+    let ch = false, by = null;
+    q.docChanges().forEach(c => {
+      if (c.doc.metadata.hasPendingWrites) return;
+      const k = c.doc.id;
+      if (c.type === 'removed') { if (sent[k] !== undefined) { delete S.months[k]; delete sent[k]; delete base[k]; ch = true; } return; }
+      if (onRemote(k, c.doc.data().data)) { ch = true; by = c.doc.data().updatedBy; }
+    });
+    if (ch) remoteToast(by);
+  }, err => console.error(err)));
+}
+function remoteToast(by) {
+  render();
+  if (by && by !== currentUser.uid) toast('🔄 Modifié par ' + (ACC[active]?.memberEmails?.[by] || 'un autre membre'));
+}
+function accountGone(id) {
+  delete ACC[id];
+  if (USER && (USER.accounts || []).includes(id)) userDoc().update({ accounts: FV.arrayRemove(id) }).catch(() => {});
+  if (active === id) { stopAccount(); active = null; const nx = accIds.find(x => x !== id); if (nx) openAccount(nx); }
+  toast('Un compte n\'est plus accessible (supprimé ou partage retiré).');
+}
+
+/* ---------- Liste des comptes de l'utilisateur ---------- */
+function syncAccountList(ids) {
+  accIds = ids.slice();
+  Object.keys(listSubs).filter(id => !ids.includes(id)).forEach(id => { listSubs[id](); delete listSubs[id]; delete ACC[id]; });
+  ids.filter(id => !listSubs[id]).forEach(id => {
+    listSubs[id] = accDoc(id).onSnapshot(d => {
+      if (!d.exists) return;
+      ACC[id] = d.data(); syncActivity();
+      if (loaded) { renderChrome(); if (UI.view === 'comptes' || UI.view === 'messages' || (UI.view === 'parametres' && id === active)) render(); }
+    }, () => { if (USER && (USER.accounts || []).includes(id)) accountGone(id); });
+  });
+  if (!active || !ids.includes(active)) {
+    let want = null; try { want = localStorage.getItem('acc_' + currentUser.uid); } catch (e) {}
+    openAccount(ids.includes(want) ? want : ids[0]);
+  }
+}
+
+// Première connexion avec cette version : l'ancien bloc de données devient le premier compte
+async function migrateOrCreate() {
+  if (migrating) return; migrating = true;
+  try {
+    let legacy = null;
+    try { const d = await legacyDoc().get({ source: 'server' }); if (d.exists) legacy = d.data().budgetData || null; } catch (e) {}
+    const o = legacy ? normalize(JSON.parse(legacy)) : normalize(fresh());
+    const id = db.collection('accounts').doc().id, now = Date.now(), me = currentUser.uid, batch = db.batch();
+    batch.set(accDoc(id), { name: 'Compte principal', bank: '', color: '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(o), createdAt: now, updatedAt: now, updatedBy: me });
+    batch.set(userDoc(), { email: currentUser.email, emailLower: myEmail(), accounts: [id], migratedFromV1: !!legacy, createdAt: now }, { merge: true });
+    await batch.commit();
+    const ks = Object.keys(o.months);                               // les mois après la création du compte (règles de sécurité)
+    for (let i = 0; i < ks.length; i += 400) {
+      const b2 = db.batch(); ks.slice(i, i + 400).forEach(k => b2.set(monthCol(id).doc(k), { data: canon(o.months[k]), updatedAt: now, updatedBy: me })); await b2.commit();
+    }
+    if (legacy) toast('✅ Tes données sont maintenant dans « Compte principal ». Renomme-le dans Paramètres.');
+  } catch (e) {
+    console.error(e);
+    $('loading').innerHTML = '⚠ Impossible de préparer tes comptes (' + esc(e.code || e.message) + ').<br>Vérifie les règles Firestore puis <button class="btn p" onclick="location.reload()">Réessayer</button>';
+  } finally { migrating = false; }
+}
+
+/* ---------- Créer, renommer, partager, quitter, supprimer un compte ---------- */
+async function createAccount({ name, bank, color }) {
+  const id = db.collection('accounts').doc().id, now = Date.now(), me = currentUser.uid, batch = db.batch();
+  batch.set(accDoc(id), { name: name || 'Nouveau compte', bank: bank || '', color: color || '#4338CA', owner: me, members: [me], memberEmails: { [me]: currentUser.email }, meta: metaOf(normalize(fresh())), createdAt: now, updatedAt: now, updatedBy: me });
+  batch.update(userDoc(), { accounts: FV.arrayUnion(id) });
+  await batch.commit();
+  return id;
+}
+async function inviteMember(email, id = active, name = accName(id)) {
+  const to = String(email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error('Adresse email invalide.');
+  if (to === myEmail()) throw new Error('Tu ne peux pas t\'inviter toi-même.');
+  if (Object.values(ACC[id]?.memberEmails || {}).some(e => String(e).toLowerCase() === to)) throw new Error('Cette personne est déjà membre.');
+  await db.collection('invites').doc(id + '_' + to).set({ acc: id, accName: name, from: currentUser.uid, fromEmail: currentUser.email, to, status: 'pending', at: Date.now() });
+}
+async function acceptInvite(inv) {
+  const me = currentUser.uid, batch = db.batch();
+  batch.update(accDoc(inv.acc), { members: FV.arrayUnion(me), ['memberEmails.' + me]: currentUser.email });
+  batch.update(db.collection('invites').doc(inv.id), { status: 'accepted', answeredAt: Date.now() });
+  batch.set(userDoc(), { accounts: FV.arrayUnion(inv.acc) }, { merge: true });
+  await batch.commit();
+  try { localStorage.setItem('acc_' + me, inv.acc); } catch (e) {}
+}
+async function leaveAccount(id) {
+  const a = ACC[id], me = currentUser.uid, others = (a.members || []).filter(x => x !== me);
+  const upd = { members: FV.arrayRemove(me), ['memberEmails.' + me]: FV.delete() };
+  if (a.owner === me) { if (!others.length) throw new Error('Tu es le seul membre : supprime le compte plutôt.'); upd.owner = others[0]; }
+  const batch = db.batch();
+  batch.update(accDoc(id), upd);
+  batch.update(userDoc(), { accounts: FV.arrayRemove(id) });
+  await batch.commit();
+}
+async function removeMember(id, uid) {
+  await accDoc(id).update({ members: FV.arrayRemove(uid), ['memberEmails.' + uid]: FV.delete() });
+}
+async function deleteCol(ref) {
+  const q = await ref.get();
+  for (let i = 0; i < q.docs.length; i += 400) { const b = db.batch(); q.docs.slice(i, i + 400).forEach(d => b.delete(d.ref)); await b.commit(); }
+}
+async function deleteAccountData(id) {
+  if (id === active) stopAccount();
+  for (const c of ['months', 'activity', 'backups']) await deleteCol(accDoc(id).collection(c));
+  const inv = await db.collection('invites').where('acc', '==', id).where('from', '==', currentUser.uid).get().catch(() => ({ docs: [] }));
+  await Promise.all(inv.docs.map(d => d.ref.delete()));
+  await accDoc(id).delete();
+  await userDoc().update({ accounts: FV.arrayRemove(id) });
+}
+
+/* ---------- Activité des comptes partagés (messagerie + notifications) ---------- */
+function logActivity(text) {
+  if (!text || !active || !isShared()) return;
+  accDoc(active).collection('activity').add({ by: currentUser.uid, byEmail: currentUser.email, text: String(text).slice(0, 200), at: Date.now(), month: ck() }).catch(() => {});
+}
+function syncActivity() {
+  const shared = accIds.filter(id => isShared(id));
+  Object.keys(actSubs).filter(id => !shared.includes(id)).forEach(id => { actSubs[id](); delete actSubs[id]; delete ACT[id]; });
+  shared.filter(id => !actSubs[id]).forEach(id => {
+    actSubs[id] = accDoc(id).collection('activity').orderBy('at', 'desc').limit(30).onSnapshot(q => {
+      ACT[id] = q.docs.map(d => ({ id: d.id, acc: id, ...d.data() }));
+      q.docChanges().forEach(c => {
+        const a = c.doc.data();
+        if (c.type === 'added' && a.by !== currentUser.uid && a.at > startedAt) browserNotify((a.byEmail || 'Quelqu\'un') + ' · ' + (ACC[id]?.name || 'Compte joint'), a.text);
+      });
+      if (loaded) { renderChrome(); if (UI.view === 'messages') render(); }
+    }, () => {});
+  });
+}
+function unreadCount() {
+  const seen = USER?.seen || {}, me = currentUser?.uid;
+  const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
+  return act + INV.in.filter(i => i.status === 'pending').length;
+}
+function markSeen() {
+  const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
+  if (Object.keys(upd).length) userDoc().update(upd).catch(() => {});
+}
+function browserNotify(title, body) {
+  try { if (window.Notification && Notification.permission === 'granted' && document.visibilityState === 'hidden') new Notification(title, { body }); } catch (e) {}
+}
+
+/* ---------- Sauvegardes automatiques (par compte) ---------- */
 const BK_MAX = 40;
 let bkCache = {};
-const bkCol = (u = currentUser.uid) => db.collection('users').doc(u).collection('backups');
+const bkCol = (id = active) => accDoc(id).collection('backups');
 const dayKey = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const hasContent = str => { try { const d = JSON.parse(str); return Object.keys(d.months || {}).length > 0 || ['expenses','incomes','budgets'].some(k => (d.templates?.[k] || []).length); } catch (e) { return false; } };
-function backupNow(kind, data = snapshot()) {           // la donnée est figée au moment de l'appel
-  if (!currentUser || !loaded || !hasContent(data)) return Promise.resolve(false);
+function backupNow(kind, data = snapshot()) {                  // la donnée est figée au moment de l'appel
+  if (!currentUser || !loaded || !active || !hasContent(data)) return Promise.resolve(false);
   const id = kind === 'quotidienne' ? dayKey() : dayKey() + '_' + Date.now();
-  return bkCol().doc(id).set({ budgetData: data, kind, createdAt: Date.now() })
+  return bkCol().doc(id).set({ budgetData: data, kind, by: currentUser.email, createdAt: Date.now() })
     .then(() => { pruneBackups(); return true; })
     .catch(e => { console.error('Sauvegarde', e); return false; });
 }
-function dailyBackup(data) {
-  bkCol().doc(dayKey()).get({ source: 'server' })
-    .then(d => { if (!d.exists) return backupNow('quotidienne', data); }).catch(() => {});
+function dailyBackup() {
+  const id = active, data = snapshot();
+  bkCol(id).doc(dayKey()).get({ source: 'server' })
+    .then(d => { if (!d.exists && active === id) return backupNow('quotidienne', data); }).catch(() => {});
 }
 function pruneBackups() {
   bkCol().orderBy('createdAt', 'desc').get({ source: 'server' })
     .then(q => q.docs.slice(BK_MAX).forEach(d => d.ref.delete())).catch(() => {});
 }
 
-function startWith(str, msg, push) {
-  clearTimeout(waitTimer);
-  try { S = normalize(str ? JSON.parse(str) : fresh()); }
-  catch (e) { console.error(e); S = normalize(fresh()); push = false; msg = "⚠ Données illisibles : rien n'a été écrasé"; }
-  lastSent = str; loaded = true; undoSnap = null;
-  if (str && !push) dailyBackup(str);
-  showScreen('app'); render();
-  if (push) save();
-  if (msg) toast(msg);
-}
-
+/* ---------- Connexion ---------- */
 auth.onAuthStateChanged(user => {
-  stopSync(); closePanel(true);
+  stopAll(); closePanel(true);
   if (!user) { currentUser = null; S = normalize(fresh()); showScreen('auth'); return; }
-  currentUser = user;
-  const u = user.uid;
+  currentUser = user; startedAt = Date.now();
   $('who').textContent = user.email;
   showScreen('loading');
-  waitTimer = setTimeout(() => { if (!loaded) { const c = readCache(u); if (c) startWith(c, '📴 Hors-ligne : données de cet appareil'); } }, 6000);
-  unsub = docRef(u).onSnapshot({ includeMetadataChanges: true }, doc => {
-    if (doc.metadata.hasPendingWrites) return;                    // écho de nos propres écritures
-    const remote = doc.exists ? doc.data().budgetData : null;
-    if (!loaded) {
-      if (remote) return startWith(remote);
-      if (doc.metadata.fromCache) return;                         // on attend la réponse du serveur
-      const c = readCache(u);
-      return startWith(c, c ? null : 'Bienvenue ! Commence par ajouter ton salaire et tes charges fixes.', true);
-    }
-    if (!remote || remote === lastSent || saveTimer) return;      // modification venue d'un autre appareil
-    if (remote === snapshot()) { lastSent = remote; return; }
-    try { S = normalize(JSON.parse(remote)); } catch (e) { return; }
-    lastSent = remote; undoSnap = null;
-    try { localStorage.setItem(cacheKey(u), remote); } catch (e) {}
-    render(); toast('🔄 Mis à jour depuis un autre appareil');
+  subs.push(userDoc().onSnapshot({ includeMetadataChanges: true }, d => {
+    if (d.metadata.hasPendingWrites) return;
+    const ids = d.exists ? (d.data().accounts || []) : [];
+    if (!ids.length) { if (!d.metadata.fromCache) migrateOrCreate(); return; }
+    USER = d.data();
+    if (!USER.emailLower) userDoc().set({ email: user.email, emailLower: myEmail() }, { merge: true }).catch(() => {});
+    syncAccountList(ids);
+    if (loaded) renderChrome();
   }, err => {
     console.error(err);
-    if (loaded) return toast('⚠ Synchro interrompue : ' + err.code);
-    const c = readCache(u);
-    if (c) return startWith(c, '⚠ Cloud inaccessible : données de cet appareil');
-    $('loading').innerHTML = '⚠ Impossible de charger vos données (' + esc(err.code) + ').<br><button class="btn p" onclick="location.reload()">Réessayer</button>';
-  });
+    $('loading').innerHTML = '⚠ Impossible de charger ton profil (' + esc(err.code) + '). Vérifie les règles Firestore.<br><button class="btn p" onclick="location.reload()">Réessayer</button>';
+  }));
+  const inv = (field, val, key) => db.collection('invites').where(field, '==', val).onSnapshot(q => {
+    INV[key] = q.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.at - a.at);
+    if (key === 'in') q.docChanges().forEach(c => { if (c.type === 'added' && c.doc.data().status === 'pending' && c.doc.data().at > startedAt) browserNotify('Invitation à un compte partagé', (c.doc.data().fromEmail || '') + ' t\'invite sur « ' + (c.doc.data().accName || '') + ' »'); });
+    if (loaded) { renderChrome(); if (UI.view === 'messages') render(); }
+  }, err => console.warn('Invitations', err.code));
+  subs.push(inv('to', myEmail(), 'in'), inv('from', user.uid, 'out'));
 });
 
 /* ============================== 6. CONNEXION & COMPTE ============================== */
@@ -786,26 +1071,23 @@ function pwdDialog({ title, msg, needNew, okLabel, danger, action }) {
 }
 const changePassword = () => pwdDialog({ title: 'Changer de mot de passe', needNew: true, okLabel: 'Mettre à jour',
   action: nw => currentUser.updatePassword(nw).then(() => toast('✅ Mot de passe mis à jour')) });
-const deleteAccount = () => pwdDialog({ title: 'Supprimer mon compte', danger: true, okLabel: 'Supprimer définitivement',
-  msg: "Action irréversible : ton compte, tes données et tes sauvegardes seront supprimés. Exporte-les d'abord si besoin.",
+const deleteAccount = () => pwdDialog({ title: 'Supprimer mon profil', danger: true, okLabel: 'Supprimer définitivement',
+  msg: "Action irréversible : tes comptes personnels, leurs données et sauvegardes seront supprimés. Tu quitteras les comptes partagés (les autres membres les gardent).",
   action: async () => {
-    const u = currentUser.uid;
-    stopSync();
-    const bq = await bkCol(u).get();
-    await Promise.all(bq.docs.map(d => d.ref.delete()));
-    await docRef(u).delete();
+    const u = currentUser.uid, ids = accIds.slice(), info = Object.assign({}, ACC);
+    stopAccount();
+    for (const id of ids) { const a = info[id]; if (!a) continue; if ((a.members || []).length > 1) await leaveAccount(id); else await deleteAccountData(id); }
+    stopAll();
+    await deleteCol(userDoc(u).collection('backups')).catch(() => {});
+    await legacyDoc(u).delete().catch(() => {});
+    await userDoc(u).delete().catch(() => {});
     await currentUser.delete();
-    try { localStorage.removeItem(cacheKey(u)); } catch (e) {}
-    alert('Ton compte et tes données ont été définitivement supprimés.');
+    alert('Ton profil et tes données ont été définitivement supprimés.');
     location.reload();
   } });
 function logout() {
-  const u = currentUser && currentUser.uid;
   toast('Déconnexion…');
-  Promise.race([flush(), new Promise(r => setTimeout(r, 1500))]).finally(() => {
-    stopSync(); try { if (u) localStorage.removeItem(cacheKey(u)); } catch (e) {}
-    auth.signOut();
-  });
+  Promise.race([flush(), new Promise(r => setTimeout(r, 1500))]).finally(() => { stopAll(); auth.signOut(); });
 }
 
 /* ============================== 7. INTERFACE : BRIQUES COMMUNES ============================== */
@@ -831,6 +1113,9 @@ const IP = {
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   check: '<path d="M5 12l5 5L20 7"/>', up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   out: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>',
+  down: '<path d="M6 9l6 6 6-6"/>', users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>',
+  wallet: '<path d="M3 7a2 2 0 0 1 2-2h13v4"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M16 13.5h2"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>', layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   // catégories
   bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
@@ -906,12 +1191,12 @@ function mutate(fn, msg) {
   fn();
   if (snapshot() === before) return render();
   undoSnap = before; save(); render();
-  if (msg !== false) toast(msg || 'Enregistré', { undo: true });
+  if (msg !== false) { toast(msg || 'Enregistré', { undo: true }); logActivity(msg || 'Modification'); }
 }
 function undo() {
   if (!undoSnap) return;
   const s = undoSnap; undoSnap = null;
-  S = normalize(JSON.parse(s)); save(); render(); toast('Annulé');
+  S = normalize(JSON.parse(s)); save(); render(); toast('Annulé'); logActivity('A annulé sa dernière modification');
 }
 
 // Re-dessin en gardant le champ actif (navigation clavier)
@@ -954,6 +1239,7 @@ function rowHTML(x, type, k, opt = {}) {
 /* ============================== 8. ÉCRANS ============================== */
 const VIEWS = [['accueil','Accueil','home'],['mouvements','Mouvements','list'],['budgets','Budgets','pie'],['epargne','Épargne','leaf'],['historique','Historique','chart'],['parametres','Paramètres','gear']];
 const MONTH_VIEWS = ['accueil','mouvements','budgets'];
+const EXTRA_VIEWS = [['messages','Messagerie'],['comptes','Tous mes comptes']];
 
 function go(v, opt = {}) {
   UI.view = v;
@@ -967,8 +1253,8 @@ function render() {
   logoMap = null;
   keepFocus(() => {
     renderChrome();
-    VIEWS.forEach(([v]) => $('v-' + v).hidden = v !== UI.view);
-    ({ accueil: vAccueil, mouvements: vMouvements, budgets: vBudgets, epargne: vEpargne, historique: vHistorique, parametres: vParametres })[UI.view]();
+    VIEWS.concat(EXTRA_VIEWS).forEach(([v]) => $('v-' + v).hidden = v !== UI.view);
+    ({ accueil: vAccueil, mouvements: vMouvements, budgets: vBudgets, epargne: vEpargne, historique: vHistorique, parametres: vParametres, messages: vMessages, comptes: vComptes })[UI.view]();
   });
 }
 function renderChrome() {
@@ -977,10 +1263,12 @@ function renderChrome() {
   $$('[data-a=prev],[data-a=next]').forEach(b => b.hidden = !mv);
   $$('[data-a=prev]')[0].innerHTML = svg('left', 18, 2.2); $$('[data-a=next]')[0].innerHTML = svg('right', 18, 2.2);
   $('btn-today').hidden = !mv || k === nowK();
-  $('title').textContent = UI.view === 'accueil' ? mlab(k) : mv ? `${VIEWS.find(v => v[0] === UI.view)[1]} · ${mn}` : VIEWS.find(v => v[0] === UI.view)[1];
-  const n = alerts(nowK()).length;
-  $('bell').innerHTML = svg('bell') + (n ? `<span class="dot-badge">${n}</span>` : '');
-  $('bell').setAttribute('aria-label', n ? `Alertes (${n})` : 'Alertes');
+  $('title').textContent = UI.view === 'accueil' ? mlab(k) : mv ? `${VIEWS.find(v => v[0] === UI.view)[1]} · ${mn}` : VIEWS.concat(EXTRA_VIEWS).find(v => v[0] === UI.view)[1];
+  const n = alerts(nowK()).length + unreadCount();
+  $('bell').innerHTML = svg('bell') + (n ? `<span class="dot-badge">${n > 9 ? '9+' : n}</span>` : '');
+  $('bell').setAttribute('aria-label', n ? `Messagerie (${n} nouveau${n > 1 ? 'x' : ''})` : 'Messagerie');
+  $('bell').classList.toggle('on', UI.view === 'messages');
+  $$('.accsw-slot').forEach(s => s.innerHTML = accSwitcherHTML());
   $$('[data-a=new]')[0].innerHTML = svg('plus', 18, 2.4) + '<span>Ajouter</span>';
 }
 
@@ -1046,7 +1334,7 @@ function vAccueil() {
 
   V.innerHTML = `${onboard}
   <div class="grid2">
-    <section class="hero" aria-label="Reste à vivre">
+    <section class="hero" aria-label="Reste à vivre" style="background:color-mix(in srgb,${ACC[active]?.color || '#4338CA'} 42%,#0B0A24)">
       <div class="deco"><i style="right:-60px;top:-80px;width:260px;height:260px;background:var(--hero-2);opacity:.55"></i><i style="right:70px;top:90px;width:120px;height:120px;background:var(--hero-3);opacity:.35"></i></div>
       <div style="display:flex;flex-direction:column;gap:6px">
         <span class="t">Reste à vivre ${c.past ? 'en ' + MN[cur.getMonth()].toLowerCase() : `jusqu'au ${dim(k)} ${MN[cur.getMonth()].toLowerCase()}`} ${ravTip}</span>
@@ -1369,11 +1657,13 @@ function vParametres() {
   const catSel = (sel) => { const c = S.categories.includes(sel) || !sel ? S.categories : [sel, ...S.categories]; return c.map(x => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join(''); };
   V.innerHTML = `
   <div class="grid2">
-    <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mon compte</h2>
-      <p class="note">${esc(currentUser?.email || '')}</p>
+    ${accountSettingsHTML()}
+    <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mon profil</h2>
+      <p class="note">${esc(currentUser?.email || '')} · ${currentUser?.emailVerified ? '<span style="color:var(--ok);font-weight:700">email confirmé</span>' : '<span style="color:var(--warn);font-weight:700">email non confirmé</span>'}</p>
+      ${currentUser?.emailVerified ? '' : '<button class="btn" data-a="verify-send">Recevoir l\'email de confirmation</button>'}
       <button class="btn" data-a="pwd">Changer de mot de passe</button>
       <button class="btn" data-a="logout">${svg('out', 18)} Se déconnecter</button>
-      <button class="btn danger" data-a="delacc">Supprimer mon compte</button>
+      <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
     </section>
     <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Données & sauvegardes</h2>
       <p class="note">Une copie automatique chaque jour à la connexion, et avant chaque import, réinitialisation ou restauration (40 dernières gardées).</p>
@@ -1406,14 +1696,16 @@ function vParametres() {
 }
 function listBackups() {
   const box = $('bk-list'); if (!box) return; box.innerHTML = '<p class="note">Chargement…</p>';
-  bkCol().orderBy('createdAt', 'desc').limit(BK_MAX).get().then(q => {
+  // sauvegardes de ce compte + anciennes sauvegardes (avant les comptes multiples), restaurables ici
+  Promise.all([bkCol().orderBy('createdAt', 'desc').limit(BK_MAX).get(), userDoc().collection('backups').orderBy('createdAt', 'desc').limit(BK_MAX).get().catch(() => ({ docs: [] }))]).then(([q1, q2]) => {
     bkCache = {};
-    box.innerHTML = q.docs.map(d => {
-      const v = d.data(); bkCache[d.id] = v.budgetData;
+    const docs = q1.docs.concat(q2.docs.map(d => Object.assign(d, { old: true })));
+    box.innerHTML = docs.map(d => {
+      const v = d.data(), bid = (d.old ? 'old_' : '') + d.id; bkCache[bid] = v.budgetData; if (d.old) v.kind = (v.kind || '') + ' · ancienne version';
       let info = ''; try { const j = JSON.parse(v.budgetData); info = Object.keys(j.months || {}).length + ' mois · ' + (j.templates?.expenses || []).length + ' charges fixes'; } catch (e) { info = 'illisible'; }
       const dt = new Date(v.createdAt).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       return `<div class="row" style="padding:6px 4px"><span class="rt"><span class="rn">${esc(dt)} <span class="pill" style="min-height:0;padding:2px 8px">${esc(v.kind || '')}</span></span><span class="rs">${esc(info)}</span></span>
-        <button class="x" data-a="bk-dl" data-id="${esc(d.id)}" title="Télécharger" aria-label="Télécharger">⬇</button><button class="btn sm" data-a="bk-res" data-id="${esc(d.id)}">Restaurer</button></div>`;
+        <button class="x" data-a="bk-dl" data-id="${esc(bid)}" title="Télécharger" aria-label="Télécharger">⬇</button><button class="btn sm" data-a="bk-res" data-id="${esc(bid)}">Restaurer</button></div>`;
     }).join('') || '<p class="note">Aucune sauvegarde pour l\'instant.</p>';
   }).catch(e => { box.innerHTML = '<p class="note" style="color:var(--bad)">Impossible de lister les sauvegardes (' + esc(e.code || '') + '). Vérifie les règles Firestore.</p>'; });
 }
@@ -1517,7 +1809,7 @@ function savePanel() {
       }
     }
     if (!x.isFixed && repeat) { const tp = tplFrom(t, x); x.isFixed = true; x.tmplId = tp.tmplId; tplAdd(t, tp, shiftK(k, 1)); }
-  }, isNew ? (t === 'incomes' ? 'Recette ajoutée · ' : 'Dépense ajoutée · ') + eur(t === 'expenses' && d.isDivided ? amt / 2 : amt) : 'Modifié');
+  }, (isNew ? (t === 'incomes' ? 'Recette ajoutée : ' : 'Dépense ajoutée : ') : 'Modifié : ') + (d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat)) + ' · ' + eur(t === 'expenses' && d.isDivided ? amt / 2 : amt));
   closePanel();
 }
 // Image perso → redimensionnée en 96 px (stockée avec les données)
@@ -1611,6 +1903,151 @@ function alertsDialog() {
   d.showModal();
 }
 
+/* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */
+const ACOL = [['Indigo','#4338CA'],['Vert','#0F766E'],['Bleu','#0369A1'],['Violet','#6D28D9'],['Rose','#BE185D'],['Orange','#C2410C'],['Ardoise','#334155']];
+const initials = e => String(e || '?').trim().charAt(0).toUpperCase();
+function membersOf(id) { const a = ACC[id] || {}; return (a.members || []).map(u => ({ uid: u, email: a.memberEmails?.[u] || '?', owner: u === a.owner, me: u === currentUser?.uid })); }
+function accSub(id) {
+  const a = ACC[id] || {}, others = membersOf(id).filter(m => !m.me);
+  return [a.bank, others.length ? 'partagé avec ' + others.map(m => m.email.split('@')[0]).join(', ') : ''].filter(Boolean).join(' · ') || 'Compte personnel';
+}
+function accSwitcherHTML() {
+  const a = ACC[active] || {};
+  return `<button class="accsw" data-a="accmenu" aria-haspopup="menu" aria-expanded="${!!$('accmenu')}"><i style="--c:${a.color || '#4338CA'}">${isShared() ? svg('users', 14, 2.2) : svg('wallet', 14, 2.2)}</i><span><b>${esc(a.name || 'Compte')}</b><small>${esc(accSub(active))}</small></span>${svg('down', 16, 2.2)}</button>`;
+}
+function accMenu(btn) {
+  const old = $('accmenu'); if (old) { old.remove(); return; }
+  const r = btn.getBoundingClientRect(), mnu = document.createElement('div');
+  mnu.id = 'accmenu'; mnu.className = 'accmenu'; mnu.setAttribute('role', 'menu');
+  mnu.style.top = Math.min(r.bottom + 6, innerHeight - 80) + 'px'; mnu.style.left = Math.max(8, Math.min(r.left, innerWidth - 300)) + 'px';
+  mnu.innerHTML = accIds.filter(id => ACC[id]).map(id => { const a = ACC[id], sm = a.summary;
+      return `<button role="menuitem" class="am${id === active ? ' on' : ''}" data-a="acc-open" data-id="${id}"><i style="--c:${a.color || '#4338CA'}">${isShared(id) ? svg('users', 14, 2.2) : svg('wallet', 14, 2.2)}</i><span><b>${esc(a.name)}</b><small>${esc(accSub(id))}</small></span><em class="num">${sm ? eur0(sm.current) : ''}</em></button>`; }).join('')
+    + `<hr><button role="menuitem" class="am" data-a="comptes">${svg('layers', 18)}<span><b>Tous mes comptes</b></span></button><button role="menuitem" class="am" data-a="acc-new">${svg('plus', 18)}<span><b>Nouveau compte</b></span></button>`;
+  document.body.append(mnu);
+  mnu.querySelector('button')?.focus();
+}
+document.addEventListener('click', e => { const m = $('accmenu'); if (m && !e.target.closest('#accmenu,[data-a=accmenu]')) m.remove(); }, true);
+
+function vComptes() {
+  const V = $('v-comptes'), ids = accIds.filter(id => ACC[id]);
+  const tot = sum(ids, id => num(ACC[id].summary?.current)), est = sum(ids, id => num(ACC[id].summary?.est));
+  V.innerHTML = `
+  <section class="hero" style="flex:none;background:#151A2D">
+    <div class="deco"><i style="right:-60px;top:-90px;width:260px;height:260px;background:#2B3150;opacity:.7"></i></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span class="t">Solde total · ${ids.length} compte${ids.length > 1 ? 's' : ''} ${tip('solde total', 'Solde total', 'Somme des soldes actuels de tous tes comptes, y compris les comptes partagés (montant total du compte, pas ta part).' + eq(ids.map(id => [esc(ACC[id].name), ACC[id].summary ? eur(ACC[id].summary.current) : '—']), ['= Total', eur(tot)]), 'dn rt')}</span>
+      <span class="v num">${eur(tot)}</span><span class="s">Fin de mois estimée, tous comptes : <b class="num">${eur(est)}</b></span></div>
+  </section>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px">
+    ${ids.map(id => { const a = ACC[id], sm = a.summary, mem = membersOf(id);
+      return `<button class="card" data-a="acc-open" data-id="${id}" style="border:0;text-align:left;display:flex;flex-direction:column;gap:14px;${id === active ? 'box-shadow:inset 0 0 0 2px ' + (a.color || '#4338CA') : ''}">
+        <span style="display:flex;align-items:center;gap:12px"><span class="ico" style="--c:${a.color || '#4338CA'}">${mem.length > 1 ? svg('users') : svg('wallet')}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.bank || (mem.length > 1 ? 'Compte partagé' : 'Compte personnel'))}</span></span></span>
+        <span style="display:flex;justify-content:space-between;gap:10px"><span><span class="note" style="display:block;font-size:12px">Solde actuel</span><b class="num" style="font-size:20px">${sm ? eur(sm.current) : '—'}</b></span><span style="text-align:right"><span class="note" style="display:block;font-size:12px">Fin de mois</span><b class="num" style="font-size:15px">${sm ? eur(sm.est) : '—'}</b></span></span>
+        ${mem.length > 1 ? `<span class="chips">${mem.map(m => `<span class="chip" style="min-height:28px;padding:3px 10px;font-size:12px"><span class="avatar">${initials(m.email)}</span>${esc(m.me ? 'Moi' : m.email)}</span>`).join('')}</span>` : ''}
+      </button>`; }).join('')}
+    <button class="card" data-a="acc-new" style="border:2px dashed var(--line);box-shadow:none;background:none;display:flex;align-items:center;justify-content:center;gap:8px;min-height:160px;color:var(--mute);font-weight:700">${svg('plus')} Nouveau compte</button>
+  </div>
+  <p class="note">Les soldes sont ceux du mois en cours, mis à jour à chaque modification d'un compte.</p>`;
+}
+
+function accountSettingsHTML() {
+  const a = ACC[active] || {}, mem = membersOf(active), me = currentUser?.uid, owner = a.owner === me;
+  const pend = INV.out.filter(i => i.acc === active && i.status === 'pending');
+  return `<section class="card" style="flex:1 1 340px;display:flex;flex-direction:column;gap:12px"><h2>Ce compte</h2>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+      <label class="fl">Nom<input class="in" data-acc="name" value="${esc(a.name || '')}" placeholder="ex. Crédit Agricole"></label>
+      <label class="fl">Banque<input class="in" data-acc="bank" value="${esc(a.bank || '')}" placeholder="ex. Compte courant"></label>
+    </div>
+    <div class="fl">Couleur<div class="chips">${ACOL.map(([n, c]) => `<button class="chip cat${(a.color || '#4338CA') === c ? ' on' : ''}" style="--c:${c}" data-a="acc-color" data-v="${c}" aria-label="${n}"><i></i>${n}</button>`).join('')}</div></div>
+    <div class="fl">Membres
+      ${mem.map(m => `<div class="row" style="padding:4px 2px"><span class="avatar lg">${initials(m.email)}</span><span class="rt"><span class="rn">${esc(m.email)}${m.me ? ' (moi)' : ''}</span><span class="rs">${m.owner ? 'Propriétaire' : 'Membre'}</span></span>${owner && !m.me ? `<button class="btn sm danger" data-a="acc-kick" data-id="${m.uid}">Retirer</button>` : ''}</div>`).join('')}
+      ${pend.map(i => `<div class="row" style="padding:4px 2px"><span class="avatar lg" style="opacity:.5">${initials(i.to)}</span><span class="rt"><span class="rn">${esc(i.to)}</span><span class="rs">Invitation envoyée, en attente</span></span><button class="btn sm" data-a="inv-cancel" data-id="${esc(i.id)}">Annuler</button></div>`).join('')}
+    </div>
+    <div style="display:flex;gap:8px"><input class="in" id="inv-email" type="email" placeholder="Email de la personne à inviter" aria-label="Email à inviter"><button class="btn p" data-a="inv-send">Inviter</button></div>
+    <p class="note" style="font-size:12px">La personne doit avoir un compte sur l'app. Elle reçoit l'invitation dans sa messagerie (cloche) ; une fois acceptée, vous voyez et modifiez le même compte.</p>
+    <div class="chips">${mem.length > 1 ? '<button class="btn sm" data-a="acc-leave">Quitter ce compte</button>' : ''}${owner ? '<button class="btn sm danger" data-a="acc-del">Supprimer ce compte</button>' : ''}</div>
+  </section>`;
+}
+
+/* ---------- MESSAGERIE ---------- */
+const ago = t => { const s = (Date.now() - t) / 1000; if (s < 60) return "à l'instant"; if (s < 3600) return 'il y a ' + Math.floor(s / 60) + ' min'; if (s < 86400) return 'il y a ' + Math.floor(s / 3600) + ' h'; if (s < 172800) return 'hier'; return new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }); };
+function vMessages() {
+  const V = $('v-messages'), me = currentUser.uid, seen = USER?.seen || {}, ver = currentUser.emailVerified;
+  const inv = INV.in.filter(i => i.status === 'pending'), al = alerts(nowK());
+  const acts = Object.values(ACT).flat().sort((a, b) => b.at - a.at).slice(0, 50);
+  const notifBtn = window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
+  V.innerHTML = `
+  ${inv.length ? `<section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Invitations</h2>
+    ${!ver ? `<div class="alert">${svg('mail')}<span>Pour accepter, confirme d'abord ton adresse email (sécurité : ça prouve que l'invitation t'est bien destinée).</span></div>
+      <div class="chips"><button class="btn sm" data-a="verify-send">Recevoir l'email de confirmation</button><button class="btn sm" data-a="verify-check">J'ai confirmé</button></div>` : ''}
+    ${inv.map(i => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="avatar lg">${initials(i.fromEmail)}</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(i.fromEmail)}</b> t'invite à rejoindre « ${esc(i.accName)} »</span><span class="rs">${ago(i.at)}</span></span>
+      <span class="chips"><button class="btn sm p" data-a="inv-accept" data-id="${esc(i.id)}" ${ver ? '' : 'disabled title="Confirme ton email d\'abord"'}>Accepter</button><button class="btn sm" data-a="inv-decline" data-id="${esc(i.id)}">Refuser</button></span></div>`).join('')}
+  </section>` : ''}
+  <section class="card" style="display:flex;flex-direction:column;gap:6px"><div class="ch"><h2>Alertes · ${mlab(nowK())}</h2><span class="note">${esc(accName())}</span></div>
+    ${al.map(a => `<button class="alert ${a.lvl === 'bad' ? 'bad' : ''}" data-a="al-go" data-v="${esc(a.go)}" data-f="${esc(a.flt || '')}" data-q="${esc(a.q || '')}" style="border:0;text-align:left;cursor:pointer">${svg('warn')}<span>${esc(a.text)}</span></button>`).join('') || '<p class="empty" style="padding:12px">Tout est sous contrôle ce mois-ci.</p>'}
+  </section>
+  <section class="card" style="display:flex;flex-direction:column;gap:2px"><div class="ch"><h2>Activité des comptes partagés</h2>${notifBtn}</div>
+    ${acts.map(a => { const nw = a.by !== me && a.at > (seen[a.acc] || 0);
+      return `<div class="row" style="padding:8px 6px;${nw ? 'background:var(--acc-s)' : ''}"><span class="avatar lg" style="--c:${ACC[a.acc]?.color || '#4338CA'}">${initials(a.byEmail)}</span><span class="rt"><span class="rn" style="white-space:normal">${esc(a.text)}</span><span class="rs">${esc(a.by === me ? 'Moi' : a.byEmail)} · ${esc(ACC[a.acc]?.name || '')} · ${ago(a.at)}</span></span>${nw ? '<span class="pill warn">nouveau</span>' : ''}</div>`; }).join('')
+      || `<p class="empty" style="padding:12px">${accIds.some(id => isShared(id)) ? 'Aucune activité pour l\'instant.' : 'Aucun compte partagé. Invite quelqu\'un depuis Paramètres › Ce compte.'}</p>`}
+    <p class="note" style="font-size:12px;padding-top:8px">Les notifications du navigateur s'affichent quand l'app est ouverte (même en arrière-plan). Quand l'app est fermée, tu verras les nouveautés ici à la prochaine ouverture.</p>
+  </section>
+  ${INV.out.length ? `<section class="card" style="display:flex;flex-direction:column;gap:2px"><h2 style="margin-bottom:8px">Invitations envoyées</h2>
+    ${INV.out.map(i => `<div class="row" style="padding:6px 4px"><span class="rt"><span class="rn">${esc(i.to)} · « ${esc(i.accName)} »</span><span class="rs">${ago(i.at)}</span></span><span class="pill ${i.status === 'accepted' ? 'ok' : i.status === 'declined' ? 'warn' : ''}">${{ pending: 'En attente', accepted: 'Acceptée', declined: 'Refusée' }[i.status] || i.status}</span><button class="x" data-a="inv-cancel" data-id="${esc(i.id)}" aria-label="Supprimer">${svg('x', 15)}</button></div>`).join('')}
+  </section>` : ''}`;
+  clearTimeout(vMessages.t); vMessages.t = setTimeout(markSeen, 1500);
+}
+
+/* ---------- Actions comptes & messagerie ---------- */
+function newAccountDialog() {
+  formDialog({ title: 'Nouveau compte', intro: 'Un compte = un compte bancaire, avec ses propres mouvements, charges fixes et budgets.',
+    fields: [{ id: 'name', label: 'Nom', ph: 'ex. Revolut perso' }, { id: 'bank', label: 'Banque / type (facultatif)', ph: 'ex. Revolut' },
+      { id: 'color', label: 'Couleur', type: 'select', options: ACOL.map(c => c[0]), value: ACOL[(accIds.length) % ACOL.length][0] },
+      { id: 'email', label: 'Partager avec (facultatif)', ph: 'email de l\'autre personne', hint: 'Pour un compte joint. Tu pourras aussi inviter plus tard.' }],
+    ok: 'Créer',
+    onSave: v => {
+      if (!v.name) { toast('Donne un nom au compte'); return false; }
+      createAccount({ name: v.name, bank: v.bank, color: (ACOL.find(c => c[0] === v.color) || ACOL[0])[1] }).then(id => {
+        if (v.email) inviteMember(v.email, id, v.name).then(() => toast('Compte créé · invitation envoyée à ' + v.email)).catch(e => toast(e.message));
+        else toast('Compte « ' + v.name + ' » créé');
+        UI.view = 'accueil'; openAccount(id);
+      }).catch(e => toast('Création impossible : ' + (e.code || e.message)));
+    } });
+}
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-a]'); if (!b || !currentUser) return;
+  const a = b.dataset.a, id = b.dataset.id;
+  const fail = e => toast('⚠ ' + (e.message || e.code || 'Erreur'));
+  switch (a) {
+    case 'accmenu': return accMenu(b);
+    case 'acc-open': $('accmenu')?.remove(); if (id !== active) openAccount(id); return go(UI.view === 'comptes' || UI.view === 'messages' ? 'accueil' : UI.view);
+    case 'comptes': $('accmenu')?.remove(); return go('comptes');
+    case 'acc-new': $('accmenu')?.remove(); return newAccountDialog();
+    case 'acc-color': return accDoc(active).update({ color: b.dataset.v }).catch(fail);
+    case 'inv-send': { const e = $('inv-email').value; return inviteMember(e).then(() => { toast('Invitation envoyée à ' + e.trim()); $('inv-email').value = ''; }).catch(fail); }
+    case 'inv-cancel': return db.collection('invites').doc(id).delete().then(() => toast('Invitation supprimée')).catch(fail);
+    case 'inv-accept': { const i = INV.in.find(x => x.id === id); if (!i) return;
+      b.disabled = true; return acceptInvite(i).then(() => { toast('Bienvenue dans « ' + i.accName + ' » !'); UI.view = 'accueil'; openAccount(i.acc); })
+        .catch(e => { b.disabled = false; fail(e.code === 'permission-denied' ? new Error('Refusé : confirme ton email puis réessaie (ou l\'invitation a été annulée).') : e); }); }
+    case 'inv-decline': return db.collection('invites').doc(id).update({ status: 'declined', answeredAt: Date.now() }).then(() => toast('Invitation refusée')).catch(fail);
+    case 'verify-send': return currentUser.sendEmailVerification().then(() => toast('📧 Email envoyé à ' + currentUser.email + ' — clique sur le lien puis sur « J\'ai confirmé »')).catch(fail);
+    case 'verify-check': return currentUser.reload().then(() => currentUser.getIdToken(true)).then(() => { currentUser = auth.currentUser; render(); toast(currentUser.emailVerified ? '✅ Email confirmé' : 'Pas encore confirmé : clique sur le lien reçu par email'); }).catch(fail);
+    case 'notif-on': return Notification.requestPermission().then(() => render());
+    case 'al-go': cur = keyDate(nowK()); return go(b.dataset.v, { flt: b.dataset.f || 'all', q: b.dataset.q || '' });
+    case 'acc-kick': { const m = membersOf(active).find(x => x.uid === id); if (!m || !confirm('Retirer ' + m.email + ' de ce compte ? Il n\'y aura plus accès.')) return;
+      return removeMember(active, id).then(() => toast(m.email + ' retiré')).catch(fail); }
+    case 'acc-leave': if (!confirm('Quitter « ' + accName() + ' » ? Tu n\'y auras plus accès (les autres membres le gardent).')) return;
+      return leaveAccount(active).then(() => toast('Tu as quitté le compte')).catch(fail);
+    case 'acc-del': { const n = accName(); if (accIds.length < 2) return toast('C\'est ton seul compte : crée-en un autre avant de le supprimer.');
+      if (prompt('Supprimer définitivement « ' + n + ' », ses mouvements et ses sauvegardes' + (isShared() ? ' (pour TOUS les membres)' : '') + ' ?\nTape SUPPRIMER pour confirmer.') !== 'SUPPRIMER') return;
+      const old = active; flush(); return deleteAccountData(old).then(() => toast('Compte « ' + n + ' » supprimé')).catch(fail); }
+  }
+});
+document.addEventListener('change', ev => {
+  const el = ev.target; if (!el.dataset.acc || !active) return;
+  const v = el.value.trim(); if (el.dataset.acc === 'name' && !v) return render();
+  accDoc(active).update({ [el.dataset.acc]: v }).then(() => toast('Compte mis à jour')).catch(e => toast('⚠ ' + (e.code || e.message)));
+});
+
 /* ============================== 10. ÉVÉNEMENTS ============================== */
 document.addEventListener('click', ev => {
   const pb = ev.target.closest('#panel [data-p]');
@@ -1624,10 +2061,11 @@ document.addEventListener('click', ev => {
     case 'today': cur = keyDate(nowK()); UI.calDay = null; return render();
     case 'new': return openPanel('expenses');
     case 'open': return openPanel(t, id);
-    case 'tst': return mutate(() => { const x = m[t].find(e => e.id === id); x.status = t === 'incomes' ? (x.status === 'Reçu' ? 'En attente' : 'Reçu') : (x.status === 'Payé' ? 'Prévu' : 'Payé'); },
-      (t === 'incomes' ? 'Recette ' : '') + (m[t].find(e => e.id === id).status === (t === 'incomes' ? 'Reçu' : 'Payé') ? (t === 'incomes' ? 'en attente' : 'Marqué à payer') : (t === 'incomes' ? 'reçue' : 'Marqué payé ✓')));
+    case 'tst': { const x0 = m[t].find(e => e.id === id), was = isPaid(x0, t), nm = x0.name || x0.cat || 'Recette';
+      return mutate(() => { const x = month(k)[t].find(e => e.id === id); x.status = t === 'incomes' ? (was ? 'En attente' : 'Reçu') : (was ? 'Prévu' : 'Payé'); },
+        nm + ' : ' + (t === 'incomes' ? (was ? 'en attente' : 'reçu ✓') : (was ? 'à payer' : 'payé ✓')) + ' · ' + eur(t === 'incomes' ? num(x0.amount) : eff(x0))); }
     case 'flt': UI.flt = b.dataset.v; return render();
-    case 'alerts': return alertsDialog();
+    case 'alerts': return go('messages');
     case 'alertgo': { const al = alerts(k)[0]; if (al) go(al.go, { flt: al.flt || 'all', q: al.q || '' }); return; }
     case 'bank': return bankDialog();
     case 'saving': return savingDialog();
@@ -1660,7 +2098,7 @@ document.addEventListener('click', ev => {
     case 'bk-now': return backupNow('manuelle').then(ok => { toast(ok ? '💾 Sauvegarde créée' : 'Rien à sauvegarder'); if (ok && $('bk-list')?.innerHTML) listBackups(); });
     case 'bk-list': return listBackups();
     case 'bk-res': return restoreBackup(id);
-    case 'bk-dl': { const dd = bkCache[id]; if (dd) download('budget_sauvegarde_' + id.slice(0, 10) + '.json', JSON.stringify(JSON.parse(dd), null, 2), 'application/json'); return; }
+    case 'bk-dl': { const dd = bkCache[id]; if (dd) download('budget_sauvegarde_' + id.replace('old_', '').slice(0, 10) + '.json', JSON.stringify(JSON.parse(dd), null, 2), 'application/json'); return; }
     case 'export': download('budget_perso_' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(JSON.parse(snapshot()), null, 2), 'application/json'); return toast('Export téléchargé');
     case 'import': return $('file').click();
     case 'reset': if (!confirm('Effacer TOUT ton budget ? Une sauvegarde sera faite juste avant. Ton compte n\'est pas supprimé.')) return;
@@ -1722,6 +2160,7 @@ function importFile(f) {
 // Raccourcis : N nouveau · / rechercher · ← → mois · Échap fermer · Ctrl+Z annuler
 document.addEventListener('keydown', e => {
   if (!loaded) return;
+  if (e.key === 'Escape' && $('accmenu')) return $('accmenu').remove();
   if (e.key === 'Escape' && P) return closePanel();
   const typing = /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing && undoSnap) { e.preventDefault(); return undo(); }
