@@ -580,13 +580,14 @@ function calc(m, key) {
     budAll: sum(m.budgets),
     budLeft: sum(m.budgets, b => Math.max(0, num(b.amount) - vspent(m, b.cat))),
     budEff: sum(m.budgets, b => Math.max(num(b.amount), vspent(m, b.cat))),   // budget, ou dépensé s'il est dépassé
-    varOut: sum(vr.filter(e => !bcats.has(e.cat)), eff),                        // dépenses variables hors budget
+    varOut: sum(vr.filter(e => !bcats.has(e.cat) && e.xfer?.kind !== 'acc'), eff),   // dépenses variables hors budget
+    xferOut: sum(vr.filter(e => e.xfer?.kind === 'acc'), eff),                   // virements vers mes autres comptes
     saving: num(m.savingGoal)
   };
   r.fixLeft = r.fixAll - r.fixPaid;
   r.spent = r.fixPaid + r.varAll;
-  r.planned = r.fixAll + r.budAll + r.varOut;
-  r.free = r.incAll - r.fixAll - r.budEff - r.varOut - r.saving;              // part des recettes non affectée (écran Budgets)
+  r.planned = r.fixAll + r.budAll + r.varOut + r.xferOut;
+  r.free = r.incAll - r.fixAll - r.budEff - r.varOut - r.xferOut - r.saving;              // part des recettes non affectée (écran Budgets)
   r.init = chainBalance(key);
   r.bankSet = m.bankBalance != null;
   r.current = r.init + r.incIn - r.outPaid;
@@ -604,7 +605,7 @@ function calc(m, key) {
 // Dépenses réellement engagées par catégorie (charges fixes payées + variables)
 function catTotals(m) {
   const o = {};
-  m.expenses.forEach(e => { const v = eff(e); if (v <= 0 || (e.isFixed && e.status !== 'Payé')) return; o[e.cat] = (o[e.cat] || 0) + v; });
+  m.expenses.forEach(e => { const v = eff(e); if (v <= 0 || (e.isFixed && e.status !== 'Payé') || e.xfer?.kind === 'acc') return; o[e.cat] = (o[e.cat] || 0) + v; });
   return o;
 }
 // État d'une échéance : ok (réglée) / late (date passée) / plan (à venir)
@@ -670,13 +671,13 @@ let USER = null;                    // document users/{uid}
 let subs = [], accSubs = [], listSubs = {}, actSubs = {};
 let base = {}, sent = {};           // par clé ('meta' ou 'AAAA-MM') : dernière version serveur intégrée / dernière envoyée
 let saveTimer = null, synced = false, migrating = false, startedAt = 0;
-let INV = { in: [], out: [] }, ACT = {};
+let INV = { in: [], out: [] }, ACT = {}, XF = { in: [], out: [] };
 // Épargne personnelle (comptes d'épargne simples, simulateur, choix d'inclusion) : rattachée à l'utilisateur, pas à un compte
 let U = { savAcc: [], savings: null, savIncl: {} }, userSaveTimer = null;
-function loadU(d) { if (userSaveTimer) return; U = { savAcc: (d && d.savAcc) || [], savings: (d && d.savings) || null, savIncl: (d && d.savIncl) || {} }; }
+function loadU(d) { if (userSaveTimer) return; U = { savAcc: (d && d.savAcc) || [], savings: (d && d.savings) || null, savIncl: (d && d.savIncl) || {}, contacts: (d && d.contacts) || [], recvAcc: (d && d.recvAcc) || null }; }
 function saveUser() {
   if (!currentUser) return; clearTimeout(userSaveTimer);
-  userSaveTimer = setTimeout(() => { userSaveTimer = null; userDoc().set({ savAcc: U.savAcc, savings: U.savings, savIncl: U.savIncl }, { merge: true }).catch(e => toast('⚠ Épargne non enregistrée (' + (e.code || 'erreur') + ')')); }, 600);
+  userSaveTimer = setTimeout(() => { userSaveTimer = null; userDoc().set({ savAcc: U.savAcc, savings: U.savings, savIncl: U.savIncl, contacts: U.contacts || [], recvAcc: U.recvAcc || null }, { merge: true }).catch(e => toast('⚠ Épargne non enregistrée (' + (e.code || 'erreur') + ')')); }, 600);
 }
 const isSavAcc = (id = active) => ACC[id]?.kind === 'epargne';
 // La session affichée est-elle toujours celle de l'utilisateur connecté ? (autre onglet connecté avec un autre compte)
@@ -797,7 +798,7 @@ function stopAll() {
   subs.forEach(u => u()); subs = [];
   Object.values(listSubs).forEach(u => u()); listSubs = {};
   Object.values(actSubs).forEach(u => u()); actSubs = {};
-  ACC = {}; accIds = []; active = null; USER = null; INV = { in: [], out: [] }; ACT = {};
+  ACC = {}; accIds = []; active = null; USER = null; INV = { in: [], out: [] }; ACT = {}; XF = { in: [], out: [] };
   clearTimeout(userSaveTimer); userSaveTimer = null; U = { savAcc: [], savings: null, savIncl: {} };
 }
 function showScreen(w) {
@@ -874,7 +875,7 @@ function syncAccountList(ids) {
   ids.filter(id => !listSubs[id]).forEach(id => {
     listSubs[id] = accDoc(id).onSnapshot(d => {
       if (!d.exists) return;
-      ACC[id] = d.data(); syncActivity();
+      ACC[id] = d.data(); syncActivity(); if (XF.in.length) processTransfers();
       if (loaded) { renderChrome(); if (UI.view === 'comptes' || UI.view === 'messages' || (UI.view === 'parametres' && id === active)) render(); }
     }, () => { if (USER && (USER.accounts || []).includes(id)) accountGone(id); });
   });
@@ -882,6 +883,7 @@ function syncAccountList(ids) {
     let want = null; try { want = localStorage.getItem('acc_' + currentUser.uid); } catch (e) {}
     openAccount(ids.includes(want) ? want : ids[0]);
   }
+  processTransfers();
 }
 
 // Première connexion avec cette version : l'ancien bloc de données devient le premier compte
@@ -991,10 +993,11 @@ function syncActivity() {
 function unreadCount() {
   const seen = USER?.seen || {}, me = currentUser?.uid;
   const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
-  return act + INV.in.filter(i => i.status === 'pending').length;
+  return act + INV.in.filter(i => i.status === 'pending').length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0)).length;
 }
 function markSeen() {
   const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
+  if (XF.in.some(t => (t.receivedAt || 0) > (USER?.seen?.xfer || 0))) upd['seen.xfer'] = Date.now();
   if (Object.keys(upd).length) userDoc().update(upd).catch(() => {});
 }
 function browserNotify(title, body) {
@@ -1053,6 +1056,7 @@ auth.onAuthStateChanged(user => {
     if (loaded) { renderChrome(); if (UI.view === 'messages') render(); }
   }, err => console.warn('Invitations', err.code));
   subs.push(inv('to', myEmail(), 'in'), inv('from', user.uid, 'out'));
+  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'));
 });
 
 /* ============================== 6. CONNEXION & COMPTE ============================== */
@@ -1134,6 +1138,7 @@ function logout() {
   Promise.race([flush(), new Promise(r => setTimeout(r, 1500))]).finally(() => { stopAll(); auth.signOut(); });
 }
 
+
 /* ============================== 7. INTERFACE : BRIQUES COMMUNES ============================== */
 const UI = { view: 'accueil', flt: 'all', q: '', hp: 6, hy: new Date().getFullYear(), calDay: null, showPaid: false, svMore: false };
 const charts = {};
@@ -1173,6 +1178,7 @@ const IP = {
   bank: '<path d="M4 10h16v10H4zM2 10l10-6 10 6M8 14v2M12 14v2M16 14v2"/>',
   sprout: '<path d="M12 22V12M12 12c0-5 4-8 8-8 0 5-3 8-8 8zM12 15c0-4-3-6-7-6 0 4 3 6 7 6z"/>',
   trend: '<path d="M3 17l6-6 4 4 8-8M15 7h6v6"/>', coin: '<circle cx="12" cy="12" r="9"/><path d="M14.5 9.5a3 3 0 1 0 0 5M8 11h5M8 13h5"/>',
+  swap: '<path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
   img: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>'
 };
 const svg = (n, s = 20, w = 2) => `<svg aria-hidden="true" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">${IP[n] || n}</svg>`;
@@ -1180,7 +1186,7 @@ const svg = (n, s = 20, w = 2) => `<svg aria-hidden="true" width="${s}" height="
 // Couleur + icône par catégorie
 const CATS = { 'Logement': ['#6366F1','home'], 'Énergie': ['#F59E0B','bolt'], 'Assurance': ['#0EA5E9','shield'], 'Abonnement': ['#EC4899','phone'],
   'Banque': ['#64748B','card'], 'Alimentation': ['#10B981','cart'], 'Transport': ['#8B5CF6','bus'], 'Santé': ['#14B8A6','health'],
-  'Loisirs': ['#F97316','ticket'], 'Autre': ['#94A3B8','tag'] };
+  'Loisirs': ['#F97316','ticket'], 'Autre': ['#94A3B8','tag'], 'Virement': ['#0EA5E9','swap'] };
 const XPAL = ['#06B6D4','#84CC16','#E11D48','#A855F7','#EAB308','#0891B2','#D946EF','#65A30D'];
 function catInfo(c) {
   if (CATS[c]) return { col: CATS[c][0], ic: CATS[c][1] };
@@ -1205,7 +1211,7 @@ function logoOk(im) { if (im.naturalWidth && im.naturalWidth < 24 && !im.dataset
 function logoKo(im) { if (!im.dataset.alt) { im.dataset.alt = 1; im.src = ddg(im.dataset.site); } else im.remove(); }
 // Icône d'un mouvement : image perso > icône du site web > icône de catégorie
 function ico(x, type, cls = '') {
-  const ci = type === 'incomes' ? { col: '#10B981', ic: 'up' } : catInfo(x.cat);
+  const ci = x.xfer ? { col: '#0EA5E9', ic: 'swap' } : type === 'incomes' ? { col: '#10B981', ic: 'up' } : catInfo(x.cat);
   const lg = (x.img || x.site) ? x : (logoFor(x.name) || {});
   const over = lg.img ? `<img src="${esc(lg.img)}" alt="">`
     : lg.site ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(lg.site)}&amp;sz=64" data-site="${esc(lg.site)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="logoOk(this)" onerror="logoKo(this)">` : '';
@@ -1271,7 +1277,7 @@ function rowHTML(x, type, k, opt = {}) {
   const inc = type === 'incomes', st = dueState(x, type, k);
   const name = x.name || (inc ? 'Recette' : x.cat);
   const sav = isSavAcc(), by = x.by && isShared() ? 'par ' + esc(x.by === currentUser?.email ? 'moi' : x.by.split('@')[0]) : '';
-  const meta = [sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
+  const meta = [x.xfer ? esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
   const amount = inc ? '+' + eur(num(x.amount)) : minus(eff(x));
   let pill = '';
   if (opt.pill !== false && (st !== 'ok' || x.isFixed)) {
@@ -1468,7 +1474,7 @@ function vMouvements() {
 function vBudgets() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-budgets'), isCur = k === nowK();
   const base = Math.max(c.incAll, c.fixAll + c.budEff + c.varOut + c.saving) || 1;
-  const seg = [['Charges fixes', c.fixAll, '#6366F1'], ['Budgets', c.budEff, '#10B981'], ['Hors budget', c.varOut, '#F97316'], ['Épargne', c.saving, '#14B8A6'], ['Libre', Math.max(0, c.free), 'color-mix(in srgb,var(--mute) 35%,var(--soft))']].filter(s => s[1] > 0);
+  const seg = [['Charges fixes', c.fixAll, '#6366F1'], ['Budgets', c.budEff, '#10B981'], ['Hors budget', c.varOut, '#F97316'], ['Virements', c.xferOut, '#0EA5E9'], ['Épargne', c.saving, '#14B8A6'], ['Libre', Math.max(0, c.free), 'color-mix(in srgb,var(--mute) 35%,var(--soft))']].filter(s => s[1] > 0);
   const cards = m.budgets.map(b => {
     const s = vspent(m, b.cat), a = num(b.amount), p = pct(s, a), ci = catInfo(b.cat), r = a - s;
     const col = p > 100 ? 'var(--bad)' : p > 85 ? '#F97316' : ci.col;
@@ -1530,6 +1536,7 @@ function vBudgets() {
     </div>
   </section>`;
 }
+
 
 /* ---------- ÉPARGNE ---------- */
 const AT = { 'Livret A': ['#14B8A6','bank'], 'LDDS': ['#10B981','sprout'], 'LEP': ['#84CC16','coin'], 'PEL': ['#6366F1','home'], 'PEA': ['#8B5CF6','trend'],
@@ -1723,6 +1730,7 @@ function vParametres() {
     <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mon profil</h2>
       <p class="note">${esc(currentUser?.email || '')} · ${currentUser?.emailVerified ? '<span style="color:var(--ok);font-weight:700">email confirmé</span>' : '<span style="color:var(--warn);font-weight:700">email non confirmé</span>'}</p>
       ${currentUser?.emailVerified ? '' : '<button class="btn" data-a="verify-send">Recevoir l\'email de confirmation</button>'}
+      <label class="fl">Compte de réception des virements<select class="in" data-recv="1">${accIds.filter(id => ACC[id]).map(id => `<option value="${id}" ${recvAccount() === id ? 'selected' : ''}>${esc(ACC[id].name)}</option>`).join('')}</select><small>Les virements qu'on t'envoie arrivent ici automatiquement.</small></label>
       <button class="btn" data-a="pwd">Changer de mot de passe</button>
       <button class="btn" data-a="logout">${svg('out', 18)} Se déconnecter</button>
       <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
@@ -1801,13 +1809,15 @@ function closePanel(silent) {
 }
 function paintPanel() {
   if (!P) return;
+  if (P.type === 'xfer') return paintXfer();
   const sav = isSavAcc(), d = P.d, ex = P.type === 'expenses' && !sav, fixed = !P.isNew && P.id && month()[P.type].find(e => e.id === P.id)?.isFixed;
   const names = [...new Set(Object.values(S.months).flatMap(m => m[P.type].map(e => e.name)).filter(Boolean))].slice(-80);
   const paid = isPaid(d, P.type);
   $('panel').innerHTML = `
   <div class="pbody">
     <div class="dh"><h2 id="pn-title">${P.isNew ? 'Nouveau mouvement' : 'Modifier'}</h2><button class="ib sm" data-p="close" aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
-    ${P.isNew ? `<div class="seg" role="group" aria-label="Type">${sav ? `<button class="${P.type === 'incomes' ? 'on' : ''}" data-p="type" data-v="incomes">Versement</button><button class="${P.type === 'expenses' ? 'on' : ''}" data-p="type" data-v="expenses">Retrait</button>` : `<button class="${ex ? 'on' : ''}" data-p="type" data-v="expenses">Dépense</button><button class="${!ex ? 'on' : ''}" data-p="type" data-v="incomes">Recette</button>`}</div>` : ''}
+    ${P.isNew ? typeSeg() : ''}
+    ${d.xfer ? `<div class="fixinfo" style="background:color-mix(in srgb,#0EA5E9 14%,var(--card));color:var(--ink)"><b>${svg('swap', 16)} ${esc(xferLabel(d, P.type))}</b><span style="font-size:12px">${d.xfer.kind === 'acc' && d.xfer.id ? 'Montant, date et suppression sont répercutés sur l\'autre compte.' : d.xfer.kind === 'person' && P.type === 'expenses' ? (xfStatus(d.xfer.id) === 'received' ? 'Déjà reçu : une modification ne change que ton côté.' : 'Pas encore reçu : tes modifications lui seront transmises.') : d.xfer.kind === 'person' ? 'Reçu de ' + esc(d.xfer.from || '') : ''}</span></div>` : ''}
     <label class="amt"><input id="pn-a" inputmode="decimal" placeholder="0,00" aria-label="Montant" value="${esc(d.amount)}" data-pf="amount"><span>€</span></label>
     ${ex ? `<div style="display:flex;justify-content:center;margin-top:-8px"><button class="tog half${d.isDivided ? ' on' : ''}" data-p="half" aria-pressed="${!!d.isDivided}">½ Partagé${d.isDivided ? ' · ma part ' + eur(parseAmt(d.amount) / 2) : ''}</button></div>` : ''}
     <label class="fl">Libellé<input class="in" id="pn-n" list="pn-dl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="${ex ? 'ex. Courses' : 'ex. Salaire'}"><datalist id="pn-dl">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
@@ -1836,7 +1846,7 @@ function panelClick(b) {
   const a = b.dataset.p, d = P.d;
   switch (a) {
     case 'close': return closePanel();
-    case 'type': P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
+    case 'type': if (b.dataset.v === 'xfer') { P.type = 'xfer'; P.xk = P.xk || 'acc'; break; } P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
     case 'half': d.isDivided = !d.isDivided; break;
     case 'cat': d.cat = b.dataset.v; break;
     case 'addcat': P.addCat = !P.addCat; paintPanel(); return $('pn-nc')?.focus();
@@ -1846,9 +1856,12 @@ function panelClick(b) {
     case 'status': d.status = P.type === 'incomes' ? (d.status === 'Reçu' ? 'En attente' : 'Reçu') : (d.status === 'Payé' ? 'Prévu' : 'Payé'); break;
     case 'repeat': P.repeat = b.checked; return;
     case 'future': P.future = b.checked; return;
-    case 'save': return savePanel();
+    case 'save': return P.type === 'xfer' ? saveXfer() : savePanel();
+    case 'xk': P.xk = b.dataset.v; break;
+    case 'dest': P.dest = b.dataset.v; break;
+    case 'sugg': d.email = b.dataset.v; break;
     case 'dup': { const t = P.type, src = month()[t].find(e => e.id === P.id); mutate(() => { const c = JSON.parse(JSON.stringify(src)); Object.assign(c, { id: uid(), isFixed: false, status: t === 'incomes' ? 'En attente' : 'Prévu' }); delete c.tmplId; const arr = month()[t]; arr.splice(arr.indexOf(src) + 1, 0, c); }, 'Dupliqué'); return closePanel(); }
-    case 'del': { const t = P.type, id = P.id; mutate(() => { const m = month(); m[t] = m[t].filter(e => e.id !== id); }, 'Supprimé'); return closePanel(); }
+    case 'del': { const t = P.type, id = P.id, xf = month()[t].find(e => e.id === id)?.xfer; mutate(() => { const m = month(); m[t] = m[t].filter(e => e.id !== id); }, 'Supprimé'); xferPropagate(xf, null); return closePanel(); }
     case 'stop': { const t = P.type, id = P.id; mutate(() => { const x = month()[t].find(e => e.id === id); tplDel(t, x.tmplId, shiftK(ck(), 1)); x.isFixed = false; delete x.tmplId; }, 'Récurrence arrêtée'); return closePanel(); }
   }
   paintPanel();
@@ -1856,7 +1869,8 @@ function panelClick(b) {
 function savePanel() {
   const d = P.d, t = P.type, amt = parseAmt(d.amount);
   if (!(amt > 0)) { $('pn-a').focus(); return toast('Saisis un montant'); }
-  const k = ck(), isNew = P.isNew, id = P.id, repeat = P.repeat, future = P.future, icon = P.icon;
+  const k = ck(), isNew = P.isNew, id = P.id, repeat = P.repeat, future = P.future, icon = P.icon, xf = d.xfer;
+  if (xf && !isNew) setTimeout(() => xferPropagate(xf, { amount: Math.round(amt * 100) / 100, date: day(d.date), label: d.name.trim() }), 0);
   mutate(() => {
     const m = month(k);
     const clean = { name: d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat), amount: Math.round(amt * 100) / 100, date: day(d.date), status: d.status };
@@ -1968,6 +1982,7 @@ function alertsDialog() {
   d.showModal();
 }
 
+
 /* ---------- ACCUEIL D'UN COMPTE ÉPARGNE ---------- */
 function vSavAccueil() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil'), a = ACC[active] || {}, G = S.goal || {};
@@ -2014,6 +2029,156 @@ function savGoalDialog() {
     onSave: v => mutate(() => { if (!(v.amount > 0)) delete S.goal; else S.goal = { name: v.name, amount: v.amount }; }, v.amount > 0 ? 'Objectif : ' + (v.name || '') + ' ' + eur0(v.amount) : 'Objectif retiré'),
     onDelete: G.amount ? () => mutate(() => { delete S.goal; }, 'Objectif retiré') : null, delLabel: 'Retirer' });
 }
+
+
+/* ============================== VIREMENTS ==============================
+   • Entre mes comptes : sortie ici + entrée sur l'autre compte, liées (même identifiant de virement).
+   • Vers une personne : sortie ici + dépôt dans sa « boîte » transfers/{id} ; son app l'ajoute en direct
+     comme recette dans son compte de réception, puis marque le virement « reçu ».                       */
+const xfBusy = new Set();
+const xfStatus = id => (XF.out.find(t => t.id === id) || {}).status;
+function xferLabel(x, type) {
+  const f = x.xfer || {};
+  if (f.kind === 'acc') return (type === 'incomes' ? 'Virement de ' : 'Virement vers ') + (f.accName || 'un compte');
+  if (f.kind === 'person' && type === 'expenses') { const st = xfStatus(f.id); return 'Virement à ' + String(f.to || '').split('@')[0] + (st === 'received' ? ' · reçu ✓' : st === 'sent' ? ' · envoyé' : ''); }
+  if (f.kind === 'person') return 'Virement de ' + String(f.from || '').split('@')[0];
+  return 'Virement';
+}
+// Mois d'un AUTRE compte, modifié dans une transaction (créé à partir de ses charges fixes s'il n'existe pas encore)
+function monthFromMeta(metaStr) {
+  const T = (J(metaStr) || {}).templates || {};
+  return { bankBalance: null, savingGoal: null, expenses: (T.expenses || []).map(t => instance('expenses', t)), incomes: (T.incomes || []).map(t => instance('incomes', t)), budgets: (T.budgets || []).map(t => instance('budgets', t)) };
+}
+function txMonth(accId, k, fn, metaFn) {
+  return db.runTransaction(async tx => {
+    const aRef = accDoc(accId), mRef = monthCol(accId).doc(k);
+    const aS = await tx.get(aRef), mS = await tx.get(mRef);
+    if (!aS.exists) throw new Error('Compte introuvable');
+    const m = mS.exists ? JSON.parse(mS.data().data) : monthFromMeta(aS.data().meta);
+    fn(m);
+    tx.set(mRef, { data: canon(m), updatedAt: Date.now(), updatedBy: currentUser.uid });
+    if (metaFn) { const o = J(aS.data().meta) || {}; o.templates = o.templates || {}; ['expenses','incomes','budgets'].forEach(t => o.templates[t] = o.templates[t] || []); metaFn(o); tx.update(aRef, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); }
+  });
+}
+// Répercute une modification (ou une suppression si upd = null) sur l'autre côté du virement
+function xferPropagate(xf, upd) {
+  if (!xf || !xf.id) return;
+  const k = ck();
+  if (xf.kind === 'acc' && xf.acc && accIds.includes(xf.acc)) {
+    txMonth(xf.acc, k, m => {
+      ['expenses','incomes'].forEach(t => {
+        if (!upd) m[t] = m[t].filter(e => !(e.xfer && e.xfer.id === xf.id));
+        else m[t].forEach(e => { if (e.xfer && e.xfer.id === xf.id) { e.amount = upd.amount; e.date = upd.date; } });
+      });
+    }).catch(e => toast('⚠ L\'autre compte n\'a pas pu être mis à jour (' + (e.code || e.message) + ')'));
+  }
+  if (xf.kind === 'person' && xf.to && xfStatus(xf.id) === 'sent') {
+    const r = db.collection('transfers').doc(xf.id);
+    (upd ? r.update({ amount: upd.amount, date: upd.date, label: upd.label }) : r.delete()).catch(() => {});
+  }
+}
+function contactSuggestions() {
+  const me = myEmail(), seen = new Set(), out = [];
+  const add = e => { e = String(e || '').toLowerCase(); if (e && e !== me && !seen.has(e)) { seen.add(e); out.push(e); } };
+  (U.contacts || []).slice().sort((a, b) => b.n - a.n || b.last - a.last).forEach(c => add(c.email));
+  accIds.forEach(id => Object.values(ACC[id]?.memberEmails || {}).forEach(add));
+  XF.out.forEach(t => add(t.to)); XF.in.forEach(t => add(t.fromEmail));
+  return out.slice(0, 8);
+}
+function typeSeg() {
+  const sav = isSavAcc(), t = P.type;
+  const b = (v, l) => `<button class="${t === v ? 'on' : ''}" data-p="type" data-v="${v}">${l}</button>`;
+  return `<div class="seg" role="group" aria-label="Type">${sav ? b('incomes', 'Versement') + b('expenses', 'Retrait') : b('expenses', 'Dépense') + b('incomes', 'Recette')}${b('xfer', 'Virement')}</div>`;
+}
+function paintXfer() {
+  const d = P.d, others = accIds.filter(id => id !== active && ACC[id]), sug = contactSuggestions();
+  if (P.xk === 'acc' && !P.dest && others.length) P.dest = others[0];
+  const auto = P.xk === 'acc' ? 'Virement vers ' + (ACC[P.dest]?.name || '…') : 'Virement à ' + (String(d.email || '').split('@')[0] || '…');
+  $('panel').innerHTML = `
+  <div class="pbody">
+    <div class="dh"><h2 id="pn-title">Nouveau virement</h2><button class="ib sm" data-p="close" aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    ${typeSeg()}
+    <label class="amt"><input id="pn-a" inputmode="decimal" placeholder="0,00" aria-label="Montant" value="${esc(d.amount)}" data-pf="amount"><span>€</span></label>
+    <div class="seg" role="group" aria-label="Destination"><button class="${P.xk === 'acc' ? 'on' : ''}" data-p="xk" data-v="acc">Vers un de mes comptes</button><button class="${P.xk === 'person' ? 'on' : ''}" data-p="xk" data-v="person">Vers une personne</button></div>
+    ${P.xk === 'acc' ? `<div class="fl">Compte d'arrivée
+        ${others.map(id => { const a = ACC[id]; return `<button class="row rowb${P.dest === id ? ' on' : ''}" data-p="dest" data-v="${id}" style="border:1px solid ${P.dest === id ? 'var(--acc)' : 'var(--line)'};${P.dest === id ? 'background:var(--acc-s)' : ''}"><span class="accbig">${accBadge(a, 18)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(accSub(id))}</span></span></button>`; }).join('') || '<p class="note">Crée d\'abord un autre compte (sélecteur de compte › Nouveau compte).</p>'}</div>`
+    : `<label class="fl">Destinataire (email)<input class="in" id="pn-e" type="email" list="pn-el" value="${esc(d.email || '')}" data-pf="email" placeholder="email de la personne" autocomplete="off"><datalist id="pn-el">${sug.map(e => `<option value="${esc(e)}">`).join('')}</datalist></label>
+      ${sug.length ? `<div class="chips" style="margin-top:-6px">${sug.map(e => `<button class="chip${String(d.email || '').toLowerCase() === e ? ' on' : ''}" data-p="sugg" data-v="${esc(e)}"><span class="avatar">${initials(e)}</span>${esc(e.split('@')[0])}</button>`).join('')}</div>` : ''}
+      <small class="note" style="font-size:12px;margin-top:-8px">La personne doit avoir un compte sur l'app avec cet email. Elle le reçoit en direct comme recette.</small>`}
+    <label class="fl">Libellé<input class="in" id="pn-n" value="${esc(d.name)}" data-pf="name" placeholder="${esc(auto)}"></label>
+    ${P.xk === 'person' ? `<div class="fl">Icône (vue aussi par le destinataire)
+      <div class="seg" role="group" aria-label="Icône"><button class="${P.icon === 'cat' ? 'on' : ''}" data-p="icon" data-v="cat">Par défaut</button><button class="${P.icon === 'site' ? 'on' : ''}" data-p="icon" data-v="site">Logo du site</button><button class="${P.icon === 'img' ? 'on' : ''}" data-p="icon" data-v="img">Mon image</button></div>
+      ${P.icon === 'site' ? `<input class="in" id="pn-site" value="${esc(d.site || '')}" data-pf="site" placeholder="Site web, ex. monfournisseur.fr" style="font-weight:500">` : ''}
+      ${P.icon === 'img' ? `<span style="display:flex;gap:10px;align-items:center">${ico({ cat: 'Virement', img: d.img }, 'expenses')}<button class="btn sm" data-p="pickimg">${d.img ? 'Changer l\'image' : 'Choisir une image'}</button></span>` : ''}</div>` : ''}
+    <label class="fl">Jour du mois<input class="in" id="pn-d" type="number" min="1" max="31" inputmode="numeric" value="${esc(d.date)}" data-pf="date" placeholder="sans date"></label>
+    ${P.xk === 'acc' ? `<label class="chk"><input type="checkbox" data-p="repeat" ${P.repeat ? 'checked' : ''}>Chaque mois (virement automatique)</label>` : ''}
+  </div>
+  <div class="pfoot"><button class="btn p" style="flex:1" data-p="save">Enregistrer le virement</button></div>`;
+}
+async function saveXfer() {
+  const d = P.d, amt = Math.round(parseAmt(d.amount) * 100) / 100;
+  if (!(amt > 0)) { $('pn-a').focus(); return toast('Saisis un montant'); }
+  const k = ck(), src = active, srcName = accName(), dd = day(d.date), xid = uid(), label = d.name.trim();
+  if (P.xk === 'acc') {
+    const dest = P.dest; if (!dest || !ACC[dest] || dest === src) return toast('Choisis le compte d\'arrivée');
+    const dn = ACC[dest].name, repeat = P.repeat; closePanel();
+    mutate(() => {
+      month(k).expenses.unshift({ id: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, xfer: { id: xid, kind: 'acc', acc: dest, accName: dn } });
+      if (repeat) tplAdd('expenses', { tmplId: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, cat: 'Virement', xfer: { kind: 'acc', acc: dest, accName: dn, auto: true } }, shiftK(k, 1));
+    }, 'Virement vers ' + dn + ' · ' + eur(amt));
+    try {
+      await txMonth(dest, k, m => m.incomes.unshift(Object.assign({ id: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, status: 'Reçu', isFixed: false, xfer: { id: xid, kind: 'acc', acc: src, accName: srcName } }, isShared(dest) ? { by: currentUser.email } : {})),
+        repeat ? o => o.templates.incomes.push({ tmplId: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, xfer: { kind: 'acc', acc: src, accName: srcName, auto: true } }) : null);
+      if (isShared(dest)) accDoc(dest).collection('activity').add({ by: currentUser.uid, byEmail: currentUser.email, text: 'Virement reçu de « ' + srcName + ' » · ' + eur(amt), at: Date.now(), month: k }).catch(() => {});
+    } catch (e) { toast('⚠ Enregistré ici, mais pas sur « ' + dn + ' » (' + (e.code || e.message) + '). Vérifie ta connexion.'); }
+  } else {
+    const to = String(d.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { $('pn-e')?.focus(); return toast('Email du destinataire invalide'); }
+    if (to === myEmail()) return toast('Pour toi-même, choisis « Vers un de mes comptes »');
+    const site = P.icon === 'site' ? cleanSite(d.site) : '', img = P.icon === 'img' ? (d.img || '') : '';
+    closePanel();
+    mutate(() => {
+      const x = { id: uid(), name: label || 'Virement à ' + to.split('@')[0], amount: amt, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, xfer: { id: xid, kind: 'person', to } };
+      if (site) x.site = site; if (img) x.img = img; month(k).expenses.unshift(x);
+    }, 'Virement à ' + to.split('@')[0] + ' · ' + eur(amt));
+    const c = (U.contacts = U.contacts || []).find(z => z.email === to); if (c) { c.n++; c.last = Date.now(); } else U.contacts.push({ email: to, n: 1, last: Date.now() }); saveUser();
+    db.collection('transfers').doc(xid).set({ from: currentUser.uid, fromEmail: currentUser.email, to, amount: amt, label, date: dd, k, site, img, status: 'sent', at: Date.now() })
+      .catch(e => toast('⚠ Virement non transmis (' + (e.code || e.message) + ')'));
+  }
+}
+
+/* ---------- Réception des virements d'autres personnes ---------- */
+function xfListen(field, val, key) {
+  return db.collection('transfers').where(field, '==', val).onSnapshot(q => {
+    XF[key] = q.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.at - a.at);
+    if (key === 'in') processTransfers();
+    if (loaded) { renderChrome(); if (['messages','mouvements','accueil'].includes(UI.view)) render(); }
+  }, err => console.warn('Virements', err.code));
+}
+function recvAccount() { const r = U.recvAcc; if (r && accIds.includes(r) && ACC[r]) return r; return accIds.find(id => ACC[id] && ACC[id].kind !== 'epargne') || accIds.find(id => ACC[id]) || null; }
+function processTransfers() { if (!sameUser() || !accIds.length) return; XF.in.filter(t => t.status === 'sent').forEach(receiveTransfer); }
+async function receiveTransfer(t) {
+  if (xfBusy.has(t.id)) return; const acc = recvAccount(); if (!acc) return;
+  xfBusy.add(t.id);
+  try {
+    let done = false;
+    await db.runTransaction(async tx => {
+      const tRef = db.collection('transfers').doc(t.id), aRef = accDoc(acc), mRef = monthCol(acc).doc(t.k || nowK());
+      const tS = await tx.get(tRef); if (!tS.exists || tS.data().status !== 'sent') return;
+      const aS = await tx.get(aRef), mS = await tx.get(mRef); if (!aS.exists) return;
+      const v = tS.data(), m = mS.exists ? JSON.parse(mS.data().data) : monthFromMeta(aS.data().meta);
+      const x = { id: uid(), name: v.label || 'Virement de ' + String(v.fromEmail || '').split('@')[0], amount: num(v.amount), date: day(v.date), status: 'Reçu', isFixed: false, xfer: { id: t.id, kind: 'person', from: v.fromEmail } };
+      if (v.site) x.site = v.site; if (v.img) x.img = v.img;
+      m.incomes.unshift(x);
+      tx.set(mRef, { data: canon(m), updatedAt: Date.now(), updatedBy: currentUser.uid });
+      tx.update(tRef, { status: 'received', toAcc: acc, toAccName: ACC[acc]?.name || '', receivedAt: Date.now() });
+      done = true;
+    });
+    if (done) { const who = String(t.fromEmail || '').split('@')[0]; toast('💸 ' + who + ' t\'a fait un virement de ' + eur(t.amount) + ' → ' + (ACC[acc]?.name || '')); browserNotify('Virement reçu', who + ' · ' + eur(t.amount) + (t.label ? ' · ' + t.label : '')); }
+  } catch (e) { console.warn('Réception virement', e.code || e.message); }
+  finally { xfBusy.delete(t.id); }
+}
+
 
 /* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */
 const ACOL = [['Indigo','#4338CA'],['Vert','#0F766E'],['Bleu','#0369A1'],['Violet','#6D28D9'],['Rose','#BE185D'],['Orange','#C2410C'],['Ardoise','#334155']];
@@ -2115,6 +2280,10 @@ function vMessages() {
       || `<p class="empty" style="padding:12px">${accIds.some(id => isShared(id)) ? 'Aucune activité pour l\'instant.' : 'Aucun compte partagé. Invite quelqu\'un depuis Paramètres › Ce compte.'}</p>`}
     <p class="note" style="font-size:12px;padding-top:8px">Les notifications du navigateur s'affichent quand l'app est ouverte (même en arrière-plan). Quand l'app est fermée, tu verras les nouveautés ici à la prochaine ouverture.</p>
   </section>
+  ${XF.in.length || XF.out.length ? `<section class="card" style="display:flex;flex-direction:column;gap:2px"><div class="ch"><h2>Virements</h2><span class="note">Reçus sur : ${esc(ACC[recvAccount()]?.name || '—')} <button class="lnk" data-view="parametres">changer</button></span></div>
+    ${XF.in.map(t => ({ ...t, dir: 'in' })).concat(XF.out.map(t => ({ ...t, dir: 'out' }))).sort((a, b) => b.at - a.at).slice(0, 20).map(t => { const nw = t.dir === 'in' && (t.receivedAt || 0) > (seen.xfer || 0);
+      return `<div class="row" style="padding:8px 6px;${nw ? 'background:var(--acc-s)' : ''}"><span class="ico" style="--c:${t.dir === 'in' ? '#10B981' : '#0EA5E9'}">${svg(t.dir === 'in' ? 'up' : 'swap')}</span><span class="rt"><span class="rn" style="white-space:normal">${t.dir === 'in' ? '<b>' + esc(String(t.fromEmail).split('@')[0]) + '</b> → toi' : 'Toi → <b>' + esc(String(t.to).split('@')[0]) + '</b>'}${t.label ? ' · ' + esc(t.label) : ''}</span><span class="rs">${ago(t.at)}${t.toAccName ? ' · sur ' + esc(t.toAccName) : ''}</span></span><b class="num" style="color:${t.dir === 'in' ? 'var(--ok)' : 'var(--ink)'}">${t.dir === 'in' ? '+' : '−'}${eur(t.amount)}</b><span class="pill ${t.status === 'received' ? 'ok' : ''}" style="margin-left:8px">${t.status === 'received' ? 'Reçu' : 'Envoyé'}</span></div>`; }).join('')}
+  </section>` : ''}
   ${INV.out.length ? `<section class="card" style="display:flex;flex-direction:column;gap:2px"><h2 style="margin-bottom:8px">Invitations envoyées</h2>
     ${INV.out.map(i => `<div class="row" style="padding:6px 4px"><span class="rt"><span class="rn">${esc(i.to)} · « ${esc(i.accName)} »</span><span class="rs">${ago(i.at)}</span></span><span class="pill ${i.status === 'accepted' ? 'ok' : i.status === 'declined' ? 'warn' : ''}">${{ pending: 'En attente', accepted: 'Acceptée', declined: 'Refusée' }[i.status] || i.status}</span><button class="x" data-a="inv-cancel" data-id="${esc(i.id)}" aria-label="Supprimer">${svg('x', 15)}</button></div>`).join('')}
   </section>` : ''}`;
@@ -2179,6 +2348,7 @@ document.addEventListener('change', ev => {
   if ((f === 'bank' || f === 'name') && !ACC[active]?.site) { const g = guessSite(v); if (g) upd.site = g; }   // logo automatique
   accDoc(active).update(upd).then(() => toast('Compte mis à jour')).catch(e => toast('⚠ ' + (e.code || e.message)));
 });
+
 
 /* ============================== 10. ÉVÉNEMENTS ============================== */
 document.addEventListener('click', ev => {
@@ -2268,6 +2438,7 @@ document.addEventListener('change', ev => {
   if (el.id === 'imgfile') return readImage(el.files[0]);
   if (el.id === 'pn-site' && P) return paintPanel();
   if (el.dataset.sv) return saveUser();
+  if (el.dataset.recv) { U.recvAcc = el.value; saveUser(); return toast('Virements reçus sur « ' + (ACC[el.value]?.name || '') + ' »'); }
   if (el.dataset.al) { const f = el.dataset.al, v = parseFloat(el.value) || 0; return mutate(() => { AL()[f] = v; }, 'Seuil d\'alerte enregistré'); }
   const tr = el.closest('[data-tpl]'), f = el.dataset.f;
   if (tr && f) {
