@@ -228,6 +228,10 @@ tr.go:hover td{background:var(--hov)}
 .accsw b,.accmenu b{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .accsw small,.accmenu small{font-size:11.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top-sw{display:none}
+.tdate{font-size:13px;font-weight:600;color:var(--ink2);background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:7px 12px;white-space:nowrap}
+.tdate .tds{display:none}
+@media (max-width:760px){.tdate .tdl{display:none}.tdate .tds{display:inline}.tdate{padding:6px 10px;font-size:12px}}
+.hero .stats>div>small{display:block;margin-top:2px}
 .accmenu{position:fixed;z-index:70;width:300px;max-width:calc(100% - 16px);background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 16px 40px rgba(13,16,32,.22);padding:6px;display:flex;flex-direction:column}
 .accmenu .am{display:flex;align-items:center;gap:10px;padding:9px 10px;border:0;background:none;border-radius:10px;text-align:left;color:var(--ink);min-height:44px}
 .accmenu .am:hover,.accmenu .am:focus-visible{background:var(--soft)}
@@ -350,6 +354,7 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
         <button class="btn sm" data-a="today" id="btn-today" hidden>Aujourd'hui</button>
       </div>
       <div class="tools">
+        <span class="tdate" id="todayd" title="Aujourd'hui"></span>
         <button class="ib" id="bell" data-a="alerts" aria-label="Alertes"></button>
         <button class="btn p" data-a="new" title="Nouveau mouvement (N)"></button>
       </div>
@@ -554,8 +559,28 @@ const vspent = (m, c) => sum(m.expenses.filter(e => !e.isFixed && e.cat === c), 
 function monthFlow(m, key) {
   if (key < nowK())
     return sum(m.incomes.filter(i => i.status === 'Reçu')) - sum(m.expenses.filter(e => e.status === 'Payé'), eff) - num(m.savingGoal);
-  const bL = sum(m.budgets, b => Math.max(0, num(b.amount) - vspent(m, b.cat)));
-  return sum(m.incomes) - sum(m.expenses, eff) - bL - num(m.savingGoal);
+  return sum(m.incomes) - sum(m.expenses, eff) - num(m.savingGoal) - varRest(m, key).v;
+}
+// Dépenses du quotidien (hors charges fixes et virements entre mes comptes)
+const isDaily = e => !e.isFixed && e.xfer?.kind !== 'acc';
+// Ce que tu dépenses d'habitude APRÈS le jour « from » (6 derniers mois terminés) → moyenne, écart, nombre de mois
+let histCache = { sig: '', r: {} };
+function histVar(from) {
+  const ks = Object.keys(S.months).filter(x => x < nowK() && !isDraft(S.months[x]) && S.months[x].expenses.some(isDaily)).sort().slice(-6);
+  const sig = ks.map(x => x + ':' + S.months[x].expenses.length + ':' + sum(S.months[x].expenses, eff)).join('|');
+  if (histCache.sig !== sig) histCache = { sig, r: {} };
+  if (histCache.r[from]) return histCache.r[from];
+  const vals = ks.map(x => { const D = dim(x); return sum(S.months[x].expenses.filter(isDaily), e => { const d = parseInt(e.date); return eff(e) * (d ? (d > from ? 1 : 0) : Math.max(0, (D - from) / D)); }); });
+  const n = vals.length, mean = n ? vals.reduce((s, v) => s + v, 0) / n : 0;
+  const sd = n > 1 ? Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1)) : mean * .3;
+  return histCache.r[from] = { mean, sd, n };
+}
+// Dépenses du quotidien encore à prévoir ce mois-ci, d'après l'historique (déduction faite de celles déjà saisies pour plus tard)
+function varRest(m, key) {
+  const cur = key === nowK(), from = cur ? today() : 0, h = histVar(from);
+  if (!h.n) return { v: 0, sd: 0, n: 0, h, from };
+  const ahead = sum(m.expenses.filter(e => isDaily(e) && (!cur || (e.status !== 'Payé' && parseInt(e.date) > from))), eff);
+  return { v: Math.max(0, h.mean - ahead), sd: h.sd, n: h.n, h, from, ahead };
 }
 // Solde au 1er du mois : dernier solde réel saisi (ce mois-ci ou avant) + variations des mois intermédiaires
 function chainBalance(targetKey) {
@@ -594,6 +619,7 @@ function calc(m, key) {
   r.flow = monthFlow(m, key);
   r.est = r.init + r.flow;
   r.past = key < nowK();
+  r.vr = r.past ? null : varRest(m, key);                                         // dépenses habituelles encore à venir
   r.incWait = r.incAll - r.incIn;
   // Reste à vivre = solde actuel + recettes à venir − dépenses à payer − épargne prévue
   // (= ce qu'il restera fin de mois si tu ne dépenses plus rien ; les budgets se dépensent dedans)
@@ -619,7 +645,31 @@ function dueState(x, type, k) {
 }
 
 /* ---------- Alertes ---------- */
-const AL = () => S.alerts = Object.assign({ thr: 0, pct: 20 }, S.alerts || {});
+const AL = () => { const A = S.alerts = S.alerts || {}; if (A.thr === undefined) A.thr = 0; if (A.pct === undefined) A.pct = 20; if (!Array.isArray(S.alerts.custom)) S.alerts.custom = []; return S.alerts; };
+// Alertes personnalisées : catégorie, solde, grosse dépense, recette attendue, rappel
+const ALT = {
+  cat: { l: 'Une catégorie dépasse un montant', ic: 'pie' },
+  bal: { l: 'Le solde passe sous un montant', ic: 'wallet' },
+  big: { l: 'Une dépense dépasse un montant', ic: 'warn' },
+  inc: { l: 'Une recette n\'est pas arrivée à une date', ic: 'trend' },
+  rem: { l: 'Un rappel à une date du mois', ic: 'bell' }
+};
+function altLabel(a) {
+  return a.t === 'cat' ? `${a.cat} dépasse ${eur0(a.amt)} dans le mois` : a.t === 'bal' ? `Solde actuel sous ${eur0(a.amt)}` : a.t === 'big' ? `Une dépense de plus de ${eur0(a.amt)}`
+    : a.t === 'inc' ? `« ${a.name} » pas reçu le ${a.day}` : a.t === 'rem' ? `Le ${a.day} : ${a.text}` : '';
+}
+function customAlerts(m, k, c) {
+  const o = [], cur = k === nowK(), td = today(), ct = catTotals(m);
+  AL().custom.filter(a => a.on !== false).forEach(a => {
+    const id = a.id;
+    if (a.t === 'cat') { const v = ct[a.cat] || 0, q = num(a.amt); if (q > 0 && v > q) o.push({ id, lvl: 'bad', text: `${a.cat} : ${eur(v)} ce mois (ta limite : ${eur0(q)})`, go: 'mouvements', q: a.cat }); else if (q > 0 && v > q * .9) o.push({ id: id + '_90', lvl: 'warn', text: `${a.cat} : ${eur(v)}, bientôt ta limite de ${eur0(q)}`, go: 'mouvements', q: a.cat }); }
+    if (a.t === 'bal' && cur && c.current < num(a.amt)) o.push({ id, lvl: 'bad', text: `Solde actuel ${eur(c.current)} : sous ton seuil de ${eur0(a.amt)}`, go: 'accueil' });
+    if (a.t === 'big') m.expenses.filter(e => !e.isFixed && eff(e) > num(a.amt)).forEach(e => o.push({ id: id + '_' + e.id, lvl: 'warn', text: `Grosse dépense : ${e.name || e.cat} · ${eur(eff(e))}`, go: 'mouvements', q: e.name || e.cat }));
+    if (a.t === 'inc' && (k < nowK() || (cur && td >= +a.day))) { const q = String(a.name || '').toLowerCase(); if (q && !m.incomes.some(i => i.status === 'Reçu' && String(i.name || '').toLowerCase().includes(q))) o.push({ id, lvl: 'bad', text: `« ${a.name} » toujours pas reçu (attendu le ${a.day})`, go: 'mouvements', q: a.name }); }
+    if (a.t === 'rem' && cur && td >= +a.day && td <= +a.day + 2) o.push({ id: id + '_' + k, lvl: 'warn', text: '🔔 ' + a.text, go: 'accueil' });
+  });
+  return o;
+}
 function alerts(k = ck()) {
   const m = S.months[k], o = []; if (!m) return o;
   const c = calc(m, k), A = AL();
@@ -627,6 +677,7 @@ function alerts(k = ck()) {
     const late = m.expenses.filter(e => e.isFixed && dueState(e, 'expenses', k) === 'late');
     if (late.length) o.push({ lvl: 'bad', text: `${late.length} charge${late.length > 1 ? 's' : ''} fixe${late.length > 1 ? 's' : ''} en retard · ${eur(sum(late, eff))}`, go: 'mouvements', flt: 'todo' });
   }
+  o.push(...customAlerts(m, k, c));
   if (!c.past && c.est < num(A.thr)) o.push({ lvl: 'bad', text: `Fin de mois estimée : ${eur(c.est)} (seuil ${eur(A.thr)})`, go: 'accueil' });
   if (!c.past && c.rav < 0) o.push({ lvl: 'bad', text: `Reste à vivre négatif : ${eur(c.rav)}`, go: 'accueil' });
   m.budgets.forEach(b => {
@@ -1322,9 +1373,17 @@ function renderChrome() {
   $('bell').classList.toggle('on', UI.view === 'messages');
   $$('.accsw-slot').forEach(s => s.innerHTML = accSwitcherHTML());
   $$('[data-a=new]')[0].innerHTML = svg('plus', 18, 2.4) + '<span>Ajouter</span>';
+  setTimeout(notifyAlerts, 0);
+  $('todayd').innerHTML = `<span class="tdl">${todayLabel()}</span><span class="tds">${todayLabel({ weekday: 'short', day: 'numeric', month: 'short' })}</span>`;
 }
 
 /* ---------- ACCUEIL ---------- */
+// Fourchette de la fin de mois (± un écart type de tes dépenses habituelles)
+function finRange(c) {
+  const sd = c.vr?.n ? c.vr.sd : 0, base = Math.max(Math.abs(c.vr?.h?.mean || 0), 1);
+  return { lo: c.est - sd, hi: c.est + sd, p: Math.min(99, Math.round(sd / base * 100)) };
+}
+const todayLabel = (o = { weekday: 'long', day: 'numeric', month: 'long' }) => { const s = new Date().toLocaleDateString('fr-FR', o); return s.charAt(0).toUpperCase() + s.slice(1); };
 function vAccueil() {
   if (isSavAcc()) return vSavAccueil();
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil');
@@ -1340,10 +1399,13 @@ function vAccueil() {
   const rapTip = tip('reste à payer', 'Reste à payer', 'Tout ce qui est encore « À payer » ou « Prévu » ce mois-ci.' + eq(
       unpaid.slice(0, 6).map(e => [esc(e.name || e.cat) + (e.date ? ` (${e.date})` : ''), eur(eff(e))]).concat(unpaid.length > 6 ? [[`+ ${unpaid.length - 6} autres`, eur(sum(unpaid.slice(6), eff))]] : []),
       ['= Reste à payer', eur(c.outPlan)]));
+  const vr = c.vr, isNow = k === nowK(), fin = finRange(c);
   const finTip = tip('fin de mois estimée', 'Fin de mois estimée', c.past
       ? 'Ce mois est terminé : calcul sur ce qui a réellement été reçu et payé.' + eq([['Solde au 1er', eur(c.init)], ['+ Recettes reçues', eur(c.incIn)], ['− Dépenses payées', eur(c.outPaid)], ['− Épargne', eur(c.saving)]], ['= Fin de mois', eur(c.est)])
-      : `Ce qu'il devrait rester sur ton compte le ${dim(k)} ${MN[cur.getMonth()].toLowerCase()} si tu dépenses tes budgets jusqu'au bout.` + eq([['Reste à vivre', eur(c.rav)], ['− Reste des budgets', eur(c.budLeft)]], ['= Fin de mois', eur(c.est)],
-        c.budLeft > 0 ? 'Estimation prudente : si tu dépenses moins que tes budgets, tu finiras plus haut (au mieux ' + eur(c.rav) + ').' : ''), 'lf');
+      : !vr.n ? "Pas encore assez d'historique : c'est ce qu'il restera si tu ne dépenses plus rien en dehors de ce qui est prévu. L'estimation s'affinera dès le mois prochain." + eq([['Reste à vivre', eur(c.rav)]], ['= Fin de mois', eur(c.est)])
+      : `D'après tes ${vr.n} dernier${vr.n > 1 ? 's' : ''} mois : ${isNow ? `après le ${vr.from}, tu dépenses en général encore` : 'sur un mois entier, tu dépenses en général'} <b>${eur(vr.h.mean)}</b> au quotidien (courses, sorties… hors charges fixes).`
+        + eq([['Reste à vivre', eur(c.rav)], vr.ahead > 0 && ['(dont déjà prévu : ' + eur(vr.ahead) + ')', ''], ['− Dépenses habituelles à venir', eur(vr.v)]].filter(Boolean), ['≈ Fin de mois', eur(c.est)],
+          `Fourchette probable : <b>${eur0(fin.lo)} à ${eur0(fin.hi)}</b> (± ${fin.p} %). Plus tu as de mois d'historique, plus c'est précis.`), 'lf');
 
   // Prochains prélèvements
   const isCur = k === nowK();
@@ -1401,7 +1463,7 @@ function vAccueil() {
       <div class="stats">
         <div><span>Solde actuel ${solTip}</span><b>${eur(c.current)}</b></div>
         <div><span>Reste à payer ${rapTip}</span><b>${eur(c.outPlan)}</b></div>
-        <div><span>Fin de mois estimée ${finTip}</span><b>${eur(c.est)}</b></div>
+        <div><span>Fin de mois estimée ${finTip}</span><b>${c.vr?.n ? '≈ ' : ''}${eur(c.est)}</b>${c.vr?.n ? `<small class="num" style="font-size:11px;color:var(--hero-t)">± ${finRange(c).p} % · ${c.vr.n} mois</small>` : ''}</div>
       </div>
       <button class="bk" data-a="bank">Solde au 1er : ${eur(c.init)} ${c.bankSet ? '(saisi)' : '(calculé)'} · modifier</button>
     </section>
@@ -1761,7 +1823,9 @@ function vParametres() {
     <div class="tw"><table class="tpl"><thead><tr><th>Catégorie</th><th>Montant</th><th></th></tr></thead><tbody>
     ${T.budgets.map(t => `<tr data-tpl="budgets" data-id="${t.tmplId}"><td><select data-f="cat" aria-label="Catégorie">${catSel(t.cat)}</select></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Aucun budget.</td></tr>'}
     </tbody></table></div></section>
-  <section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Alertes</h2>
+  <section class="card" style="display:flex;flex-direction:column;gap:10px"><div class="ch"><h2>Alertes</h2><button class="btn sm" data-a="al-new">${svg('plus', 16)} Nouvelle alerte</button></div>
+    ${AL().custom.map(a => `<div class="row" style="padding:6px 4px"><button class="rowb" data-a="al-edit" data-id="${a.id}"><span class="ico" style="--c:${a.on === false ? '#94A3B8' : '#F97316'}">${svg(ALT[a.t]?.ic || 'bell')}</span><span class="rt"><span class="rn"${a.on === false ? ' style="color:var(--mute);text-decoration:line-through"' : ''}>${esc(altLabel(a))}</span><span class="rs">${esc(ALT[a.t]?.l || '')}</span></span></button><label class="chk" style="margin-left:8px" title="Activer / couper"><input type="checkbox" data-alon="${a.id}" ${a.on === false ? '' : 'checked'}></label></div>`).join('') || '<p class="note">Crée tes propres alertes : limite par catégorie, solde trop bas, grosse dépense, salaire pas arrivé, rappel à une date…</p>'}
+    <p class="note" style="font-size:12px">Elles s'affichent sur l'accueil, dans la cloche et en notification du navigateur (si activée). Elles valent pour ce compte${isShared() ? ' et ses autres membres' : ''}.</p>
     <label class="fl" style="flex-direction:row;align-items:center;gap:10px;font-size:14px;color:var(--ink2)">M'alerter si la fin de mois estimée passe sous <input class="in" type="number" data-al="thr" value="${num(AL().thr)}" style="width:110px;text-align:right"> €</label>
     <label class="fl" style="flex-direction:row;align-items:center;gap:10px;font-size:14px;color:var(--ink2)">M'alerter si une catégorie dépasse sa moyenne de <input class="in" type="number" data-al="pct" value="${num(AL().pct)}" style="width:90px;text-align:right"> %</label>
   </section>`;
@@ -1984,6 +2048,43 @@ function alertsDialog() {
   d.querySelector('[data-x]').onclick = () => d.close();
   d.onclick = e => { const b = e.target.closest('[data-al-i]'); if (!b) return; const a = L[+b.dataset.alI]; d.close(); cur = keyDate(nowK()); go(a.go, { flt: a.flt || 'all', q: a.q || '' }); };
   d.showModal();
+}
+
+/* ---------- Alertes personnalisées ---------- */
+function alertNewDialog() {
+  const d = $('dlg');
+  d.innerHTML = `<div class="dw"><div class="dh"><h2>Nouvelle alerte</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    <p class="note">Je veux être prévenu quand…</p>
+    ${Object.entries(ALT).map(([t, a]) => `<button class="row rowb" data-alt="${t}" style="border:1px solid var(--line)"><span class="ico" style="--c:#F97316">${svg(a.ic)}</span><span class="rt"><span class="rn">${esc(a.l)}</span></span></button>`).join('')}</div>`;
+  d.onclick = e => { if (e.target.closest('[data-x]')) return d.close(); const b = e.target.closest('[data-alt]'); if (b) { d.close(); alertDialog(b.dataset.alt); } };
+  d.showModal();
+}
+function alertDialog(t, id) {
+  const ex = id ? AL().custom.find(a => a.id === id) : null; if (ex) t = ex.t;
+  const v = ex || {}, F = {
+    cat: [{ id: 'cat', label: 'Catégorie', type: 'select', options: S.categories, value: v.cat }, { id: 'amt', label: 'Montant maximum dans le mois', type: 'num', value: v.amt, ph: 'ex. 300' }],
+    bal: [{ id: 'amt', label: 'Seuil du solde actuel', type: 'num', value: v.amt, ph: 'ex. 200' }],
+    big: [{ id: 'amt', label: 'Montant d\'une seule dépense', type: 'num', value: v.amt, ph: 'ex. 100' }],
+    inc: [{ id: 'name', label: 'Nom de la recette (ou une partie)', value: v.name, ph: 'ex. Salaire' }, { id: 'day', label: 'Attendue au plus tard le (jour du mois)', value: v.day, ph: 'ex. 5' }],
+    rem: [{ id: 'text', label: 'Message', value: v.text, ph: 'ex. Payer la cantine' }, { id: 'day', label: 'Jour du mois', value: v.day, ph: 'ex. 10' }]
+  }[t];
+  formDialog({ title: ALT[t].l, intro: t === 'rem' ? 'Le rappel s\'affiche ce jour-là et les 2 jours suivants, chaque mois.' : t === 'inc' ? 'Si rien de ce nom n\'est marqué « Reçu » à cette date, tu es prévenu.' : '',
+    fields: F, ok: ex ? 'Enregistrer' : 'Créer l\'alerte',
+    onDelete: ex ? () => mutate(() => { AL().custom = AL().custom.filter(a => a.id !== id); }, 'Alerte supprimée') : null,
+    onSave: r => {
+      if ('amt' in r && !(r.amt > 0)) { toast('Indique un montant'); return false; }
+      if ('day' in r) { const dd = parseInt(r.day); if (!(dd >= 1 && dd <= 31)) { toast('Jour entre 1 et 31'); return false; } r.day = dd; }
+      if (('name' in r && !r.name) || ('text' in r && !r.text)) { toast('Complète le texte'); return false; }
+      mutate(() => { const L = AL().custom; if (ex) Object.assign(L.find(a => a.id === id), r); else L.push(Object.assign({ id: uid(), t, on: true }, r)); }, ex ? 'Alerte modifiée' : 'Alerte créée');
+    } });
+}
+// Notification du navigateur pour une nouvelle alerte personnalisée (une seule fois par alerte et par mois)
+function notifyAlerts() {
+  if (!active || !S) return; let done = {}; const key = 'aln_' + active + '_' + nowK();
+  try { done = JSON.parse(localStorage.getItem(key) || '{}'); } catch (e) {}
+  const L = customAlerts(month(nowK()), nowK(), calc(month(nowK()), nowK())).filter(a => !done[a.id]); if (!L.length) return;
+  L.forEach(a => { done[a.id] = 1; browserNotify('Alerte · ' + accName(), a.text); });
+  try { localStorage.setItem(key, JSON.stringify(done)); } catch (e) {}
 }
 
 
@@ -2425,6 +2526,8 @@ document.addEventListener('click', ev => {
         nm + ' : ' + (t === 'incomes' ? (was ? 'en attente' : 'reçu ✓') : (was ? 'à payer' : 'payé ✓')) + ' · ' + eur(t === 'incomes' ? num(x0.amount) : eff(x0))); }
     case 'flt': UI.flt = b.dataset.v; return render();
     case 'alerts': return go('messages');
+    case 'al-new': return alertNewDialog();
+    case 'al-edit': return alertDialog(null, id);
     case 'xf-hide': (U.xfHide = U.xfHide || []).push(id); saveUser(); return render();
     case 'alertgo': { const al = alerts(k)[0]; if (al) go(al.go, { flt: al.flt || 'all', q: al.q || '' }); return; }
     case 'bank': return bankDialog();
@@ -2499,6 +2602,7 @@ document.addEventListener('change', ev => {
   if (el.dataset.sv) return saveUser();
   if (el.dataset.recv) { U.recvAcc = el.value; U.recvHide = (U.recvHide || []).filter(x => x !== el.value); saveUser(); render(); return toast('Compte par défaut : « ' + (ACC[el.value]?.name || '') + ' »'); }
   if (el.dataset.rvis) { const id = el.dataset.rvis; U.recvHide = (U.recvHide || []).filter(x => x !== id); if (!el.checked) { if (id === recvAccount()) { toast('C\'est ton compte par défaut : il reste proposé'); return render(); } U.recvHide.push(id); } saveUser(); return render(); }
+  if (el.dataset.alon) { const id = el.dataset.alon, on = el.checked; return mutate(() => { const a = AL().custom.find(x => x.id === id); if (a) a.on = on; }, on ? 'Alerte activée' : 'Alerte coupée'); }
   if (el.dataset.al) { const f = el.dataset.al, v = parseFloat(el.value) || 0; return mutate(() => { AL()[f] = v; }, 'Seuil d\'alerte enregistré'); }
   const tr = el.closest('[data-tpl]'), f = el.dataset.f;
   if (tr && f) {
