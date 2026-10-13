@@ -398,6 +398,13 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .dpct{font-size:15px;width:52px;text-align:right}
 .prow .rn,.prow .rs{white-space:normal}
 .odebts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-top:1px solid var(--line);margin-top:8px;padding-top:10px}
+.dpart{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.dhead{display:flex;align-items:baseline;gap:10px;border-radius:12px;padding:10px 12px;margin-bottom:2px}
+.dhead b{font-size:14px}.dhead .num{font-weight:800;font-size:17px;margin-left:auto}
+.dhead.in{background:var(--ok-s);color:var(--ok)}.dhead.out{background:var(--warn-s);color:var(--warn)}
+.dhead .note{font-size:12px}
+.dwho{display:flex;align-items:center;justify-content:space-around;gap:10px;background:var(--soft);border-radius:14px;padding:10px;text-align:center}
+.dwho span{display:flex;flex-direction:column;gap:2px;min-width:0}.dwho small{color:var(--mute);font-size:11px}.dwho b{font-size:14px;overflow:hidden;text-overflow:ellipsis}
 .dbig{display:flex;flex-direction:column;gap:6px;background:var(--soft);border-radius:16px;padding:16px}
 .dbig>b{font-size:30px;font-weight:800}
 /* Objectifs, devises */
@@ -988,7 +995,7 @@ function stopAll() {
   subs.forEach(u => u()); subs = [];
   Object.values(listSubs).forEach(u => u()); listSubs = {};
   Object.values(actSubs).forEach(u => u()); actSubs = {};
-  ACC = {}; accIds = []; active = null; USER = null; INV = { in: [], out: [] }; ACT = {}; XF = { in: [], out: [] };
+  ACC = {}; accIds = []; active = null; USER = null; INV = { in: [], out: [] }; ACT = {}; XF = { in: [], out: [] }; LINKS = []; PDEBTS = [];
   clearTimeout(userSaveTimer); userSaveTimer = null; U = { savAcc: [], savings: null, savIncl: {} };
 }
 function showScreen(w) {
@@ -1183,7 +1190,7 @@ function syncActivity() {
 function unreadCount() {
   const seen = USER?.seen || {}, me = currentUser?.uid;
   const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
-  return act + INV.in.filter(i => i.status === 'pending').length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
+  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
 }
 function markSeen() {
   const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
@@ -1252,7 +1259,7 @@ auth.onAuthStateChanged(user => {
     if (loaded) { renderChrome(); if (UI.view === 'messages') render(); }
   }, err => console.warn('Invitations', err.code));
   subs.push(inv('to', myEmail(), 'in'), inv('from', user.uid, 'out'));
-  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'));
+  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'), linkListen(), pdebtListen());
 });
 
 /* ============================== 6. CONNEXION & COMPTE ============================== */
@@ -1995,6 +2002,7 @@ function vParametres() {
       <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
     </section>
     ${installHTML()}
+    ${linksCardHTML()}
   </div>`,
     donnees: () => `    <section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Données & sauvegardes</h2>
       <p class="note">Une copie automatique chaque jour à la connexion, et avant chaque import, réinitialisation ou restauration (40 dernières gardées).</p>
@@ -2110,6 +2118,7 @@ function panelClick(b) {
     case 'xk': P.xk = b.dataset.v; if (P.xk === 'person') Object.keys(DIR_T).forEach(e => delete DIR_T[e]); break;
     case 'dest': P.dest = b.dataset.v; break;
     case 'sugg': d.email = b.dataset.v; P.toAccPicked = false; xfLookup(d.email); break;
+    case 'linkreq': linkRequest(d.email).then(() => paintDest()); return;
     case 'tacc': P.toAcc = b.dataset.v; P.toAccPicked = true; break;
     case 'xmove': return xferMove(b.dataset.v);
     case 'dup': { const t = P.type, src = month()[t].find(e => e.id === P.id); mutate(() => { const c = JSON.parse(JSON.stringify(src)); Object.assign(c, { id: uid(), isFixed: false, status: t === 'incomes' ? 'En attente' : 'Prévu' }); delete c.tmplId; const arr = month()[t]; arr.splice(arr.indexOf(src) + 1, 0, c); }, 'Dupliqué'); return closePanel(); }
@@ -2364,7 +2373,7 @@ function destHTML() {
   const e = String(P.d.email || '').trim().toLowerCase(); if (!okEmail(e) || e === myEmail()) return '';
   const D = DIR[e];
   if (D === undefined) return '<p class="note" style="font-size:12px">Recherche de ses comptes…</p>';
-  if (!D || !(D.accounts || []).length) return '<p class="note" style="font-size:12px">Comptes de cette personne non trouvés (email inconnu ou app pas à jour chez elle) : le virement arrivera sur son compte par défaut.</p>';
+  if (!D || !(D.accounts || []).length) return `<p class="note" style="font-size:12px">${isLinked(e) ? 'Ses comptes ne sont pas encore visibles (app pas à jour chez elle ?)' : 'Pour choisir sur quel compte elle reçoit, connectez-vous (elle doit accepter).'} Sinon, le virement arrivera sur son compte par défaut.${isLinked(e) || linkWith(e)?.status === 'pending' ? '' : ' <button class="lnk" data-p="linkreq">Demander la connexion</button>'}${linkWith(e)?.status === 'pending' ? ' <b>Demande en attente.</b>' : ''}</p>`;
   if (!P.toAccPicked || !D.accounts.some(a => a.id === P.toAcc)) P.toAcc = D.accounts.some(a => a.id === D.recv) ? D.recv : D.accounts[0].id;
   return `<div class="fl">Sur quel compte de ${esc(e.split('@')[0])} ?${D.accounts.map(a => `<button class="row rowb${P.toAcc === a.id ? ' on' : ''}" data-p="tacc" data-v="${esc(a.id)}" style="border:1px solid ${P.toAcc === a.id ? 'var(--acc)' : 'var(--line)'};${P.toAcc === a.id ? 'background:var(--acc-s)' : ''}"><span class="accbig">${accBadge(a, 18)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc([a.bank, a.kind === 'epargne' ? 'Épargne' : 'Courant', a.id === D.recv ? 'par défaut' : ''].filter(Boolean).join(' · '))}</span></span></button>`).join('')}</div>`;
 }
@@ -2572,7 +2581,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v12';
+const APP_VERSION = '14 oct. · v13';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2887,152 +2896,314 @@ function loanView(id) {
 }
 
 
-/* ============================== AVANCES À REMBOURSER ==============================
-   De l'argent avancé par ce compte (ex. le compte joint) et remboursé petit à petit, sans taux ni organisme.
-   Rattachées au compte qui a avancé l'argent (partagées avec ses membres). Chaque remboursement crée les mouvements :
-   une recette ici, et — s'il vient d'un autre de mes comptes — la sortie (virement) sur ce compte-là.               */
+/* ============================== CONNEXIONS ENTRE UTILISATEURS ==============================
+   Deux personnes « connectées » (demande acceptée) voient le NOM de leurs comptes (jamais les soldes) :
+   pour se faire des virements sur le bon compte et suivre des remboursements entre elles.
+   links/{a__b} : emails triés, from, to, status pending / accepted / declined, uids {uid: email}.          */
+let LINKS = [];
+const pairId = (a, b) => [String(a).toLowerCase(), String(b).toLowerCase()].sort().join('__');
+const linkWith = e => LINKS.find(l => l.emails.includes(String(e).toLowerCase()) && l.emails.includes(myEmail()));
+const isLinked = e => linkWith(e)?.status === 'accepted';
+const otherOf = l => l.emails.find(e => e !== myEmail());
+const linkedPeople = () => LINKS.filter(l => l.status === 'accepted').map(l => ({ email: otherOf(l), uid: Object.keys(l.uids || {}).find(u => l.uids[u] === otherOf(l)) }));
+const shortName = e => { const s = String(e || '').split('@')[0]; return s.charAt(0).toUpperCase() + s.slice(1); };
+function linkListen() {
+  return db.collection('links').where('emails', 'array-contains', myEmail()).onSnapshot(q => {
+    const before = LINKS; LINKS = q.docs.map(d => ({ id: d.id, ...d.data() }));
+    LINKS.filter(l => l.status === 'accepted' && before.some(b => b.id === l.id && b.status === 'pending') && l.fromEmail === myEmail())
+      .forEach(l => { toast('🤝 ' + shortName(otherOf(l)) + ' a accepté la connexion'); Object.keys(DIR_T).forEach(e => delete DIR_T[e]); });
+    if (loaded) { renderChrome(); if (['messages', 'parametres', 'budgets'].includes(UI.view)) render(); }
+  }, e => console.warn('Connexions', e.code));
+}
+async function linkRequest(email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!okEmail(e)) return toast('Email invalide'), false;
+  if (e === myEmail()) return toast('C\'est ton propre email 🙂'), false;
+  const ex = linkWith(e);
+  if (ex?.status === 'accepted') return toast('Vous êtes déjà connectés'), true;
+  if (ex?.status === 'pending' && ex.to === myEmail()) return linkAnswer(ex.id, true);
+  if (ex?.status === 'pending') return toast('Demande déjà envoyée, en attente de réponse'), false;
+  const id = pairId(myEmail(), e), ref = db.collection('links').doc(id);
+  try {
+    if (ex) await ref.delete();                                         // demande refusée auparavant : on recommence
+    await ref.set({ emails: [myEmail(), e].sort(), from: currentUser.uid, fromEmail: myEmail(), to: e, status: 'pending', at: Date.now(), uids: { [currentUser.uid]: myEmail() } });
+    toast('Demande de connexion envoyée à ' + e); return false;
+  } catch (er) { toast('⚠ Demande non envoyée (' + (er.code || er.message) + ')'); return false; }
+}
+function linkAnswer(id, ok) {
+  const upd = { status: ok ? 'accepted' : 'declined', answeredAt: Date.now() };
+  if (ok) upd['uids.' + currentUser.uid] = myEmail();
+  return db.collection('links').doc(id).update(upd).then(() => { toast(ok ? '🤝 Connexion acceptée' : 'Demande refusée'); publishDir(); return ok; })
+    .catch(e => { toast('⚠ ' + (e.code || e.message)); return false; });
+}
+function linkRemove(id) {
+  const l = LINKS.find(x => x.id === id); if (!l) return;
+  if (!confirm('Retirer la connexion avec ' + otherOf(l) + ' ? Vous ne verrez plus le nom de vos comptes respectifs.')) return;
+  db.collection('links').doc(id).delete().then(() => toast('Connexion retirée')).catch(e => toast('⚠ ' + (e.code || e.message)));
+}
+const linkPending = () => LINKS.filter(l => l.status === 'pending' && l.to === myEmail());
+function linksMsgHTML() {
+  const P_ = linkPending(); if (!P_.length) return '';
+  return `<section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Demandes de connexion</h2>
+    ${P_.map(l => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="avatar lg">${initials(l.fromEmail)}</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(l.fromEmail)}</b> veut se connecter avec toi</span><span class="rs" style="white-space:normal">Vous verrez le nom de vos comptes (jamais les soldes ni les mouvements) pour vous faire des virements et suivre vos remboursements.</span></span>
+      <span class="chips"><button class="btn sm p" data-a="link-yes" data-id="${esc(l.id)}">Accepter</button><button class="btn sm" data-a="link-no" data-id="${esc(l.id)}">Refuser</button></span></div>`).join('')}
+  </section>`;
+}
+function linksCardHTML() {
+  const L = LINKS.slice().sort((a, b) => (a.status === 'accepted' ? 0 : 1) - (b.status === 'accepted' ? 0 : 1));
+  return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mes connexions</h2>
+    <p class="note" style="font-size:13px">Les personnes connectées voient le nom de tes comptes (pas les soldes) : virements sur le bon compte, remboursements entre vous. Chacun doit accepter.</p>
+    ${L.map(l => `<div class="row" style="padding:4px"><span class="avatar">${initials(otherOf(l))}</span><span class="rt"><span class="rn">${esc(otherOf(l))}</span><span class="rs">${l.status === 'accepted' ? '✓ connectés' : l.status === 'pending' ? (l.to === myEmail() ? 'te demande la connexion' : 'en attente de sa réponse') : 'a refusé'}</span></span>
+      ${l.status === 'pending' && l.to === myEmail() ? `<button class="btn sm p" data-a="link-yes" data-id="${esc(l.id)}">Accepter</button>` : ''}<button class="x" data-a="link-del" data-id="${esc(l.id)}" aria-label="Retirer">${svg('x', 15)}</button></div>`).join('') || '<p class="empty" style="padding:6px">Aucune connexion pour l\'instant.</p>'}
+    <span style="display:flex;gap:8px"><input class="in" id="link-email" type="email" placeholder="Email de la personne" aria-label="Email de la personne"><button class="btn p" data-a="link-req">Connecter</button></span>
+  </section>`;
+}
+
+/* ============================== REMBOURSEMENTS ==============================
+   Une « avance » : quelqu'un (un de mes comptes, ou une personne connectée) a avancé de l'argent ;
+   quelqu'un d'autre (un compte, une personne connectée, ou juste un nom) le rembourse petit à petit.
+   • entre mes comptes → rangée dans le compte qui a avancé (S.debts, visible par ses membres) ;
+   • avec une autre personne → document partagé pdebts/{id} (visible par les deux).
+   Onglet Budgets : « À recevoir » (ce compte a avancé) et « À rembourser » (ce compte rembourse).              */
 const debts = () => S.debts = S.debts || [];
+let PDEBTS = [];
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 function debtInfo(d) {
   const t = num(d.amount), r = sum(d.payments || [], p => num(p.amount)), left = Math.max(0, Math.round((t - r) * 100) / 100);
   return { t, r, left, p: t > 0 ? Math.min(100, r / t * 100) : 0, done: t > 0 && left <= 0 };
 }
+function pdebtListen() {
+  return db.collection('pdebts').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
+    PDEBTS = q.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (loaded && ['budgets', 'accueil'].includes(UI.view)) render();
+  }, e => console.warn('Remboursements partagés', e.code));
+}
+// Ancien format (v11-v12) : to = compte qui a avancé, who = texte
+const lenderOf = (d, home) => d.lender || { kind: 'acc', acc: d.to || home };
+const borrowerOf = d => d.borrower || { kind: 'text', who: d.who || '' };
+// Toutes les avances que je vois : celles de mes comptes + celles partagées avec des personnes
+function allDebts() {
+  const out = [];
+  accIds.filter(a => ACC[a]).forEach(a => { const L = a === active ? debts() : ((J(ACC[a].meta) || {}).debts || []); L.forEach(d => out.push({ d, home: { acc: a } })); });
+  PDEBTS.forEach(d => out.push({ d, home: { shared: d.id } }));
+  return out;
+}
+const findDebt = id => allDebts().find(x => x.d.id === id);
+const mine = u => u === currentUser.uid;
+function lenderAcc(e) { const l = lenderOf(e.d, e.home.acc); if (l.kind === 'acc') return l.acc; if (l.kind === 'user' && mine(l.uid)) return accIds.includes(l.acc) ? l.acc : recvAccount(); return null; }
+function borrowerAcc(e) { const b = borrowerOf(e.d); if (b.kind === 'acc') return b.acc; if (b.kind === 'user' && mine(b.uid)) return accIds.includes(b.acc) ? b.acc : recvAccount(); return null; }
+function sideLabel(s, home) {
+  if (!s) return '';
+  if (s.kind === 'acc') return ACC[s.acc]?.name || s.accName || 'un compte';
+  if (s.kind === 'user') return mine(s.uid) ? 'Moi' + (s.acc && ACC[s.acc] ? ' (' + ACC[s.acc].name + ')' : '') : shortName(s.email);
+  return s.who || '';
+}
+// Modifie une avance là où elle est rangée
+function updateDebt(e, fn) {
+  if (e.home.acc === active) { mutate(() => { const x = debts().find(z => z.id === e.d.id); if (x) fn(x); }, false); return Promise.resolve(); }
+  if (e.home.acc) return db.runTransaction(async tx => {
+    const ref = accDoc(e.home.acc), s = await tx.get(ref); if (!s.exists) throw new Error('Compte introuvable');
+    const o = J(s.data().meta) || {}, x = (o.debts || []).find(z => z.id === e.d.id); if (!x) throw new Error('Avance introuvable');
+    fn(x); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid });
+  });
+  return db.runTransaction(async tx => {
+    const ref = db.collection('pdebts').doc(e.home.shared), s = await tx.get(ref); if (!s.exists) throw new Error('Avance introuvable');
+    const x = s.data(); fn(x); x.updatedAt = Date.now(); tx.set(ref, x);
+  });
+}
+function debtRowHTML(e, role) {
+  const d = e.d, i = debtInfo(d), other = role === 'in' ? borrowerOf(d) : lenderOf(d, e.home.acc);
+  const who = sideLabel(other); const col = role === 'in' ? '#10B981' : '#F59E0B';
+  return `<button class="drow${i.done ? ' done' : ''}" data-a="debt-open" data-id="${d.id}">
+    <span class="gemo">${i.done ? '✅' : esc(d.emo || '💸')}</span>
+    <span class="rt"><span class="rn">${esc(d.name)}${who ? ` <span class="note" style="font-weight:500">· ${role === 'in' ? 'par ' : 'à '}${esc(who)}</span>` : ''}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${e.home.shared ? ' · 🤝 partagé' : ''}</span>
+      <span class="bar" style="display:block;margin-top:6px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : col}"></i></span></span>
+    <b class="num dpct">${Math.round(i.p)} %</b></button>`;
+}
 function debtsHTML(compact) {
   if (isSavAcc()) return '';
-  const D = debts(); if (compact && !D.length) return '';
-  const tot = sum(D, d => debtInfo(d).left), all = sum(D, d => num(d.amount)), rep = sum(D, d => debtInfo(d).r);
-  return `<section class="card" aria-label="Avances à rembourser" style="display:flex;flex-direction:column;gap:2px">
-    <div class="ch"><h2>Avances à rembourser ${compact ? '' : tip('avances', 'Avances à rembourser', 'De l\'argent avancé par « ' + esc(accName()) + ' » et que vous remboursez petit à petit (sans taux, sans organisme). Chaque remboursement ajoute une recette ici et, s\'il vient d\'un de tes comptes, le virement correspondant sur ce compte.', 'rt')}</h2>${compact ? '' : `<button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button>`}</div>
-    ${D.length ? `<div class="dsum"><span>Reste à rembourser <b class="num">${eur(tot)}</b></span><span class="note">${eur0(rep)} remboursés sur ${eur0(all)} · ${all > 0 ? Math.round(rep / all * 100) : 0} %</span></div>` : ''}
-    ${D.map(d => { const i = debtInfo(d);
-      return `<button class="drow${i.done ? ' done' : ''}" data-a="debt-open" data-id="${d.id}">
-        <span class="gemo">${i.done ? '✅' : esc(d.emo || '💸')}</span>
-        <span class="rt"><span class="rn">${esc(d.name)}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${d.who ? ' · ' + esc(d.who) : ''}</span>
-          <span class="bar" style="display:block;margin-top:6px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></span>
-        <b class="num dpct">${Math.round(i.p)} %</b></button>`; }).join('')
-      || '<p class="empty">Le compte a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le ici et note chaque remboursement : l\'app calcule ce qu\'il reste.</p>'}
-    ${compact ? '' : otherDebtsHTML()}
+  const A = allDebts(), IN = A.filter(e => lenderAcc(e) === active), OUT = A.filter(e => borrowerAcc(e) === active);
+  if (compact && !IN.length && !OUT.length) return '';
+  const part = (L, role) => { const left = sum(L, e => debtInfo(e.d).left), tot = sum(L, e => num(e.d.amount));
+    return `<div class="dpart"><div class="dhead ${role}"><b>${role === 'in' ? 'À recevoir' : 'À rembourser'}</b><span class="num">${eur(left)}</span><span class="note">${tot > 0 ? Math.round((tot - left) / tot * 100) : 0} % remboursé</span></div>
+      ${L.map(e => debtRowHTML(e, role)).join('')}</div>`; };
+  return `<section class="card" aria-label="Remboursements" style="display:flex;flex-direction:column;gap:6px">
+    <div class="ch"><h2>Remboursements ${compact ? '' : tip('remboursements', 'Remboursements', '<b>À recevoir</b> : de l\'argent que « ' + esc(accName()) + ' » a avancé et qu\'on lui rembourse.<br><b>À rembourser</b> : ce que ce compte doit rendre.<br>Avec une personne connectée, l\'avance est partagée : vous voyez tous les deux le reste à jour.', 'rt')}</h2>${compact ? '' : `<button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button>`}</div>
+    ${IN.length ? part(IN, 'in') : ''}${OUT.length ? part(OUT, 'out') : ''}
+    ${!IN.length && !OUT.length ? '<p class="empty">Quelqu\'un a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le : chaque remboursement met à jour le reste, des deux côtés.</p>' : ''}
+    ${compact ? '' : otherDebtsHTML(A)}
   </section>`;
 }
-// Avances rangées dans mes autres comptes (rappel, un clic pour y aller)
-function otherDebtsHTML() {
-  const L = accIds.filter(a => a !== active && ACC[a]).flatMap(a => ((J(ACC[a].meta) || {}).debts || []).filter(d => !debtInfo(d).done).map(d => [a, d]));
+function otherDebtsHTML(A) {
+  const L = A.filter(e => !debtInfo(e.d).done).map(e => [e, lenderAcc(e), borrowerAcc(e)]).filter(([, la, ba]) => (la && la !== active) || (ba && ba !== active)).filter(([, la, ba]) => la !== active && ba !== active);
   if (!L.length) return '';
-  return `<div class="odebts"><span class="note" style="font-size:12px">Dans tes autres comptes</span>${L.map(([a, d]) => `<button class="chip" data-a="debt-goto" data-acc="${a}" data-id="${d.id}">${esc(d.emo || '💸')} ${esc(d.name)} · reste ${eur0(debtInfo(d).left)} <span class="note">(${esc(ACC[a].name)})</span></button>`).join('')}</div>`;
+  return `<div class="odebts"><span class="note" style="font-size:12px">Dans tes autres comptes</span>${L.map(([e, la, ba]) => { const acc = la && ACC[la] ? la : ba;
+    return `<button class="chip" data-a="debt-goto" data-acc="${acc}" data-id="${e.d.id}">${esc(e.d.emo || '💸')} ${esc(e.d.name)} · ${la && ACC[la] ? 'à recevoir' : 'à rembourser'} ${eur0(debtInfo(e.d).left)} <span class="note">(${esc(ACC[acc]?.name || '')})</span></button>`; }).join('')}</div>`;
 }
+
+/* ---------- Création / modification ---------- */
+const allAccs = () => accIds.filter(a => ACC[a]);
+function partyOptions() {      // [libellé, valeur] : mes comptes, puis les personnes connectées
+  return allAccs().map(a => [ACC[a].name + (a === active ? ' (ce compte)' : ''), { kind: 'acc', acc: a, accName: ACC[a].name }])
+    .concat(linkedPeople().filter(p => p.uid).map(p => ['👤 ' + shortName(p.email) + ' (' + p.email + ')', { kind: 'user', uid: p.uid, email: p.email }]));
+}
+const sameParty = (a, b) => a && b && a.kind === b.kind && (a.kind === 'acc' ? a.acc === b.acc : a.kind === 'user' ? a.uid === b.uid : a.who === b.who);
 function debtDialog(id, preset) {
-  const d = id ? debts().find(x => x.id === id) : null, v = d || preset || {}, A = allAccs(), nm = a => ACC[a].name + (a === active ? ' (ce compte)' : '');
-  const cred = A.includes(v.to) ? v.to : active;
-  formDialog({ title: d ? 'Modifier l\'avance' : 'Nouvelle avance à rembourser', intro: d ? '' : 'De l\'argent avancé par un de tes comptes, à lui rembourser petit à petit.',
+  const e = id ? findDebt(id) : null, d = e?.d, v = d || preset || {};
+  if (e?.home.shared && d) return sharedEditDialog(e);
+  const O = partyOptions(), TXT = 'Quelqu\'un d\'autre (juste un nom)', lab = p => (O.find(o => sameParty(o[1], p)) || [])[0];
+  const L0 = d ? lenderOf(d, e.home.acc) : v.lender || { kind: 'acc', acc: active }, B0 = d ? borrowerOf(d) : v.borrower || { kind: 'text', who: v.who || '' };
+  formDialog({ title: d ? 'Modifier l\'avance' : 'Nouvelle avance', intro: d ? '' : 'Qui a avancé l\'argent, et qui le rembourse ? Pour une autre personne, connectez-vous d\'abord (Paramètres › Profil & app › Mes connexions).',
     fields: [{ id: 'name', label: 'Pour quoi ?', value: v.name || '', ph: 'ex. Mariage, Restaurant, BlaBlaCar' }, { id: 'amount', label: 'Montant avancé', type: 'num', value: v.amount, ph: 'ex. 270' },
-      { id: 'acc', label: 'Quel compte a avancé l\'argent ?', type: 'select', options: A.map(nm), value: nm(cred), hint: 'Les remboursements arriveront sur ce compte. La fiche y est rangée (visible par ses membres).' },
-      { id: 'who', label: 'Qui rembourse ? (facultatif)', value: v.who || '', ph: 'ex. Robin, nous deux…' }],
-    onDelete: d ? () => { if (!confirm('Supprimer cette avance ? Les mouvements de remboursement déjà créés restent dans les comptes.')) return; mutate(() => { S.debts = debts().filter(x => x.id !== id); }, 'Avance supprimée'); } : null,
+      { id: 'lend', label: 'Qui a avancé l\'argent ? (à recevoir)', type: 'select', options: O.map(o => o[0]), value: lab(L0) || O[0][0] },
+      { id: 'borr', label: 'Qui rembourse ? (à rembourser)', type: 'select', options: O.map(o => o[0]).concat([TXT]), value: lab(B0) || TXT },
+      { id: 'who', label: 'Son nom (si « quelqu\'un d\'autre »)', value: B0.kind === 'text' ? B0.who : '', ph: 'ex. Julie, nous deux…' }],
+    onDelete: d ? () => { if (!confirm('Supprimer cette avance ? Les mouvements de remboursement déjà créés restent dans les comptes.')) return; removeDebt(e); } : null,
     onSave: r => {
       if (!r.name) { toast('Indique pour quoi'); return false; }
       if (!(r.amount > 0)) { toast('Indique le montant avancé'); return false; }
-      const acc = A.find(a => nm(a) === r.acc) || active;
-      let nid = id;
-      mutate(() => { if (d) Object.assign(d, { name: r.name, amount: r.amount, who: r.who, to: acc }); else { nid = uid(); debts().push({ id: nid, name: r.name, amount: r.amount, who: r.who, to: acc, emo: v.emo || '💸', at: Date.now(), payments: (preset && preset.payments) || [] }); } }, d ? 'Avance modifiée' : 'Avance ajoutée : ' + r.name);
-      if (!d && preset?.fromGoal) { U.goals = goals().filter(g => g.id !== preset.fromGoal); saveUser(); }
-      if (acc !== active) return void moveDebt(nid, acc);
-      setTimeout(() => debtView(nid), 60);
+      const lender = (O.find(o => o[0] === r.lend) || [])[1], borrower = r.borr === TXT ? { kind: 'text', who: r.who } : (O.find(o => o[0] === r.borr) || [])[1];
+      if (!lender) { toast('Choisis qui a avancé'); return false; }
+      if (sameParty(lender, borrower)) { toast('Ce ne peut pas être la même personne / le même compte'); return false; }
+      const base = { name: r.name, amount: r.amount, lender, borrower, emo: v.emo || '💸' };
+      if (d) { updateDebt(e, x => Object.assign(x, base)).then(() => toast('Avance modifiée')).catch(er => toast('⚠ ' + (er.code || er.message))); return; }
+      createDebt(Object.assign(base, { id: uid(), at: Date.now(), payments: (preset && preset.payments) || [] }), preset?.fromGoal);
     } });
 }
-// Range la fiche dans le compte qui a avancé l'argent (pour que ses membres la voient)
-async function moveDebt(id, acc) {
-  const d = debts().find(x => x.id === id); if (!d || acc === active) return;
-  const copy = JSON.parse(JSON.stringify(d)), from = active;
-  copy.payments = (copy.payments || []).map(p => Object.assign({}, p, { to: p.to || from, toName: p.toName || ACC[from]?.name || '' }));
+async function createDebt(d, fromGoal) {
+  const other = [d.lender, d.borrower].find(s => s.kind === 'user');
   try {
-    await db.runTransaction(async tx => {
-      const aRef = accDoc(acc), aS = await tx.get(aRef); if (!aS.exists) throw new Error('Compte introuvable');
-      const o = J(aS.data().meta) || {}; o.debts = (o.debts || []).filter(x => x.id !== id).concat([copy]);
-      tx.update(aRef, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid });
-    });
-    mutate(() => { S.debts = debts().filter(x => x.id !== id); }, false);
-    toast('« ' + d.name + ' » est rangée dans « ' + ACC[acc].name + ' » (onglet Budgets)');
-  } catch (e) { toast('⚠ Impossible de la déplacer (' + (e.code || e.message) + ')'); }
+    if (other) {                                             // avec une autre personne : document partagé
+      d.members = [currentUser.uid, other.uid]; d.emails = { [currentUser.uid]: myEmail(), [other.uid]: other.email };
+      if (d.lender.kind === 'acc') d.lender = { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: d.lender.acc, accName: d.lender.accName };
+      if (d.borrower.kind === 'acc') d.borrower = { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: d.borrower.acc, accName: d.borrower.accName };
+      await db.collection('pdebts').doc(d.id).set(Object.assign(d, { createdBy: currentUser.uid, updatedAt: Date.now() }));
+    } else {
+      const home = d.lender.acc;                             // rangée dans le compte qui a avancé
+      if (home === active) mutate(() => debts().push(d), false);
+      else await db.runTransaction(async tx => { const ref = accDoc(home), s = await tx.get(ref), o = J(s.data().meta) || {}; o.debts = (o.debts || []).concat([d]); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); });
+    }
+    if (fromGoal) { U.goals = goals().filter(g => g.id !== fromGoal); saveUser(); }
+    toast('Avance ajoutée : ' + d.name); render();
+    setTimeout(() => debtView(d.id), 400);
+  } catch (er) { toast('⚠ Avance non enregistrée (' + (er.code || er.message) + ')'); }
 }
+function removeDebt(e) {
+  if (e.home.acc === active) return mutate(() => { S.debts = debts().filter(x => x.id !== e.d.id); }, 'Avance supprimée');
+  if (e.home.acc) return db.runTransaction(async tx => { const ref = accDoc(e.home.acc), s = await tx.get(ref), o = J(s.data().meta) || {}; o.debts = (o.debts || []).filter(x => x.id !== e.d.id); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); }).then(() => toast('Avance supprimée'));
+  return db.collection('pdebts').doc(e.home.shared).delete().then(() => toast('Avance supprimée')).catch(er => toast('⚠ ' + (er.code || er.message)));
+}
+// Avance partagée : chacun règle son propre compte (où il reçoit / d'où il rembourse)
+function sharedEditDialog(e) {
+  const d = e.d, iL = mine(lenderOf(d).uid), me = iL ? lenderOf(d) : borrowerOf(d), A = allAccs();
+  formDialog({ title: 'Modifier · ' + d.name, intro: 'Avance partagée avec ' + shortName((iL ? borrowerOf(d) : lenderOf(d)).email) + '.',
+    fields: [{ id: 'name', label: 'Pour quoi ?', value: d.name }, { id: 'amount', label: 'Montant avancé', type: 'num', value: d.amount },
+      { id: 'acc', label: iL ? 'Sur quel compte je reçois les remboursements ?' : 'Depuis quel compte je rembourse ?', type: 'select', options: A.map(a => ACC[a].name), value: ACC[me.acc]?.name || ACC[recvAccount()]?.name }],
+    onDelete: () => { if (confirm('Supprimer cette avance pour vous deux ? Les mouvements déjà créés restent.')) removeDebt(e); },
+    onSave: r => {
+      if (!r.name || !(r.amount > 0)) { toast('Nom et montant obligatoires'); return false; }
+      const acc = A.find(a => ACC[a].name === r.acc);
+      updateDebt(e, x => { x.name = r.name; x.amount = r.amount; const s = iL ? x.lender : x.borrower; s.acc = acc; s.accName = ACC[acc]?.name || ''; }).then(() => toast('Avance modifiée'));
+    } });
+}
+
+/* ---------- Fiche d'une avance ---------- */
 function debtView(id) {
-  const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d), P_ = (d.payments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const e = findDebt(id); if (!e) return; const d = e.d, i = debtInfo(d), P_ = (d.payments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const L = lenderOf(d, e.home.acc), B = borrowerOf(d);
   const dl = $('dlg'); dl.onclick = null;
   dl.innerHTML = `<div class="dw" style="max-height:88vh;overflow:auto"><div class="dh"><h2>${esc(d.emo || '💸')} ${esc(d.name)}</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    <div class="dwho"><span><small>A avancé</small><b>${esc(sideLabel(L) || '—')}</b></span>${svg('right', 16)}<span><small>Rembourse</small><b>${esc(sideLabel(B) || '—')}</b></span></div>
     <div class="dbig"><span class="note">${i.done ? 'Tout est remboursé 🎉' : 'Reste à rembourser'}</span><b class="num">${eur(i.left)}</b><span class="note">sur ${eur(i.t)} avancés · <b style="color:var(--ink)">${Math.round(i.p)} % remboursé</b></span>
       <span class="bar" style="display:block;height:10px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></div>
     ${i.done ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
-      ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}${' · ' + esc(p.fromName || 'Autre') + ' → ' + esc(p.toName || accName())}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b><button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button></div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
-    ${d.who ? `<p class="note" style="font-size:12px">Rembourse : ${esc(d.who)}</p>` : ''}
+      ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
-  dl.onclick = e => {
-    if (e.target.closest('[data-x]')) return dl.close();
-    if (e.target.closest('[data-ed]')) { dl.close(); return debtDialog(id); }
-    if (e.target.closest('[data-pay]')) { dl.close(); return payDialog(id); }
-    const del = e.target.closest('[data-del]'); if (del && confirm('Supprimer ce remboursement ? Les mouvements créés seront retirés aussi.')) { payDelete(id, del.dataset.del); setTimeout(() => debtView(id), 60); }
+  dl.onclick = ev => {
+    if (ev.target.closest('[data-x]')) return dl.close();
+    if (ev.target.closest('[data-ed]')) { dl.close(); return debtDialog(id); }
+    if (ev.target.closest('[data-pay]')) { dl.close(); return payDialog(id); }
+    const del = ev.target.closest('[data-del]'); if (del && confirm('Supprimer ce remboursement ? Les mouvements créés seront retirés aussi.')) payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 300));
   };
   if (!dl.open) dl.showModal();
 }
-// Écrit dans un mois d'un compte : le compte affiché directement, un autre compte par transaction (son solde est mis à jour)
+
+/* ---------- Remboursement ---------- */
+// Écrit dans un mois d'un de mes comptes : le compte affiché directement, un autre par transaction (son solde suit)
 function onAcc(acc, k, fn) {
   if (acc === active) { mutate(() => fn(month(k)), false); return Promise.resolve(); }
   return txMonth(acc, k, fn);
 }
-const allAccs = () => accIds.filter(a => ACC[a]);
-function payDialog(id) {
-  const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d);
-  const A = allAccs(), nm = a => ACC[a].name + (a === active ? ' (ce compte)' : '');
-  const OTHER = 'Autre : espèces, quelqu\'un d\'autre…';
-  const to = A.includes(d.to) ? d.to : active;
-  let last = null; try { last = localStorage.getItem('payFrom'); } catch (e) {}
-  const from = A.includes(last) && last !== to ? last : A.find(a => a !== to) || null;
+async function payDialog(id) {
+  const e = findDebt(id); if (!e) return; const d = e.d, i = debtInfo(d), L = lenderOf(d, e.home.acc), B = borrowerOf(d);
+  const A = allAccs(), nm = a => ACC[a].name + (a === active ? ' (ce compte)' : ''), OTHER = 'Autre : espèces, quelqu\'un d\'autre…';
+  const lenderIsOther = L.kind === 'user' && !mine(L.uid);
+  // Vers : mes comptes, ou les comptes de la personne (si connectés)
+  let TO = A.map(a => [nm(a), { acc: a }]), toDef = lenderAcc(e);
+  if (lenderIsOther) {
+    let D = null; try { const s = await db.collection('directory').doc(L.email).get(); D = s.exists ? s.data() : null; } catch (er) {}
+    if (!D || !(D.accounts || []).length) TO = [['Son compte de réception (' + shortName(L.email) + ')', { user: L, acc: L.acc || '' }]];
+    else TO = D.accounts.map(a => [a.name + ' · ' + shortName(L.email), { user: L, acc: a.id, accName: a.name }]);
+    toDef = L.acc || D?.recv;
+  }
+  const fromDef = B.kind === 'acc' ? B.acc : B.kind === 'user' && mine(B.uid) ? (B.acc && A.includes(B.acc) ? B.acc : null) : null;
+  let last = null; try { last = localStorage.getItem('payFrom'); } catch (er) {}
+  const fromSel = fromDef || (A.includes(last) && last !== toDef ? last : null);
+  const toLab = (TO.find(t => t[1].acc === toDef) || TO[0])[0];
   formDialog({ title: 'Remboursement · ' + d.name, intro: `Reste ${eur(i.left)} à rembourser.`, ok: 'Enregistrer',
     fields: [{ id: 'amt', label: 'Montant', type: 'num', value: i.left, ph: '0,00' },
       { id: 'date', label: 'Date', value: todayISO() },
-      { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: from ? nm(from) : OTHER },
-      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: A.map(nm), value: nm(to), hint: 'Les deux comptes sont mis à jour tout de suite : sortie d\'un côté, entrée de l\'autre.' },
+      { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: fromSel ? nm(fromSel) : (B.kind === 'user' && !mine(B.uid) ? OTHER : A[0] ? nm(A[0]) : OTHER) },
+      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: TO.map(t => t[0]), value: toLab, hint: lenderIsOther ? 'Le virement lui arrive en direct sur ce compte.' : 'Les deux comptes sont mis à jour tout de suite.' },
       { id: 'label', label: 'Libellé', value: 'Remboursement ' + d.name, ph: 'Remboursement…' }],
     onSave: r => {
       const amt = Math.round(num(r.amt) * 100) / 100;
       if (!(amt > 0)) { toast('Indique un montant'); return false; }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) { toast('Choisis une date'); return false; }
-      const f = A.find(a => nm(a) === r.from) || null, t = A.find(a => nm(a) === r.to);
+      const f = A.find(a => nm(a) === r.from) || null, t = (TO.find(x => x[0] === r.to) || [])[1];
       if (!t) { toast('Choisis le compte qui reçoit'); return false; }
-      if (f === t) { toast('Choisis deux comptes différents'); return false; }
+      if (!t.user && f === t.acc) { toast('Choisis deux comptes différents'); return false; }
+      if (t.user && !f) { toast('Choisis le compte d\'où part le virement'); return false; }
       if (amt > i.left + 0.001 && !confirm(`Ce montant dépasse ce qu'il reste (${eur(i.left)}). Enregistrer quand même ?`)) return false;
-      try { localStorage.setItem('payFrom', f || ''); } catch (e) {}
+      try { localStorage.setItem('payFrom', f || ''); } catch (er) {}
       payCreate(id, { amount: amt, date: r.date, from: f, to: t, label: r.label.trim() || 'Remboursement ' + d.name });
     } });
   $('f_date').type = 'date';
 }
 async function payCreate(id, p) {
-  const d = debts().find(x => x.id === id); if (!d) return;
-  const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), pid = uid(), xid = uid(), incId = uid(), expId = uid();
-  const fromName = p.from ? ACC[p.from].name : '', toName = ACC[p.to].name;
-  const pay = { id: pid, amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: p.to, toName, k, inc: incId, exp: p.from ? expId : '', xid: p.from ? xid : '' };
-  mutate(() => { const x = debts().find(z => z.id === id); (x.payments = x.payments || []).push(pay); x.to = p.to; }, '+' + eur(p.amount) + ' remboursés · ' + d.name);
-  const by = isShared(p.to) ? { by: currentUser.email } : {};
-  const jobs = [onAcc(p.to, k, m => m.incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
-    p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, by)))];
-  if (p.from) jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: p.to, accName: toName } })));
+  const e = findDebt(id); if (!e) return; const d = e.d;
+  const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), xid = uid(), incId = uid(), expId = uid();
+  const fromName = p.from ? ACC[p.from].name : 'Autre', toUser = p.to.user, toName = toUser ? (p.to.accName || 'compte de ' + shortName(toUser.email)) : ACC[p.to.acc].name;
+  const pay = { id: uid(), amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: toUser ? '' : p.to.acc, toName, toUser: toUser ? toUser.email : '', k, inc: toUser ? '' : incId, exp: p.from ? expId : '', xid: p.from ? xid : '', by: currentUser.uid };
+  const jobs = [updateDebt(e, x => { (x.payments = x.payments || []).push(pay); })];
+  if (!toUser) {
+    jobs.push(onAcc(p.to.acc, k, m => m.incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
+      p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, isShared(p.to.acc) ? { by: currentUser.email } : {}))));
+    if (p.from) jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: p.to.acc, accName: toName } })));
+  } else {
+    // vers le compte d'une autre personne : virement « vers une personne », reçu en direct chez elle
+    jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: Object.assign({ id: xid, kind: 'person', to: toUser.email }, p.to.accName ? { toAccName: p.to.accName } : {}) })));
+    jobs.push(db.collection('transfers').doc(xid).set(Object.assign({ from: currentUser.uid, fromEmail: currentUser.email, to: toUser.email, amount: p.amount, label: p.label, date: dd, k, site: '', img: '', status: 'sent', at: Date.now(), debt: id }, p.to.acc ? { toAcc: p.to.acc, toAccName: p.to.accName || '' } : {})));
+  }
   const res = await Promise.allSettled(jobs);
-  if (res.some(r => r.status === 'rejected')) toast('⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.');
-  if (debtInfo(debts().find(x => x.id === id)).done) setTimeout(() => toast('🎉 « ' + d.name + ' » est entièrement remboursé !'), 1500);
-  setTimeout(() => debtView(id), 80);
+  toast(res.some(r => r.status === 'rejected') ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name);
+  setTimeout(() => { const n = findDebt(id); if (n && debtInfo(n.d).done) toast('🎉 « ' + d.name + ' » est entièrement remboursé !'); debtView(id); }, 500);
 }
 function payDelete(id, pid) {
-  const d = debts().find(x => x.id === id); const p = d && (d.payments || []).find(x => x.id === pid); if (!p) return;
-  mutate(() => { const x = debts().find(z => z.id === id); x.payments = x.payments.filter(z => z.id !== pid); }, 'Remboursement supprimé');
-  const to = p.to || active;                                         // anciens remboursements : arrivés sur ce compte
-  if (p.inc && ACC[to]) onAcc(to, p.k, m => { m.incomes = m.incomes.filter(x => x.id !== p.inc); }).catch(() => {});
-  if (p.from && ACC[p.from]) onAcc(p.from, p.k, m => { m.expenses = m.expenses.filter(e => !(p.exp ? e.id === p.exp : e.xfer && e.xfer.id === p.xid)); }).catch(() => {});
+  const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return Promise.resolve();
+  const jobs = [updateDebt(e, x => { x.payments = (x.payments || []).filter(z => z.id !== pid); })];
+  const to = p.to || (p.toUser ? '' : e.home.acc || active);         // anciens remboursements : arrivés sur le compte de l'avance
+  if (p.inc && ACC[to]) jobs.push(onAcc(to, p.k, m => { m.incomes = m.incomes.filter(x => x.id !== p.inc); }));
+  if (p.from && ACC[p.from]) jobs.push(onAcc(p.from, p.k, m => { m.expenses = m.expenses.filter(x => !(p.exp ? x.id === p.exp : x.xfer && x.xfer.id === p.xid)); }));
+  if (p.toUser && p.xid && xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).delete());
+  return Promise.allSettled(jobs).then(() => toast(p.toUser && xfStatus(p.xid) === 'received' ? 'Supprimé de ton côté (déjà reçu chez ' + shortName(p.toUser) + ')' : 'Remboursement supprimé'));
 }
-// Un « objectif » qui était en fait un remboursement → devient une avance de ce compte
+// Un « objectif » qui était en fait un remboursement → devient une avance
 function goalToDebt(g) {
-  if (isSavAcc()) return toast('Ouvre d\'abord le compte qui a avancé l\'argent (ex. le compte joint)');
   $('dlg').close();
-  const payments = num(g.saved) > 0 ? [{ id: uid(), amount: num(g.saved), date: todayISO(), label: 'Déjà remboursé (repris de l\'objectif)', from: '', fromName: '', k: nowK(), inc: '', xid: '' }] : [];
-  debtDialog(null, { name: g.name.replace(/^rembours[ée]+s?\s*/i, '').replace(/^\w/, c => c.toUpperCase()), amount: g.target, emo: g.emo && g.emo !== '🎯' ? g.emo : '💸', payments, fromGoal: g.id });
+  const payments = num(g.saved) > 0 ? [{ id: uid(), amount: num(g.saved), date: todayISO(), label: 'Déjà remboursé (repris de l\'objectif)', from: '', fromName: 'Autre', to: '', toName: '', k: nowK(), inc: '', xid: '', by: currentUser.uid }] : [];
+  debtDialog(null, { name: g.name.replace(/^rembours[ée]+s?\s*/i, '').replace(/^\w/, c => c.toUpperCase()), amount: g.target, emo: g.emo && g.emo !== '🎯' ? g.emo : '💸', payments, fromGoal: g.id, lender: { kind: 'acc', acc: active } });
 }
 
 
@@ -3121,6 +3292,7 @@ function vMessages() {
   const acts = Object.values(ACT).flat().sort((a, b) => b.at - a.at).slice(0, 50);
   const notifBtn = window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
   V.innerHTML = `
+  ${linksMsgHTML()}
   ${inv.length ? `<section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Invitations</h2>
     ${!ver ? `<div class="alert">${svg('mail')}<span>Pour accepter, confirme d'abord ton adresse email (sécurité : ça prouve que l'invitation t'est bien destinée).</span></div>
       <div class="chips"><button class="btn sm" data-a="verify-send">Recevoir l'email de confirmation</button><button class="btn sm" data-a="verify-check">J'ai confirmé</button></div>` : ''}
@@ -3233,6 +3405,10 @@ document.addEventListener('click', ev => {
     case 'goal-new': return goalDialog(null);
     case 'goal-edit': return goalDialog(id);
     case 'goal-add': return goalAddDialog(id);
+    case 'link-yes': return linkAnswer(id, true);
+    case 'link-no': return linkAnswer(id, false);
+    case 'link-del': return linkRemove(id);
+    case 'link-req': { const e = $('link-email'); return linkRequest(e?.value).then(() => { if (e) e.value = ''; }); }
     case 'debt-new': return debtDialog(null);
     case 'debt-open': return debtView(id);
     case 'debt-goto': { const acc = b.dataset.acc; openAccount(acc); go('budgets'); setTimeout(() => debtView(id), 700); return; }
