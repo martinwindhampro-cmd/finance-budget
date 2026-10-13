@@ -672,6 +672,8 @@ function autoCat(name) {
 const isPaid = (x, type) => type === 'incomes' ? x.status === 'Reçu' : x.status === 'Payé';
 
 /* ============================== 4. CALCULS ============================== */
+// Virement entre mes comptes sans catégorie (simple transfert d'argent, pas une dépense)
+const xferPlain = e => e.xfer?.kind === 'acc' && (!e.cat || e.cat === 'Virement');
 const vspent = (m, c) => sum(m.expenses.filter(e => !e.isFixed && e.cat === c), eff);
 
 // Variation du compte sur un mois : réelle pour les mois passés, projetée pour le mois en cours et les suivants
@@ -681,7 +683,7 @@ function monthFlow(m, key) {
   return sum(m.incomes) - sum(m.expenses, eff) - num(m.savingGoal) - varRest(m, key).v;
 }
 // Dépenses du quotidien (hors charges fixes et virements entre mes comptes)
-const isDaily = e => !e.isFixed && e.xfer?.kind !== 'acc';
+const isDaily = e => !e.isFixed && !xferPlain(e);
 // Ce que tu dépenses d'habitude APRÈS le jour « from » (6 derniers mois terminés) → moyenne, écart, nombre de mois
 let histCache = { sig: '', r: {} };
 function histVar(from) {
@@ -724,8 +726,8 @@ function calc(m, key) {
     budAll: sum(m.budgets),
     budLeft: sum(m.budgets, b => Math.max(0, num(b.amount) - vspent(m, b.cat))),
     budEff: sum(m.budgets, b => Math.max(num(b.amount), vspent(m, b.cat))),   // budget, ou dépensé s'il est dépassé
-    varOut: sum(vr.filter(e => !bcats.has(e.cat) && e.xfer?.kind !== 'acc'), eff),   // dépenses variables hors budget
-    xferOut: sum(vr.filter(e => e.xfer?.kind === 'acc'), eff),                   // virements vers mes autres comptes
+    varOut: sum(vr.filter(e => !bcats.has(e.cat) && !xferPlain(e)), eff),   // dépenses variables hors budget
+    xferOut: sum(vr.filter(xferPlain), eff),                   // virements vers mes autres comptes
     saving: num(m.savingGoal)
   };
   r.fixLeft = r.fixAll - r.fixPaid;
@@ -750,7 +752,7 @@ function calc(m, key) {
 // Dépenses réellement engagées par catégorie (charges fixes payées + variables)
 function catTotals(m) {
   const o = {};
-  m.expenses.forEach(e => { const v = eff(e); if (v <= 0 || (e.isFixed && e.status !== 'Payé') || e.xfer?.kind === 'acc') return; o[e.cat] = (o[e.cat] || 0) + v; });
+  m.expenses.forEach(e => { const v = eff(e); if (v <= 0 || (e.isFixed && e.status !== 'Payé') || xferPlain(e)) return; o[e.cat] = (o[e.cat] || 0) + v; });
   return o;
 }
 // État d'une échéance : ok (réglée) / late (date passée) / plan (à venir)
@@ -1389,7 +1391,7 @@ function logoOk(im) { if (im.naturalWidth && im.naturalWidth < 24 && !im.dataset
 function logoKo(im) { if (!im.dataset.alt) { im.dataset.alt = 1; im.src = ddg(im.dataset.site); } else im.remove(); }
 // Icône d'un mouvement : image perso > icône du site web > icône de catégorie
 function ico(x, type, cls = '') {
-  const ci = x.xfer ? { col: '#0EA5E9', ic: 'swap' } : type === 'incomes' ? { col: '#10B981', ic: 'up' } : catInfo(x.cat);
+  const ci = x.xfer && (type === 'incomes' || !x.cat || x.cat === 'Virement') ? { col: '#0EA5E9', ic: 'swap' } : type === 'incomes' ? { col: '#10B981', ic: 'up' } : catInfo(x.cat);
   const lg = (x.img || x.site) ? x : (logoFor(x.name) || {});
   const over = lg.img ? `<img src="${esc(lg.img)}" alt="">`
     : lg.site ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(lg.site)}&amp;sz=64" data-site="${esc(lg.site)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="logoOk(this)" onerror="logoKo(this)">` : '';
@@ -1455,7 +1457,7 @@ function rowHTML(x, type, k, opt = {}) {
   const inc = type === 'incomes', st = dueState(x, type, k);
   const name = x.name || (inc ? 'Recette' : x.cat);
   const sav = isSavAcc(), by = x.by && isShared() ? 'par ' + esc(x.by === currentUser?.email ? 'moi' : x.by.split('@')[0]) : '';
-  const meta = [x.fx ? '<b>' + esc(fxFmt(x.fx.amt, x.fx.cur)) + '</b>' : '', x.xfer ? esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
+  const meta = [x.fx ? '<b>' + esc(fxFmt(x.fx.amt, x.fx.cur)) + '</b>' : '', x.xfer ? (type === 'expenses' && x.cat && x.cat !== 'Virement' ? esc(x.cat) + ' · ' : '') + esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
   const amount = inc ? '+' + eur(num(x.amount)) : minus(eff(x));
   let pill = '';
   if (opt.pill !== false && (st !== 'ok' || x.isFixed)) {
@@ -2049,7 +2051,7 @@ function paintPanel() {
     ${fxSelectHTML()}
     ${ex ? `<div style="display:flex;justify-content:center;margin-top:-8px"><button class="tog half${d.isDivided ? ' on' : ''}" data-p="half" aria-pressed="${!!d.isDivided}">½ Partagé${d.isDivided ? ' · ma part ' + eur(parseAmt(d.amount) / 2) : ''}</button></div>` : ''}
     <label class="fl">Libellé<input class="in" id="pn-n" list="pn-dl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="${ex ? 'ex. Courses' : 'ex. Salaire'}"><datalist id="pn-dl">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
-    ${ex ? `<div class="fl">Catégorie<div class="chips">${S.categories.map(c => `<button class="chip cat${c === d.cat ? ' on' : ''}" style="--c:${catInfo(c).col}" data-p="cat" data-v="${esc(c)}"><i></i>${esc(c)}</button>`).join('')}<button class="chip" data-p="addcat">+ Nouvelle</button></div>
+    ${ex ? `<div class="fl">Catégorie<div class="chips">${(d.xfer ? ['Virement', ...S.categories.filter(c => c !== 'Virement')] : S.categories).map(c => `<button class="chip cat${c === d.cat ? ' on' : ''}" style="--c:${catInfo(c).col}" data-p="cat" data-v="${esc(c)}"><i></i>${esc(c)}</button>`).join('')}<button class="chip" data-p="addcat">+ Nouvelle</button></div>
       ${P.addCat ? `<span style="display:flex;gap:8px"><input class="in" id="pn-nc" placeholder="Nom de la catégorie"><button class="btn" data-p="addcat-ok">Ajouter</button></span>` : ''}</div>` : ''}
     ${sav ? '' : `<div class="fl">Icône
       <div class="seg" role="group" aria-label="Icône"><button class="${P.icon === 'cat' ? 'on' : ''}" data-p="icon" data-v="cat">${ex ? 'Catégorie' : 'Par défaut'}</button><button class="${P.icon === 'site' ? 'on' : ''}" data-p="icon" data-v="site">Logo du site</button><button class="${P.icon === 'img' ? 'on' : ''}" data-p="icon" data-v="img">Mon image</button></div>
@@ -2074,7 +2076,7 @@ function panelClick(b) {
   const a = b.dataset.p, d = P.d;
   switch (a) {
     case 'close': return closePanel();
-    case 'type': if (b.dataset.v === 'xfer') { P.type = 'xfer'; P.xk = P.xk || 'acc'; break; } P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
+    case 'type': if (b.dataset.v === 'xfer') { P.type = 'xfer'; P.xk = P.xk || 'acc'; d.cat = 'Virement'; P.icon = d.site ? 'site' : d.img ? 'img' : 'cat'; break; } P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
     case 'half': d.isDivided = !d.isDivided; break;
     case 'cat': d.cat = b.dataset.v; break;
     case 'addcat': P.addCat = !P.addCat; paintPanel(); return $('pn-nc')?.focus();
@@ -2430,11 +2432,13 @@ function paintXfer() {
       ${sug.length ? `<div class="chips" style="margin-top:-6px">${sug.map(e => `<button class="chip${String(d.email || '').toLowerCase() === e ? ' on' : ''}" data-p="sugg" data-v="${esc(e)}"><span class="avatar">${initials(e)}</span>${esc(e.split('@')[0])}</button>`).join('')}</div>` : ''}
       <div id="pn-dacc" style="display:contents">${destHTML()}</div>
       <small class="note" style="font-size:12px;margin-top:-8px">La personne doit avoir un compte sur l'app avec cet email. Elle le reçoit en direct comme recette.</small>`}
-    <label class="fl">Libellé<input class="in" id="pn-n" value="${esc(d.name)}" data-pf="name" placeholder="${esc(auto)}"></label>
-    ${P.xk === 'person' ? `<div class="fl">Icône (vue aussi par le destinataire)
+    <label class="fl">Libellé<input class="in" id="pn-n" list="pn-xl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="ex. Super U, EDF, Loyer… (sinon « ${esc(auto)} »)"><datalist id="pn-xl">${[...new Set(Object.values(S.months).flatMap(m => m.expenses.map(e => e.name)).filter(Boolean))].slice(-80).map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+    <div class="fl">Catégorie <small style="font-weight:500;color:var(--mute)">— pour qu'il compte dans la bonne dépense (courses, énergie…)</small>
+      <div class="chips">${['Virement', ...S.categories.filter(c => c !== 'Virement')].map(c => `<button class="chip cat${c === (d.cat || 'Virement') ? ' on' : ''}" style="--c:${catInfo(c).col}" data-p="cat" data-v="${esc(c)}"><i></i>${c === 'Virement' ? 'Aucune (simple virement)' : esc(c)}</button>`).join('')}</div></div>
+    <div class="fl">Icône${P.xk === 'person' ? ' (vue aussi par le destinataire)' : ''}
       <div class="seg" role="group" aria-label="Icône"><button class="${P.icon === 'cat' ? 'on' : ''}" data-p="icon" data-v="cat">Par défaut</button><button class="${P.icon === 'site' ? 'on' : ''}" data-p="icon" data-v="site">Logo du site</button><button class="${P.icon === 'img' ? 'on' : ''}" data-p="icon" data-v="img">Mon image</button></div>
-      ${P.icon === 'site' ? `<input class="in" id="pn-site" value="${esc(d.site || '')}" data-pf="site" placeholder="Site web, ex. monfournisseur.fr" style="font-weight:500">` : ''}
-      ${P.icon === 'img' ? `<span style="display:flex;gap:10px;align-items:center">${ico({ cat: 'Virement', img: d.img }, 'expenses')}<button class="btn sm" data-p="pickimg">${d.img ? 'Changer l\'image' : 'Choisir une image'}</button></span>` : ''}</div>` : ''}
+      ${P.icon === 'site' ? `<span style="display:flex;gap:10px;align-items:center">${ico({ cat: d.cat, site: cleanSite(d.site) }, 'expenses')}<input class="in" id="pn-site" value="${esc(d.site || '')}" data-pf="site" placeholder="Site web, ex. magasins-u.com" style="font-weight:500"></span>` : ''}
+      ${P.icon === 'img' ? `<span style="display:flex;gap:10px;align-items:center">${ico({ cat: d.cat, img: d.img }, 'expenses')}<button class="btn sm" data-p="pickimg">${d.img ? 'Changer l\'image' : 'Choisir une image'}</button></span>` : ''}</div>
     <label class="fl">Jour du mois<input class="in" id="pn-d" type="number" min="1" max="31" inputmode="numeric" value="${esc(d.date)}" data-pf="date" placeholder="sans date"></label>
     ${P.xk === 'acc' ? `<label class="chk"><input type="checkbox" data-p="repeat" ${P.repeat ? 'checked' : ''}>Chaque mois (virement automatique)</label>` : ''}
   </div>
@@ -2444,27 +2448,28 @@ async function saveXfer() {
   const d = P.d, amt = Math.round(parseAmt(d.amount) * 100) / 100;
   if (!(amt > 0)) { $('pn-a').focus(); return toast('Saisis un montant'); }
   const k = ck(), src = active, srcName = accName(), dd = day(d.date), xid = uid(), label = d.name.trim();
+  const cat = d.cat && (d.cat === 'Virement' || S.categories.includes(d.cat)) ? d.cat : 'Virement';
+  const site = P.icon === 'site' ? cleanSite(d.site) : '', img = P.icon === 'img' ? (d.img || '') : '', deco = Object.assign({}, site ? { site } : {}, img ? { img } : {});
   if (P.xk === 'acc') {
     const dest = P.dest; if (!dest || !ACC[dest] || dest === src) return toast('Choisis le compte d\'arrivée');
     const dn = ACC[dest].name, repeat = P.repeat; closePanel();
     mutate(() => {
-      month(k).expenses.unshift({ id: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, xfer: { id: xid, kind: 'acc', acc: dest, accName: dn } });
-      if (repeat) tplAdd('expenses', { tmplId: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, cat: 'Virement', xfer: { kind: 'acc', acc: dest, accName: dn, auto: true } }, shiftK(k, 1));
-    }, 'Virement vers ' + dn + ' · ' + eur(amt));
+      month(k).expenses.unshift(Object.assign({ id: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, status: 'Payé', cat, isFixed: false, xfer: { id: xid, kind: 'acc', acc: dest, accName: dn } }, deco));
+      if (repeat) tplAdd('expenses', Object.assign({ tmplId: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, cat, xfer: { kind: 'acc', acc: dest, accName: dn, auto: true } }, deco), shiftK(k, 1));
+    }, (label || 'Virement') + ' → ' + dn + ' · ' + eur(amt) + (cat !== 'Virement' ? ' (' + cat + ')' : ''));
     try {
-      await txMonth(dest, k, m => m.incomes.unshift(Object.assign({ id: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, status: 'Reçu', isFixed: false, xfer: { id: xid, kind: 'acc', acc: src, accName: srcName } }, isShared(dest) ? { by: currentUser.email } : {})),
-        repeat ? o => o.templates.incomes.push({ tmplId: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, xfer: { kind: 'acc', acc: src, accName: srcName, auto: true } }) : null);
+      await txMonth(dest, k, m => m.incomes.unshift(Object.assign({ id: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, status: 'Reçu', isFixed: false, xfer: { id: xid, kind: 'acc', acc: src, accName: srcName } }, deco, isShared(dest) ? { by: currentUser.email } : {})),
+        repeat ? o => o.templates.incomes.push(Object.assign({ tmplId: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, xfer: { kind: 'acc', acc: src, accName: srcName, auto: true } }, deco)) : null);
       if (isShared(dest)) accDoc(dest).collection('activity').add({ by: currentUser.uid, byEmail: currentUser.email, text: 'Virement reçu de « ' + srcName + ' » · ' + eur(amt), at: Date.now(), month: k }).catch(() => {});
     } catch (e) { toast('⚠ Enregistré ici, mais pas sur « ' + dn + ' » (' + (e.code || e.message) + '). Vérifie ta connexion.'); }
   } else {
     const to = String(d.email || '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { $('pn-e')?.focus(); return toast('Email du destinataire invalide'); }
     if (to === myEmail()) return toast('Pour toi-même, choisis « Vers un de mes comptes »');
-    const site = P.icon === 'site' ? cleanSite(d.site) : '', img = P.icon === 'img' ? (d.img || '') : '';
     const D = DIR[to], ta = D && (D.accounts || []).find(a => a.id === P.toAcc), taN = ta ? ta.name : '';
     closePanel();
     mutate(() => {
-      const x = { id: uid(), name: label || 'Virement à ' + to.split('@')[0], amount: amt, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, xfer: Object.assign({ id: xid, kind: 'person', to }, taN ? { toAccName: taN } : {}) };
+      const x = { id: uid(), name: label || 'Virement à ' + to.split('@')[0], amount: amt, date: dd, status: 'Payé', cat, isFixed: false, xfer: Object.assign({ id: xid, kind: 'person', to }, taN ? { toAccName: taN } : {}) };
       if (site) x.site = site; if (img) x.img = img; month(k).expenses.unshift(x);
     }, 'Virement à ' + to.split('@')[0] + ' · ' + eur(amt));
     const c = (U.contacts = U.contacts || []).find(z => z.email === to); if (c) { c.n++; c.last = Date.now(); } else U.contacts.push({ email: to, n: 1, last: Date.now() }); saveUser();
@@ -2509,7 +2514,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '13 oct. · v8';
+const APP_VERSION = '13 oct. · v9';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3079,7 +3084,7 @@ document.addEventListener('input', ev => {
   if (el.id === 'q') { UI.q = el.value; return render(); }
   if (el.dataset.pf && P) {
     P.d[el.dataset.pf] = el.value;
-    if (el.dataset.pf === 'name' && P.type === 'expenses') { const c = autoCat(el.value); if (c && c !== P.d.cat) { P.d.cat = c; $$('#panel [data-p=cat]').forEach(b => b.classList.toggle('on', b.dataset.v === c)); } }
+    if (el.dataset.pf === 'name' && (P.type === 'expenses' || P.type === 'xfer')) { const c = autoCat(el.value); if (c && c !== P.d.cat) { P.d.cat = c; $$('#panel [data-p=cat]').forEach(b => b.classList.toggle('on', b.dataset.v === c)); } }
     if (el.dataset.pf === 'email') xfLookupSoon();
     if (el.dataset.pf === 'amount') fxPaint();
     if (el.dataset.pf === 'amount' && P.d.isDivided) { const h = $$('#panel [data-p=half]')[0]; if (h) h.textContent = '½ Partagé · ma part ' + eur(parseAmt(el.value) / 2); }
