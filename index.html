@@ -333,6 +333,32 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
   .tools .btn span{display:none}
   .tools .btn{padding:0 14px}
 }
+/* Mouvements : liste + résumé à côté (PC), résumé compact en haut (téléphone) */
+.mvgrid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:20px;align-items:start}
+.mvside{position:sticky;top:20px;grid-column:2;grid-row:1}
+.mvgrid>section{grid-column:1;grid-row:1}
+.mvside:not(.sbtns){display:flex;flex-direction:column;gap:14px}
+.sbtns.mvside{grid-template-columns:1fr}
+@media (max-width:900px){
+  .mvgrid{grid-template-columns:minmax(0,1fr);gap:14px}
+  .mvside,.mvgrid>section{grid-column:auto;grid-row:auto}
+  .mvside{order:-1;position:static}
+  .sbtns.mvside{grid-template-columns:1fr 1fr}
+  .mvside:not(.sbtns){flex-direction:row;gap:8px}
+  .mvside:not(.sbtns) .kp{flex:1;min-width:0;padding:10px 12px;border-radius:14px}
+  .mvside:not(.sbtns) .kp>b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mvside:not(.sbtns) .kp>span{font-size:11.5px}
+  .mvside:not(.sbtns) .kp>small{display:none}
+}
+/* Réglages en onglets */
+.ptabs{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px;margin-bottom:-4px}
+.ptabs::-webkit-scrollbar{display:none}
+.ptabs .chip{white-space:nowrap;flex-shrink:0}
+.ptabs .chip.on{background:var(--ink);color:var(--card);border-color:var(--ink)}
+/* Épargne */
+.simbtn{display:flex;align-items:center;gap:14px;border:0;text-align:left;cursor:pointer;color:var(--ink);width:100%}
+.simbtn:hover{background:var(--hov)}
+@media (max-width:600px){.budnew{min-height:56px!important;padding:12px!important}.sbar,.mavs{display:none!important}.sbra{width:auto!important}.ltot{grid-template-columns:1fr 1fr!important}}
 /* Objectifs, devises */
 .goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .goal{border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
@@ -1539,7 +1565,7 @@ function vAccueil() {
       <div class="stats">
         <div><span>Solde actuel ${solTip}</span><b>${eur(c.current)}</b></div>
         <div><span>Reste à payer ${rapTip}</span><b>${eur(c.outPlan)}</b></div>
-        <div><span>Fin de mois estimée ${finTip}</span><b>${c.vr?.n ? '≈ ' : ''}${eur(c.est)}</b>${c.vr?.n ? `<small class="num" style="font-size:11px;color:var(--hero-t)">± ${finRange(c).p} % · ${c.vr.n} mois</small>` : ''}</div>
+        <div><span>Fin de mois estimée ${finTip}</span><b>${c.vr?.n ? '≈ ' : ''}${eur(c.est)}</b>${c.vr?.n ? `<small class="num" style="font-size:11px;color:var(--hero-t)">${finRange(c).p >= 1 ? '± ' + finRange(c).p + ' % · ' : ''}d'après ${c.vr.n} mois</small>` : ''}</div>
       </div>
       <button class="bk" data-a="bank">Solde au 1er : ${eur(c.init)} ${c.bankSet ? '(saisi)' : '(calculé)'} · modifier</button>
     </section>
@@ -1595,7 +1621,8 @@ function vMouvements() {
     || `<p class="empty">${UI.q ? 'Aucun résultat pour « ' + esc(UI.q) + ' ».' : 'Aucun mouvement ici. Clique sur « + Ajouter ».'}</p>`;
   const searchFocused = document.activeElement && document.activeElement.id === 'q';
   V.innerHTML = `
-  ${simple ? `<div class="sbtns"><button class="sbtn out" data-a="s-new" data-t="expenses"><b>−</b>${isSavAcc() ? 'Retrait' : 'Dépense'}</button><button class="sbtn in" data-a="s-new" data-t="incomes"><b>+</b>${isSavAcc() ? 'Versement' : 'Rentrée d\'argent'}</button></div>` : `<div class="tiles">
+  <div class="mvgrid">
+  ${simple ? `<div class="sbtns mvside"><button class="sbtn out" data-a="s-new" data-t="expenses"><b>−</b>${isSavAcc() ? 'Retrait' : 'Dépense'}</button><button class="sbtn in" data-a="s-new" data-t="incomes"><b>+</b>${isSavAcc() ? 'Versement' : 'Rentrée d\'argent'}</button></div>` : `<div class="mvside">
     <div class="kp"><span>${isSavAcc() ? 'Versements' : 'Recettes'}</span><b style="color:var(--ok)">+${eur(c.incAll)}</b><small>${eur(c.incIn)} reçues</small></div>
     <div class="kp"><span>Dépenses ${tip('dépenses', 'Dépenses du mois', eq([['Charges fixes', eur(c.fixAll)], ['+ Dépenses variables', eur(c.varAll)]], ['= Total', eur(c.outAll)], 'Montants « ½ » comptés pour ta part seulement.'))}</span><b>${minus(c.outAll)}</b><small>${eur(c.outPaid)} payées</small></div>
     <div class="kp"><span>Reste à payer ${tip('reste à payer', 'Reste à payer', 'Dépenses de ce mois pas encore marquées « Payé », charges fixes comprises. Clique sur l\'étiquette d\'une ligne pour changer son statut.', 'lf')}</span><b style="color:var(--warn)">${eur(c.outPlan)}</b><small>${m.expenses.filter(e => e.status !== 'Payé').length} élément(s)</small></div>
@@ -1606,7 +1633,8 @@ function vMouvements() {
       <label class="search">${svg('search', 16, 2.2)}<input type="search" id="q" placeholder="Rechercher" aria-label="Rechercher un mouvement" value="${esc(UI.q)}"></label>
     </div>
     ${list}
-  </section>`;
+  </section>
+  </div>`;
   if (searchFocused) { const q = $('q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
 
@@ -1656,15 +1684,15 @@ function vBudgets() {
   </section>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px">
     ${cards}
-    <button class="card" data-a="bud-new" style="border:2px dashed var(--line);box-shadow:none;background:none;display:flex;align-items:center;justify-content:center;gap:8px;min-height:150px;color:var(--mute);font-weight:700">${svg('plus')} Nouveau budget</button>
+    <button class="card budnew" data-a="bud-new" style="border:2px dashed var(--line);box-shadow:none;background:none;display:flex;align-items:center;justify-content:center;gap:8px;min-height:150px;color:var(--mute);font-weight:700">${svg('plus')} Nouveau budget</button>
   </div>
   <section class="card" aria-label="Échéancier des charges fixes" style="display:flex;flex-wrap:wrap;gap:28px">
-    <div style="flex:1 1 320px;display:flex;flex-direction:column;gap:10px">
+    <div style="flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:10px">
       <div class="ch" style="margin:0"><h2>Échéancier · charges fixes</h2><span class="note">${mlab(k)}</span></div>
       <div class="cal">${cal}</div>
       <div class="legend" style="font-size:12px"><span><i style="--c:#10B981;border-radius:50%"></i>Payé</span><span><i style="--c:#F59E0B;border-radius:50%"></i>À payer</span><span><i style="--c:var(--acc);border-radius:50%"></i>À venir</span></div>
     </div>
-    <div style="flex:1 1 320px;display:flex;flex-direction:column;gap:4px">
+    <div style="flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:4px">
       <div class="mini" style="margin-bottom:8px">
         <div style="background:var(--ok-s);color:var(--ok)"><span>Payé</span><b>${eur(paidTot)}</b></div>
         <div style="background:var(--acc-s);color:var(--acc-d)"><span>À venir ${tip('à venir', 'À venir', 'Charges fixes du mois pas encore payées, y compris celles sans date (abonnements prélevés à un jour variable).', 'lf')}</span><b>${eur(todoTot)}</b></div>
@@ -1720,7 +1748,7 @@ function vEpargne() {
   const rows = A.map(a => {
     const [col, ic] = AT[a.type] || AT.Autre, b = aBal(a), lk = aLast(a);
     return `<div class="row"><button class="rowb" data-a="sav-acc" data-id="${a.id}"><span class="ico" style="--c:${col}">${svg(ic)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.type)}${num(a.rate) ? ' · ' + String(num(a.rate)).replace('.', ',') + ' %' : ''}${lk ? ' · mis à jour ' + mshort(lk) : ''}</span></span>
-      <span class="bar" style="width:110px;display:block"><i style="width:${tot > 0 ? b / tot * 100 : 0}%;--c:${col}"></i></span><span class="ra num" style="width:110px;text-align:right">${eur(b)}</span></button></div>`;
+      <span class="bar sbar" style="width:110px;display:block"><i style="width:${tot > 0 ? b / tot * 100 : 0}%;--c:${col}"></i></span><span class="ra num" style="width:110px;text-align:right">${eur(b)}</span></button></div>`;
   }).join('') || '<p class="empty">Ajoute tes livrets, PEA, assurance-vie… pour suivre ton épargne réelle.</p>';
   const it = sum(A, a => aBal(a) * num(a.rate) / 100);
 
@@ -1743,8 +1771,8 @@ function vEpargne() {
       <div class="ch"><h2>Comptes Épargne ${tip('comptes épargne', 'Comptes Épargne', 'Les comptes du sélecteur dont le type est « Épargne » (Paramètres › Ce compte), partagés ou non. Leur solde se met à jour à chaque versement ou retrait. Coche ceux à compter dans ton épargne perso.', 'rt')}</h2><button class="btn sm" data-a="acc-new-sav">${svg('plus', 16)} Compte Épargne</button></div>
       ${SB.map(id => { const a = ACC[id], inc = savIncluded(id), mem = membersOf(id);
         return `<div class="row"><button class="rowb" data-a="acc-open" data-id="${id}"><span class="accbig">${accBadge(a, 20)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(accSub(id))}</span></span>
-          ${mem.length > 1 ? `<span style="display:flex">${mem.map(x => `<span class="avatar" style="margin-left:-4px;box-shadow:0 0 0 2px var(--card)">${initials(x.email)}</span>`).join('')}</span>` : ''}
-          <span class="ra num" style="width:110px;text-align:right;${inc ? '' : 'color:var(--mute);text-decoration:line-through'}">${a.summary ? eur(a.summary.current) : '—'}</span></button>
+          ${mem.length > 1 ? `<span class="mavs" style="display:flex">${mem.map(x => `<span class="avatar" style="margin-left:-4px;box-shadow:0 0 0 2px var(--card)">${initials(x.email)}</span>`).join('')}</span>` : ''}
+          <span class="ra num sbra" style="width:110px;text-align:right;${inc ? '' : 'color:var(--mute);text-decoration:line-through'}">${a.summary ? eur(a.summary.current) : '—'}</span></button>
           <label class="chk" style="min-height:0;font-size:12px;padding-right:8px" title="Compter ce compte dans mon épargne totale"><input type="checkbox" data-a="sav-incl" data-id="${id}" ${inc ? 'checked' : ''}>Inclure</label></div>`; }).join('')
         || '<p class="empty" style="padding:14px">Aucun compte de type Épargne. Crée-en un, ou change le type d\'un compte existant dans Paramètres › Ce compte.</p>'}
     </section>
@@ -1756,9 +1784,9 @@ function vEpargne() {
   </div>
   ${loansHTML()}
   ${keys.length > 1 ? `<section class="card"><div class="ch"><h2>Évolution de mon épargne</h2></div><div class="cvh"><canvas id="c-acc"></canvas></div></section>` : ''}
-  <section class="card" aria-label="Simulateur d'épargne" style="display:flex;flex-wrap:wrap;gap:28px">
+  ${!UI.simOpen ? `<button class="card simbtn" data-a="sim-open"><span class="ico" style="--c:#14B8A6">${svg('trend')}</span><span class="rt"><span class="rn">Simulateur d'épargne</span><span class="rs">Combien j'aurai dans 5, 10 ou 20 ans ?</span></span>${svg('right', 18)}</button>` : `<section class="card" aria-label="Simulateur d'épargne" style="display:flex;flex-wrap:wrap;gap:28px">
     <div style="flex:1 1 260px;display:flex;flex-direction:column;gap:16px">
-      <div class="ch" style="margin:0"><h2>Simulateur</h2></div>
+      <div class="ch" style="margin:0"><h2>Simulateur</h2><button class="lnk" data-a="sim-open">Fermer</button></div>
       <div class="seg" role="group" aria-label="Mode de versement"><button class="${p.mode === 'fix' ? 'on' : ''}" data-a="svmode" data-v="fix">Montant fixe</button><button class="${p.mode === 'pct' ? 'on' : ''}" data-a="svmode" data-v="pct">% du salaire</button></div>
       ${p.mode === 'fix' ? svRange('monthly', 'Versement mensuel', 0, 2000, 10, ' €') : svRange('pct', 'Part du salaire épargnée', 0, 80, 1, ' %')}
       ${svRange('rate', 'Rendement annuel net', 0, 12, 0.1, ' %')}
@@ -1774,8 +1802,8 @@ function vEpargne() {
       <p class="note" style="font-size:12px">Simulation indicative : intérêts composés chaque mois, « prudent / dynamique » = rendement −2 / +2 points. Ce n'est pas un conseil financier.</p>
     </div>
     <div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:14px" id="sv-res"></div>
-  </section>`;
-  svResults();
+  </section>`}`;
+  if (UI.simOpen) svResults();
   if (keys.length > 1) chart('c-acc', { type: 'bar', data: { labels: keys.map(mshort), datasets: A.map(a => ({ label: a.name, data: keys.map(k => aBal(a, k)), backgroundColor: (AT[a.type] || AT.Autre)[0], borderRadius: 4 })) },
     options: chartOpts({ scales: { x: { stacked: true, ticks: { color: cssv('--mute') }, grid: { display: false } }, y: { stacked: true, ticks: { color: cssv('--mute'), callback: v => Math.round(v).toLocaleString('fr-FR') + ' €' }, grid: { color: cssv('--line') }, border: { display: false } } } }) });
 }
@@ -1836,8 +1864,8 @@ function vHistorique() {
   </div>
   <section class="card"><div class="ch"><h2>Recettes et dépenses</h2></div><div class="cvh"><canvas id="c-hist"></canvas></div></section>
   <div class="grid2">
-    <section class="card big" style="padding:12px 14px"><div class="tw"><table><thead><tr><th>Mois</th><th>Recettes</th><th>Dépenses</th><th>Flux net</th><th>Taux d'épargne</th><th>Solde fin</th></tr></thead><tbody>
-      ${R.slice().reverse().map(r => `<tr class="go" data-a="gom" data-v="${r.k}" tabindex="0"><td><b>${mlab(r.k)}</b>${r.cur ? ' <small class="note">en cours</small>' : ''}</td><td style="color:var(--ok)">${eur0(r.inc)}</td><td>${eur0(r.out)}</td><td style="font-weight:700;color:${r.net < 0 ? 'var(--bad)' : 'var(--ok)'}">${sgn(Math.round(r.net))}</td><td>${r.tx == null ? '—' : Math.round(r.tx) + ' %'}</td><td>${eur0(r.end)}</td></tr>`).join('')}
+    <section class="card big" style="padding:12px 14px"><div class="tw"><table><thead><tr><th>Mois</th><th>Recettes</th><th>Dépenses</th><th>Épargné</th><th>Solde fin</th></tr></thead><tbody>
+      ${R.slice().reverse().map(r => `<tr class="go" data-a="gom" data-v="${r.k}" tabindex="0"><td><b>${mlab(r.k)}</b>${r.cur ? ' <small class="note">en cours</small>' : ''}</td><td style="color:var(--ok)">${eur0(r.inc)}</td><td>${eur0(r.out)}</td><td>${r.tx == null ? '—' : Math.round(r.tx) + ' %'}</td><td>${eur0(r.end)}</td></tr>`).join('')}
     </tbody></table></div><p class="note" style="padding:8px 12px">Clique sur un mois pour l'ouvrir.</p></section>
     <section class="card small" style="display:flex;flex-direction:column;gap:12px"><h2>Où part l'argent</h2>
       ${cl.map(([c, v]) => `<div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:13px"><span>${esc(c)}</span><span class="num"><b>${eur0(v)}</b> <span class="note">· ${eur0(v / n)}/mois</span></span></div><div class="bar"><i style="width:${v / T * 100}%;--c:${catInfo(c).col}"></i></div></div>`).join('') || '<p class="empty">Aucune dépense.</p>'}
@@ -1867,31 +1895,17 @@ function vParametres() {
   const V = $('v-parametres'), T = S.templates, k = ck();
   const del = '<button class="x" data-a="tdel" title="Supprimer" aria-label="Supprimer">' + svg('trash', 17) + '</button>';
   const catSel = (sel) => { const c = S.categories.includes(sel) || !sel ? S.categories : [sel, ...S.categories]; return c.map(x => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join(''); };
-  V.innerHTML = `
-  <div class="grid2">
+  const PT = [['compte', 'Ce compte'], ['fixes', 'Charges fixes & budgets'], ['alertes', 'Alertes'], ['profil', 'Profil & app'], ['donnees', 'Sauvegardes']];
+  const pt = PT.some(x => x[0] === UI.pt) ? UI.pt : 'compte';
+  const blocks = {
+    compte: () => `<div class="grid2">
     ${accountSettingsHTML()}
-    <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mon profil</h2>
-      <p class="note">${esc(currentUser?.email || '')} · ${currentUser?.emailVerified ? '<span style="color:var(--ok);font-weight:700">email confirmé</span>' : '<span style="color:var(--warn);font-weight:700">email non confirmé</span>'}</p>
-      ${currentUser?.emailVerified ? '' : '<button class="btn" data-a="verify-send">Recevoir l\'email de confirmation</button>'}
-      <label class="fl">Compte de réception des virements<select class="in" data-recv="1">${accIds.filter(id => ACC[id]).map(id => `<option value="${id}" ${recvAccount() === id ? 'selected' : ''}>${esc(ACC[id].name)}</option>`).join('')}</select><small>Quand la personne ne choisit pas, le virement arrive ici.</small></label>
-      <div class="fl">Comptes proposés à ceux qui te font un virement<div class="chips">${accIds.filter(id => ACC[id]).map(id => `<label class="chip${(U.recvHide || []).includes(id) ? '' : ' on'}" style="cursor:pointer"><input type="checkbox" data-rvis="${id}" ${(U.recvHide || []).includes(id) ? '' : 'checked'} style="display:none">${esc(ACC[id].name)}</label>`).join('')}</div><small>Ils voient seulement le nom et la banque de ces comptes, jamais les soldes ni les mouvements.</small></div>
-      <button class="btn" data-a="pwd">Changer de mot de passe</button>
-      <button class="btn" data-a="logout">${svg('out', 18)} Se déconnecter</button>
-      <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
-    </section>
-    ${installHTML()}
-    <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Données & sauvegardes</h2>
-      <p class="note">Une copie automatique chaque jour à la connexion, et avant chaque import, réinitialisation ou restauration (40 dernières gardées).</p>
-      <div class="chips"><button class="btn sm" data-a="bk-now">Sauvegarder maintenant</button><button class="btn sm" data-a="bk-list">Voir / restaurer</button></div>
-      <div id="bk-list"></div>
-      <div class="chips"><button class="btn sm" data-a="export">Exporter (JSON)</button><button class="btn sm" data-a="import">Importer un JSON</button><button class="btn sm danger" data-a="reset">Tout réinitialiser</button></div>
-    </section>
-  </div>
-  <section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Catégories</h2>
+  <section class="card" style="flex:1 1 300px;align-self:flex-start;display:flex;flex-direction:column;gap:12px"><h2>Catégories</h2>
     <div class="chips">${S.categories.map((c, i) => `<span class="chip cat on" style="--c:${catInfo(c).col}"><i></i>${esc(c)}<button class="x" style="width:24px;height:24px" data-a="delcat" data-i="${i}" aria-label="Supprimer ${esc(c)}">${svg('x', 14)}</button></span>`).join('')}</div>
     <div style="display:flex;gap:8px;max-width:420px"><input class="in" id="newcat" placeholder="Nouvelle catégorie…" aria-label="Nouvelle catégorie"><button class="btn p" data-a="addcat">Ajouter</button></div>
   </section>
-  <p class="note">Les éléments récurrents ci-dessous sont recopiés chaque mois. Une modification s'applique à ${mlab(k)} et aux mois suivants déjà ouverts ; ce qui est déjà payé ou reçu ne change pas.</p>
+  </div>`,
+    fixes: () => `  <p class="note">Les éléments récurrents ci-dessous sont recopiés chaque mois. Une modification s'applique à ${mlab(k)} et aux mois suivants déjà ouverts ; ce qui est déjà payé ou reçu ne change pas.</p>
   <section class="card"><div class="ch"><h2>Recettes fixes</h2><button class="btn sm" data-a="tadd" data-t="incomes">${svg('plus', 16)} Recette fixe</button></div>
     <div class="tw"><table class="tpl"><thead><tr><th>Jour</th><th style="width:55%">Libellé</th><th>Montant</th><th></th></tr></thead><tbody>
     ${T.incomes.map(t => `<tr data-tpl="incomes" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé"></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Aucune recette fixe (salaire, aides…).</td></tr>'}
@@ -1904,12 +1918,35 @@ function vParametres() {
     <div class="tw"><table class="tpl"><thead><tr><th>Catégorie</th><th>Montant</th><th></th></tr></thead><tbody>
     ${T.budgets.map(t => `<tr data-tpl="budgets" data-id="${t.tmplId}"><td><select data-f="cat" aria-label="Catégorie">${catSel(t.cat)}</select></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Aucun budget.</td></tr>'}
     </tbody></table></div></section>
-  <section class="card" style="display:flex;flex-direction:column;gap:10px"><div class="ch"><h2>Alertes</h2><button class="btn sm" data-a="al-new">${svg('plus', 16)} Nouvelle alerte</button></div>
+`,
+    alertes: () => `  <section class="card" style="display:flex;flex-direction:column;gap:10px"><div class="ch"><h2>Alertes</h2><button class="btn sm" data-a="al-new">${svg('plus', 16)} Nouvelle alerte</button></div>
     ${AL().custom.map(a => `<div class="row" style="padding:6px 4px"><button class="rowb" data-a="al-edit" data-id="${a.id}"><span class="ico" style="--c:${a.on === false ? '#94A3B8' : '#F97316'}">${svg(ALT[a.t]?.ic || 'bell')}</span><span class="rt"><span class="rn"${a.on === false ? ' style="color:var(--mute);text-decoration:line-through"' : ''}>${esc(altLabel(a))}</span><span class="rs">${esc(ALT[a.t]?.l || '')}</span></span></button><label class="chk" style="margin-left:8px" title="Activer / couper"><input type="checkbox" data-alon="${a.id}" ${a.on === false ? '' : 'checked'}></label></div>`).join('') || '<p class="note">Crée tes propres alertes : limite par catégorie, solde trop bas, grosse dépense, salaire pas arrivé, rappel à une date…</p>'}
     <p class="note" style="font-size:12px">Elles s'affichent sur l'accueil, dans la cloche et en notification du navigateur (si activée). Elles valent pour ce compte${isShared() ? ' et ses autres membres' : ''}.</p>
     <label class="fl" style="flex-direction:row;align-items:center;gap:10px;font-size:14px;color:var(--ink2)">M'alerter si la fin de mois estimée passe sous <input class="in" type="number" data-al="thr" value="${num(AL().thr)}" style="width:110px;text-align:right"> €</label>
     <label class="fl" style="flex-direction:row;align-items:center;gap:10px;font-size:14px;color:var(--ink2)">M'alerter si une catégorie dépasse sa moyenne de <input class="in" type="number" data-al="pct" value="${num(AL().pct)}" style="width:90px;text-align:right"> %</label>
-  </section>`;
+  </section>`,
+    profil: () => `<div class="grid2">
+    <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mon profil</h2>
+      <p class="note">${esc(currentUser?.email || '')} · ${currentUser?.emailVerified ? '<span style="color:var(--ok);font-weight:700">email confirmé</span>' : '<span style="color:var(--warn);font-weight:700">email non confirmé</span>'}</p>
+      ${currentUser?.emailVerified ? '' : '<button class="btn" data-a="verify-send">Recevoir l\'email de confirmation</button>'}
+      <label class="fl">Compte de réception des virements<select class="in" data-recv="1">${accIds.filter(id => ACC[id]).map(id => `<option value="${id}" ${recvAccount() === id ? 'selected' : ''}>${esc(ACC[id].name)}</option>`).join('')}</select><small>Quand la personne ne choisit pas, le virement arrive ici.</small></label>
+      <div class="fl">Comptes proposés à ceux qui te font un virement<div class="chips">${accIds.filter(id => ACC[id]).map(id => `<label class="chip${(U.recvHide || []).includes(id) ? '' : ' on'}" style="cursor:pointer"><input type="checkbox" data-rvis="${id}" ${(U.recvHide || []).includes(id) ? '' : 'checked'} style="display:none">${esc(ACC[id].name)}</label>`).join('')}</div><small>Ils voient seulement le nom et la banque de ces comptes, jamais les soldes ni les mouvements.</small></div>
+      <button class="btn" data-a="pwd">Changer de mot de passe</button>
+      <button class="btn" data-a="logout">${svg('out', 18)} Se déconnecter</button>
+      <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
+    </section>
+    ${installHTML()}
+  </div>`,
+    donnees: () => `    <section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Données & sauvegardes</h2>
+      <p class="note">Une copie automatique chaque jour à la connexion, et avant chaque import, réinitialisation ou restauration (40 dernières gardées).</p>
+      <div class="chips"><button class="btn sm" data-a="bk-now">Sauvegarder maintenant</button><button class="btn sm" data-a="bk-list">Voir / restaurer</button></div>
+      <div id="bk-list"></div>
+      <div class="chips"><button class="btn sm" data-a="export">Exporter (JSON)</button><button class="btn sm" data-a="import">Importer un JSON</button><button class="btn sm danger" data-a="reset">Tout réinitialiser</button></div>
+    </section>
+`
+  };
+  V.innerHTML = `<div class="ptabs" role="tablist">${PT.map(([v, l]) => `<button class="chip${v === pt ? ' on' : ''}" role="tab" aria-selected="${v === pt}" data-a="ptab" data-v="${v}">${l}</button>`).join('')}</div>
+  ${blocks[pt]()}`;
 }
 function listBackups() {
   const box = $('bk-list'); if (!box) return; box.innerHTML = '<p class="note">Chargement…</p>';
@@ -1946,7 +1983,8 @@ function openPanel(type, id, opt = {}) {
   P.icon = P.d.img ? 'img' : P.d.site ? 'site' : 'cat';
   if (!x && SIMPLE() && type === 'expenses' && S.categories.includes('Autre')) P.d.cat = 'Autre';
   if (!x && isSavAcc() && !opt.keepType) { P.type = type = 'incomes'; P.d.status = opt.repeat ? 'En attente' : 'Reçu'; }
-  P.cur = x?.fx?.cur || 'EUR'; if (x?.fx) P.d.amount = x.fx.amt;
+  let lc = 'EUR'; try { lc = localStorage.getItem('lastCur') || 'EUR'; } catch (e) {}
+  P.cur = x ? (x.fx?.cur || 'EUR') : (isSavAcc() ? 'EUR' : lc); if (x?.fx) P.d.amount = x.fx.amt;
   P.d.amount = fmtIn(P.d.amount);
   paintPanel(); if (P.cur !== 'EUR' || !FX) fxLoad().then(fxPaint);
   $('scrim').classList.add('on'); $('panel').classList.add('on'); $('panel').setAttribute('aria-hidden', 'false');
@@ -2025,6 +2063,7 @@ function savePanel() {
   const d = P.d, t = P.type, cur = P.cur || 'EUR', raw = parseAmt(d.amount);
   if (!(raw > 0)) { $('pn-a').focus(); return toast('Saisis un montant'); }
   const fr = fxRate(cur); if (!fr) return toast('Taux de change indisponible : vérifie ta connexion');
+  if (P.isNew && !isSavAcc()) try { localStorage.setItem('lastCur', cur); } catch (e) {}
   const amt = cur === 'EUR' ? raw : Math.round(raw / fr * 100) / 100, fx = cur === 'EUR' ? null : { cur, amt: Math.round(raw * 100) / 100, rate: Math.round(1 / fr * 1e6) / 1e6, date: FX.date };
   const k = ck(), isNew = P.isNew, id = P.id, repeat = P.repeat, future = P.future, icon = P.icon, xf = d.xfer;
   if (xf && !isNew) setTimeout(() => xferPropagate(xf, { amount: Math.round(amt * 100) / 100, date: day(d.date), label: d.name.trim() }), 0);
@@ -2213,7 +2252,7 @@ function vSavAccueil() {
     <section class="card small" style="display:flex;flex-direction:column;gap:12px"><h2>${mem.length > 1 ? 'Membres' : 'Compte personnel'}</h2>
       ${mem.map(x => `<div class="row" style="padding:2px"><span class="avatar lg">${initials(x.email)}</span><span class="rt"><span class="rn">${esc(x.me ? 'Moi' : x.email)}</span><span class="rs">${x.owner ? 'Propriétaire' : 'Membre'}</span></span></div>`).join('')}
       <label class="chk" style="font-size:13px"><input type="checkbox" data-a="sav-incl" data-id="${active}" ${savIncluded(active) ? 'checked' : ''}>Compter dans mon épargne totale</label>
-      ${mem.length < 2 ? '<button class="lnk" data-view="parametres" style="align-self:flex-start">Partager ce compte</button>' : ''}
+      ${mem.length < 2 ? '<button class="lnk" data-view="parametres" data-pt="compte" style="align-self:flex-start">Partager ce compte</button>' : ''}
     </section>
   </div>
   ${ks.length > 1 ? `<section class="card"><div class="ch"><h2>Évolution du solde</h2></div><div class="cvh" style="height:240px"><canvas id="c-savacc"></canvas></div></section>` : ''}
@@ -2431,7 +2470,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '13 oct. · v6';
+const APP_VERSION = '13 oct. · v7';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2687,7 +2726,7 @@ function loansHTML() {
   const L = loans(), cs = L.map(l => [l, loanCalc(l)]), active = cs.filter(([, c]) => c.left > 0);
   return `<section class="card" aria-label="Mes crédits" style="display:flex;flex-direction:column;gap:2px">
     <div class="ch"><h2>Mes crédits ${tip('crédits', 'Mes crédits', 'Les prêts remboursés depuis « ' + esc(accName()) + ' ». La mensualité (avec assurance) peut être ajoutée automatiquement aux charges fixes, jusqu\'à la dernière échéance. Calcul pour un prêt classique à taux fixe : vérifie avec ton tableau d\'amortissement.', 'rt')}</h2><button class="btn sm" data-a="loan-new">${svg('plus', 16)} Crédit</button></div>
-    ${active.length ? `<div class="tiles" style="margin:4px 0 10px"><div class="kp" style="box-shadow:none;background:var(--soft)"><span>Reste à rembourser</span><b class="num">${eur(sum(active, ([, c]) => c.left))}</b></div><div class="kp" style="box-shadow:none;background:var(--soft)"><span>Mensualités</span><b class="num">${eur(sum(active, ([, c]) => c.total))}</b><small>par mois, assurance comprise</small></div></div>` : ''}
+    ${active.length ? `<div class="tiles ltot" style="margin:4px 0 10px"><div class="kp" style="box-shadow:none;background:var(--soft)"><span>Reste à rembourser</span><b class="num">${eur(sum(active, ([, c]) => c.left))}</b></div><div class="kp" style="box-shadow:none;background:var(--soft)"><span>Mensualités</span><b class="num">${eur(sum(active, ([, c]) => c.total))}</b><small>par mois, assurance comprise</small></div></div>` : ''}
     ${cs.map(([l, c]) => { const [kl, ic] = LOAN_KINDS[l.kind] || LOAN_KINDS.autre, done = c.left <= 0, notYet = nowK() < l.start;
       return `<div class="row" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 6px"><button class="rowb" data-a="loan-open" data-id="${l.id}">${l.site ? ico({ cat: 'Banque', site: l.site }, 'expenses') : `<span class="ico" style="--c:#6366F1">${svg(ic)}</span>`}<span class="rt"><span class="rn">${esc(l.name)}</span><span class="rs">${esc(kl)}${l.bank ? ' · ' + esc(l.bank) : ''} · ${String(num(l.rate)).replace('.', ',')} % · ${done ? 'remboursé ✓' : notYet ? 'commence ' + mlab(l.start).toLowerCase() : 'fin ' + mlab(c.end).toLowerCase()}</span></span>
         <span class="ra" style="text-align:right"><b class="num">${done ? '0 €' : eur0(c.left)}</b><span class="rs" style="display:block">${eur(c.total)} / mois</span></span></button>
@@ -2844,7 +2883,7 @@ function vMessages() {
       || `<p class="empty" style="padding:12px">${accIds.some(id => isShared(id)) ? 'Aucune activité pour l\'instant.' : 'Aucun compte partagé. Invite quelqu\'un depuis Paramètres › Ce compte.'}</p>`}
     <p class="note" style="font-size:12px;padding-top:8px">Les notifications du navigateur s'affichent quand l'app est ouverte (même en arrière-plan). Quand l'app est fermée, tu verras les nouveautés ici à la prochaine ouverture.</p>
   </section>
-  ${XF.in.length || XF.out.length ? `<section class="card" style="display:flex;flex-direction:column;gap:2px"><div class="ch"><h2>Virements</h2><span class="note">Par défaut : ${esc(ACC[recvAccount()]?.name || '—')} <button class="lnk" data-view="parametres">changer</button></span></div>
+  ${XF.in.length || XF.out.length ? `<section class="card" style="display:flex;flex-direction:column;gap:2px"><div class="ch"><h2>Virements</h2><span class="note">Par défaut : ${esc(ACC[recvAccount()]?.name || '—')} <button class="lnk" data-view="parametres" data-pt="profil">changer</button></span></div>
     ${XF.in.map(t => ({ ...t, dir: 'in' })).concat(XF.out.map(t => ({ ...t, dir: 'out' }))).filter(t => !(U.xfHide || []).includes(t.id)).sort((a, b) => b.at - a.at).slice(0, 20).map(t => { const nw = t.dir === 'in' && (t.receivedAt || 0) > (seen.xfer || 0);
       return `<div class="row" style="padding:8px 6px;${nw ? 'background:var(--acc-s)' : ''}"><span class="ico" style="--c:${t.dir === 'in' ? '#10B981' : '#0EA5E9'}">${svg(t.dir === 'in' ? 'up' : 'swap')}</span><span class="rt"><span class="rn" style="white-space:normal">${t.dir === 'in' ? '<b>' + esc(String(t.fromEmail).split('@')[0]) + '</b> → toi' : 'Toi → <b>' + esc(String(t.to).split('@')[0]) + '</b>'}${t.label ? ' · ' + esc(t.label) : ''}</span><span class="rs">${ago(t.at)}${xfWhere(t)}</span></span><b class="num" style="color:${t.dir === 'in' ? 'var(--ok)' : 'var(--ink)'}">${t.dir === 'in' ? '+' : '−'}${eur(t.amount)}</b><span class="pill ${t.status === 'received' ? 'ok' : ''}" style="margin-left:8px">${t.status === 'received' ? 'Reçu' : 'Envoyé'}</span><button class="x" data-a="xf-hide" data-id="${esc(t.id)}" aria-label="Retirer de la liste" title="Retirer de la liste">${svg('x', 15)}</button></div>`; }).join('') || '<p class="empty" style="padding:12px">Aucun virement à afficher.</p>'}
   </section>` : ''}
@@ -2920,7 +2959,7 @@ document.addEventListener('click', ev => {
   if (pb && P) return panelClick(pb);
   if (ev.target.id === 'scrim') return closePanel();
   const b = ev.target.closest('[data-view],[data-a]'); if (!b || !loaded) return;
-  if (b.dataset.view) return go(b.dataset.view);
+  if (b.dataset.view) { if (b.dataset.pt) UI.pt = b.dataset.pt; return go(b.dataset.view); }
   const a = b.dataset.a, k = ck(), m = month(k), t = b.dataset.t, id = b.dataset.id;
   switch (a) {
     case 'prev': case 'next': cur.setMonth(cur.getMonth() + (a === 'next' ? 1 : -1)); UI.calDay = null; UI.showPaid = false; return render();
@@ -2935,6 +2974,8 @@ document.addEventListener('click', ev => {
     case 's-allset': UI.allSet = true; render(); return scrollTo({ top: 0 });
     case 'mode': return setMode(b.dataset.v);
     case 'alerts': return go('messages');
+    case 'sim-open': UI.simOpen = !UI.simOpen; return render();
+    case 'ptab': UI.pt = b.dataset.v; return render();
     case 'goal-new': return goalDialog(null);
     case 'goal-edit': return goalDialog(id);
     case 'goal-add': return goalAddDialog(id);
