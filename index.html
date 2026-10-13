@@ -397,6 +397,7 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .drow.done .rn{color:var(--mute)}
 .dpct{font-size:15px;width:52px;text-align:right}
 .prow .rn,.prow .rs{white-space:normal}
+.odebts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-top:1px solid var(--line);margin-top:8px;padding-top:10px}
 .dbig{display:flex;flex-direction:column;gap:6px;background:var(--soft);border-radius:16px;padding:16px}
 .dbig>b{font-size:30px;font-weight:800}
 /* Objectifs, devises */
@@ -1065,7 +1066,7 @@ function syncAccountList(ids) {
     listSubs[id] = accDoc(id).onSnapshot(d => {
       if (!d.exists) return;
       ACC[id] = d.data(); syncActivity(); if (XF.in.length) processTransfers(); publishDir();
-      if (loaded) { renderChrome(); if (UI.view === 'comptes' || UI.view === 'messages' || (UI.view === 'parametres' && id === active)) render(); }
+      if (loaded) { renderChrome(); if (UI.view === 'comptes' || UI.view === 'messages' || (UI.view === 'parametres' && id === active) || (UI.view === 'budgets' && id !== active)) render(); }
     }, () => { if (USER && (USER.accounts || []).includes(id)) accountGone(id); });
   });
   if (!active || !ids.includes(active)) {
@@ -2401,9 +2402,17 @@ function txMonth(accId, k, fn, metaFn) {
     const aS = await tx.get(aRef), mS = await tx.get(mRef);
     if (!aS.exists) throw new Error('Compte introuvable');
     const m = mS.exists ? JSON.parse(mS.data().data) : monthFromMeta(aS.data().meta);
+    const flow = x => sum((x.incomes || []).filter(i => i.status === 'Reçu')) - sum((x.expenses || []).filter(e => e.status === 'Payé'), eff), all = x => sum(x.incomes || []) - sum(x.expenses || [], eff);
+    const before = flow(m), beforeAll = all(m);
     fn(m);
     tx.set(mRef, { data: canon(m), updatedAt: Date.now(), updatedBy: currentUser.uid });
-    if (metaFn) { const o = J(aS.data().meta) || {}; o.templates = o.templates || {}; ['expenses','incomes','budgets'].forEach(t => o.templates[t] = o.templates[t] || []); metaFn(o); tx.update(aRef, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); }
+    const upd = {};
+    if (metaFn) { const o = J(aS.data().meta) || {}; o.templates = o.templates || {}; ['expenses','incomes','budgets'].forEach(t => o.templates[t] = o.templates[t] || []); metaFn(o); upd.meta = canon(o); }
+    // Solde affiché dans « Tous mes comptes » mis à jour tout de suite (sans attendre l'ouverture du compte)
+    const d = Math.round((flow(m) - before) * 100) / 100, dA = Math.round((all(m) - beforeAll) * 100) / 100, s = aS.data().summary;
+    if ((d || dA) && s && s.k && k <= s.k) { const dp = k < s.k ? d : dA;   // mois passé : seul le réel compte ; mois en cours : le prévu aussi
+      upd.summary = Object.assign({}, s, { current: Math.round((num(s.current) + d) * 100) / 100, est: Math.round((num(s.est) + dp) * 100) / 100, rav: Math.round((num(s.rav) + dp) * 100) / 100 }); }
+    if (Object.keys(upd).length) tx.update(aRef, Object.assign(upd, { updatedAt: Date.now(), updatedBy: currentUser.uid }));
   });
 }
 // Répercute une modification (ou une suppression si upd = null) sur l'autre côté du virement
@@ -2563,7 +2572,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v11';
+const APP_VERSION = '14 oct. · v12';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2902,22 +2911,48 @@ function debtsHTML(compact) {
           <span class="bar" style="display:block;margin-top:6px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></span>
         <b class="num dpct">${Math.round(i.p)} %</b></button>`; }).join('')
       || '<p class="empty">Le compte a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le ici et note chaque remboursement : l\'app calcule ce qu\'il reste.</p>'}
+    ${compact ? '' : otherDebtsHTML()}
   </section>`;
 }
+// Avances rangées dans mes autres comptes (rappel, un clic pour y aller)
+function otherDebtsHTML() {
+  const L = accIds.filter(a => a !== active && ACC[a]).flatMap(a => ((J(ACC[a].meta) || {}).debts || []).filter(d => !debtInfo(d).done).map(d => [a, d]));
+  if (!L.length) return '';
+  return `<div class="odebts"><span class="note" style="font-size:12px">Dans tes autres comptes</span>${L.map(([a, d]) => `<button class="chip" data-a="debt-goto" data-acc="${a}" data-id="${d.id}">${esc(d.emo || '💸')} ${esc(d.name)} · reste ${eur0(debtInfo(d).left)} <span class="note">(${esc(ACC[a].name)})</span></button>`).join('')}</div>`;
+}
 function debtDialog(id, preset) {
-  const d = id ? debts().find(x => x.id === id) : null, v = d || preset || {};
-  formDialog({ title: d ? 'Modifier l\'avance' : 'Nouvelle avance à rembourser', intro: d ? '' : 'Argent avancé par « ' + accName() + ' », à lui rembourser.',
+  const d = id ? debts().find(x => x.id === id) : null, v = d || preset || {}, A = allAccs(), nm = a => ACC[a].name + (a === active ? ' (ce compte)' : '');
+  const cred = A.includes(v.to) ? v.to : active;
+  formDialog({ title: d ? 'Modifier l\'avance' : 'Nouvelle avance à rembourser', intro: d ? '' : 'De l\'argent avancé par un de tes comptes, à lui rembourser petit à petit.',
     fields: [{ id: 'name', label: 'Pour quoi ?', value: v.name || '', ph: 'ex. Mariage, Restaurant, BlaBlaCar' }, { id: 'amount', label: 'Montant avancé', type: 'num', value: v.amount, ph: 'ex. 270' },
+      { id: 'acc', label: 'Quel compte a avancé l\'argent ?', type: 'select', options: A.map(nm), value: nm(cred), hint: 'Les remboursements arriveront sur ce compte. La fiche y est rangée (visible par ses membres).' },
       { id: 'who', label: 'Qui rembourse ? (facultatif)', value: v.who || '', ph: 'ex. Robin, nous deux…' }],
     onDelete: d ? () => { if (!confirm('Supprimer cette avance ? Les mouvements de remboursement déjà créés restent dans les comptes.')) return; mutate(() => { S.debts = debts().filter(x => x.id !== id); }, 'Avance supprimée'); } : null,
     onSave: r => {
       if (!r.name) { toast('Indique pour quoi'); return false; }
       if (!(r.amount > 0)) { toast('Indique le montant avancé'); return false; }
+      const acc = A.find(a => nm(a) === r.acc) || active;
       let nid = id;
-      mutate(() => { if (d) Object.assign(d, { name: r.name, amount: r.amount, who: r.who }); else { nid = uid(); debts().push({ id: nid, name: r.name, amount: r.amount, who: r.who, emo: v.emo || '💸', at: Date.now(), payments: (preset && preset.payments) || [] }); } }, d ? 'Avance modifiée' : 'Avance ajoutée : ' + r.name);
+      mutate(() => { if (d) Object.assign(d, { name: r.name, amount: r.amount, who: r.who, to: acc }); else { nid = uid(); debts().push({ id: nid, name: r.name, amount: r.amount, who: r.who, to: acc, emo: v.emo || '💸', at: Date.now(), payments: (preset && preset.payments) || [] }); } }, d ? 'Avance modifiée' : 'Avance ajoutée : ' + r.name);
       if (!d && preset?.fromGoal) { U.goals = goals().filter(g => g.id !== preset.fromGoal); saveUser(); }
+      if (acc !== active) return void moveDebt(nid, acc);
       setTimeout(() => debtView(nid), 60);
     } });
+}
+// Range la fiche dans le compte qui a avancé l'argent (pour que ses membres la voient)
+async function moveDebt(id, acc) {
+  const d = debts().find(x => x.id === id); if (!d || acc === active) return;
+  const copy = JSON.parse(JSON.stringify(d)), from = active;
+  copy.payments = (copy.payments || []).map(p => Object.assign({}, p, { to: p.to || from, toName: p.toName || ACC[from]?.name || '' }));
+  try {
+    await db.runTransaction(async tx => {
+      const aRef = accDoc(acc), aS = await tx.get(aRef); if (!aS.exists) throw new Error('Compte introuvable');
+      const o = J(aS.data().meta) || {}; o.debts = (o.debts || []).filter(x => x.id !== id).concat([copy]);
+      tx.update(aRef, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid });
+    });
+    mutate(() => { S.debts = debts().filter(x => x.id !== id); }, false);
+    toast('« ' + d.name + ' » est rangée dans « ' + ACC[acc].name + ' » (onglet Budgets)');
+  } catch (e) { toast('⚠ Impossible de la déplacer (' + (e.code || e.message) + ')'); }
 }
 function debtView(id) {
   const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d), P_ = (d.payments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
@@ -2927,7 +2962,7 @@ function debtView(id) {
       <span class="bar" style="display:block;height:10px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></div>
     ${i.done ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
-      ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}${p.fromName ? ' · depuis ' + esc(p.fromName) : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b><button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button></div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
+      ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}${' · ' + esc(p.fromName || 'Autre') + ' → ' + esc(p.toName || accName())}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b><button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button></div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
     ${d.who ? `<p class="note" style="font-size:12px">Rembourse : ${esc(d.who)}</p>` : ''}
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
   dl.onclick = e => {
@@ -2938,49 +2973,59 @@ function debtView(id) {
   };
   if (!dl.open) dl.showModal();
 }
+// Écrit dans un mois d'un compte : le compte affiché directement, un autre compte par transaction (son solde est mis à jour)
+function onAcc(acc, k, fn) {
+  if (acc === active) { mutate(() => fn(month(k)), false); return Promise.resolve(); }
+  return txMonth(acc, k, fn);
+}
+const allAccs = () => accIds.filter(a => ACC[a]);
 function payDialog(id) {
-  const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d), here = active;
-  const src = accIds.filter(a => a !== here && ACC[a]);
-  const OTHER = 'Autre (espèces, quelqu\'un d\'autre…) — seulement l\'arrivée ici';
+  const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d);
+  const A = allAccs(), nm = a => ACC[a].name + (a === active ? ' (ce compte)' : '');
+  const OTHER = 'Autre : espèces, quelqu\'un d\'autre…';
+  const to = A.includes(d.to) ? d.to : active;
   let last = null; try { last = localStorage.getItem('payFrom'); } catch (e) {}
-  const def = src.includes(last) ? ACC[last].name : src[0] ? ACC[src[0]].name : OTHER;
-  formDialog({ title: 'Remboursement · ' + d.name, intro: `Reste ${eur(i.left)}. L'argent arrive sur « ${accName()} ».`, ok: 'Enregistrer',
+  const from = A.includes(last) && last !== to ? last : A.find(a => a !== to) || null;
+  formDialog({ title: 'Remboursement · ' + d.name, intro: `Reste ${eur(i.left)} à rembourser.`, ok: 'Enregistrer',
     fields: [{ id: 'amt', label: 'Montant', type: 'num', value: i.left, ph: '0,00' },
       { id: 'date', label: 'Date', value: todayISO() },
-      { id: 'from', label: 'Depuis quel compte ?', type: 'select', options: src.map(a => ACC[a].name).concat([OTHER]), value: def, hint: 'Depuis un de tes comptes : le virement y est ajouté aussi (sortie là-bas, entrée ici).' },
+      { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: from ? nm(from) : OTHER },
+      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: A.map(nm), value: nm(to), hint: 'Les deux comptes sont mis à jour tout de suite : sortie d\'un côté, entrée de l\'autre.' },
       { id: 'label', label: 'Libellé', value: 'Remboursement ' + d.name, ph: 'Remboursement…' }],
     onSave: r => {
       const amt = Math.round(num(r.amt) * 100) / 100;
       if (!(amt > 0)) { toast('Indique un montant'); return false; }
-      if (amt > i.left + 0.001 && !confirm(`Ce montant dépasse ce qu'il reste (${eur(i.left)}). Enregistrer quand même ?`)) return false;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) { toast('Choisis une date'); return false; }
-      const fromId = src.find(a => ACC[a].name === r.from) || null;
-      try { localStorage.setItem('payFrom', fromId || ''); } catch (e) {}
-      payCreate(id, { amount: amt, date: r.date, from: fromId, label: r.label.trim() || 'Remboursement ' + d.name });
+      const f = A.find(a => nm(a) === r.from) || null, t = A.find(a => nm(a) === r.to);
+      if (!t) { toast('Choisis le compte qui reçoit'); return false; }
+      if (f === t) { toast('Choisis deux comptes différents'); return false; }
+      if (amt > i.left + 0.001 && !confirm(`Ce montant dépasse ce qu'il reste (${eur(i.left)}). Enregistrer quand même ?`)) return false;
+      try { localStorage.setItem('payFrom', f || ''); } catch (e) {}
+      payCreate(id, { amount: amt, date: r.date, from: f, to: t, label: r.label.trim() || 'Remboursement ' + d.name });
     } });
   $('f_date').type = 'date';
 }
 async function payCreate(id, p) {
   const d = debts().find(x => x.id === id); if (!d) return;
-  const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), here = active, hereName = accName(), pid = uid(), xid = uid(), incId = uid(), fromName = p.from ? ACC[p.from]?.name : '';
-  const pay = { id: pid, amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, k, inc: incId, xid: p.from ? xid : '' };
-  mutate(() => {
-    const dd_ = debts().find(x => x.id === id); (dd_.payments = dd_.payments || []).push(pay);
-    month(k).incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
-      p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, isShared() ? { by: currentUser.email } : {}));
-  }, '+' + eur(p.amount) + ' remboursés · ' + d.name);
-  if (p.from) {
-    try { await txMonth(p.from, k, m => m.expenses.unshift({ id: uid(), name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: here, accName: hereName } })); }
-    catch (e) { toast('⚠ Enregistré ici, mais pas sur « ' + fromName + ' » (' + (e.code || e.message) + ')'); }
-  }
-  const i = debtInfo(debts().find(x => x.id === id));
-  if (i.done) setTimeout(() => toast('🎉 « ' + d.name + ' » est entièrement remboursé !'), 1500);
+  const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), pid = uid(), xid = uid(), incId = uid(), expId = uid();
+  const fromName = p.from ? ACC[p.from].name : '', toName = ACC[p.to].name;
+  const pay = { id: pid, amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: p.to, toName, k, inc: incId, exp: p.from ? expId : '', xid: p.from ? xid : '' };
+  mutate(() => { const x = debts().find(z => z.id === id); (x.payments = x.payments || []).push(pay); x.to = p.to; }, '+' + eur(p.amount) + ' remboursés · ' + d.name);
+  const by = isShared(p.to) ? { by: currentUser.email } : {};
+  const jobs = [onAcc(p.to, k, m => m.incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
+    p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, by)))];
+  if (p.from) jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: p.to, accName: toName } })));
+  const res = await Promise.allSettled(jobs);
+  if (res.some(r => r.status === 'rejected')) toast('⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.');
+  if (debtInfo(debts().find(x => x.id === id)).done) setTimeout(() => toast('🎉 « ' + d.name + ' » est entièrement remboursé !'), 1500);
   setTimeout(() => debtView(id), 80);
 }
 function payDelete(id, pid) {
   const d = debts().find(x => x.id === id); const p = d && (d.payments || []).find(x => x.id === pid); if (!p) return;
-  mutate(() => { const dd_ = debts().find(x => x.id === id); dd_.payments = dd_.payments.filter(x => x.id !== pid); const m = month(p.k); m.incomes = m.incomes.filter(x => x.id !== p.inc); }, 'Remboursement supprimé');
-  if (p.from && p.xid) txMonth(p.from, p.k, m => { m.expenses = m.expenses.filter(e => !(e.xfer && e.xfer.id === p.xid)); }).catch(() => {});
+  mutate(() => { const x = debts().find(z => z.id === id); x.payments = x.payments.filter(z => z.id !== pid); }, 'Remboursement supprimé');
+  const to = p.to || active;                                         // anciens remboursements : arrivés sur ce compte
+  if (p.inc && ACC[to]) onAcc(to, p.k, m => { m.incomes = m.incomes.filter(x => x.id !== p.inc); }).catch(() => {});
+  if (p.from && ACC[p.from]) onAcc(p.from, p.k, m => { m.expenses = m.expenses.filter(e => !(p.exp ? e.id === p.exp : e.xfer && e.xfer.id === p.xid)); }).catch(() => {});
 }
 // Un « objectif » qui était en fait un remboursement → devient une avance de ce compte
 function goalToDebt(g) {
@@ -3190,6 +3235,7 @@ document.addEventListener('click', ev => {
     case 'goal-add': return goalAddDialog(id);
     case 'debt-new': return debtDialog(null);
     case 'debt-open': return debtView(id);
+    case 'debt-goto': { const acc = b.dataset.acc; openAccount(acc); go('budgets'); setTimeout(() => debtView(id), 700); return; }
     case 'loan-new': return loanDialog(null);
     case 'loan-open': return loanView(id);
     case 'theme': try { localStorage.setItem('theme', b.dataset.v); } catch (e) {} applyTheme(b.dataset.v); render(); return toast({ auto: 'Apparence automatique', light: 'Mode clair', dark: 'Mode sombre' }[b.dataset.v]);
