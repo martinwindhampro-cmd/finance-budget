@@ -388,6 +388,17 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 @media (max-width:900px){.savhero,.savgrid{grid-template-columns:minmax(0,1fr)}.savhero .v{font-size:40px}}
 @media (max-width:420px){.sleg{grid-template-columns:1fr}}
 .xtag{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#0284C7;margin:3px 0 0 10px}
+/* Avances à rembourser */
+.dsum{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:4px 12px;background:var(--soft);border-radius:12px;padding:12px 14px;margin:2px 0 8px;font-size:14px}
+.dsum b{font-size:18px}
+.drow{display:flex;align-items:center;gap:12px;background:none;border:0;border-radius:12px;padding:10px 8px;text-align:left;color:var(--ink);cursor:pointer;width:100%}
+.drow:hover{background:var(--hov)}
+.drow .rt{flex:1;min-width:0}
+.drow.done .rn{color:var(--mute)}
+.dpct{font-size:15px;width:52px;text-align:right}
+.prow .rn,.prow .rs{white-space:normal}
+.dbig{display:flex;flex-direction:column;gap:6px;background:var(--soft);border-radius:16px;padding:16px}
+.dbig>b{font-size:30px;font-weight:800}
 /* Objectifs, devises */
 .goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .goal{border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
@@ -908,6 +919,7 @@ function mergeMeta(b, l, r) {
   o.templates = {}; ['expenses','incomes','budgets'].forEach(t => o.templates[t] = mergeList(b.templates?.[t], l.templates?.[t], r.templates?.[t], 'tmplId'));
   o.savAcc = mergeList(b.savAcc, l.savAcc, r.savAcc);
   if (b.loans || l.loans || r.loans) o.loans = mergeList(b.loans, l.loans, r.loans);
+  if (b.debts || l.debts || r.debts) o.debts = mergeList(b.debts, l.debts, r.debts);
   ['savings','alerts','goal'].forEach(f => { const v = pick(b[f], l[f], r[f]); if (v === undefined) delete o[f]; else o[f] = v; });
   return o;
 }
@@ -1737,6 +1749,7 @@ function vBudgets() {
       ${!fixed.length ? '<p class="empty">Aucune charge fixe ce mois-ci.</p>' : ''}
     </div>
   </section>
+  ${debtsHTML()}
   ${loansHTML()}`;
 }
 
@@ -2550,7 +2563,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v10';
+const APP_VERSION = '14 oct. · v11';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2644,6 +2657,7 @@ function vSimpleAccueil() {
     <div class="ch"><h2>Derniers mouvements</h2><button class="lnk" data-view="mouvements">Tout voir</button></div>
     ${recent.map(([x, t]) => rowHTML(x, t, k)).join('') || '<p class="empty">Rien pour l\'instant. Touche « Dépense » ou « Rentrée d\'argent ».</p>'}
   </section>
+  ${debtsHTML(true)}
   ${goals().length ? goalsHTML() : ''}
   <p class="note" style="text-align:center;font-size:13px">Touche une ligne pour la modifier. Touche l'étiquette « À payer » pour la marquer payée.</p>`;
 }
@@ -2756,6 +2770,7 @@ function goalDialog(id) {
       saveUser(); render(); toast(g ? 'Objectif modifié' : '🎯 Objectif créé : ' + v.name);
     } });
   const dt = $('f_date'); if (dt) dt.type = 'month';
+  if (g) { $('dlg').querySelector('.dact').insertAdjacentHTML('afterbegin', '<button type="button" class="btn" id="g-todebt" title="Le transformer en avance à rembourser">C\'est un remboursement</button>'); $('g-todebt').onclick = () => goalToDebt(g); }
   const f = $('dlg').querySelector('form');
   f.insertAdjacentHTML('afterbegin', '');
   $('f_name').closest('label').insertAdjacentHTML('beforebegin', `<div class="chips" id="g-emo" role="group" aria-label="Icône">${GOAL_EMO.map(e => `<button type="button" class="chip${e === emo ? ' on' : ''}" data-e="${e}" style="font-size:18px;padding:4px 10px">${e}</button>`).join('')}</div>`);
@@ -2860,6 +2875,119 @@ function loanView(id) {
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn p" data-x>Fermer</button></div></div>`;
   d.onclick = e => { if (e.target.closest('[data-x]')) d.close(); if (e.target.closest('[data-ed]')) { d.close(); loanDialog(id); } };
   d.showModal();
+}
+
+
+/* ============================== AVANCES À REMBOURSER ==============================
+   De l'argent avancé par ce compte (ex. le compte joint) et remboursé petit à petit, sans taux ni organisme.
+   Rattachées au compte qui a avancé l'argent (partagées avec ses membres). Chaque remboursement crée les mouvements :
+   une recette ici, et — s'il vient d'un autre de mes comptes — la sortie (virement) sur ce compte-là.               */
+const debts = () => S.debts = S.debts || [];
+const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+function debtInfo(d) {
+  const t = num(d.amount), r = sum(d.payments || [], p => num(p.amount)), left = Math.max(0, Math.round((t - r) * 100) / 100);
+  return { t, r, left, p: t > 0 ? Math.min(100, r / t * 100) : 0, done: t > 0 && left <= 0 };
+}
+function debtsHTML(compact) {
+  if (isSavAcc()) return '';
+  const D = debts(); if (compact && !D.length) return '';
+  const tot = sum(D, d => debtInfo(d).left), all = sum(D, d => num(d.amount)), rep = sum(D, d => debtInfo(d).r);
+  return `<section class="card" aria-label="Avances à rembourser" style="display:flex;flex-direction:column;gap:2px">
+    <div class="ch"><h2>Avances à rembourser ${compact ? '' : tip('avances', 'Avances à rembourser', 'De l\'argent avancé par « ' + esc(accName()) + ' » et que vous remboursez petit à petit (sans taux, sans organisme). Chaque remboursement ajoute une recette ici et, s\'il vient d\'un de tes comptes, le virement correspondant sur ce compte.', 'rt')}</h2>${compact ? '' : `<button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button>`}</div>
+    ${D.length ? `<div class="dsum"><span>Reste à rembourser <b class="num">${eur(tot)}</b></span><span class="note">${eur0(rep)} remboursés sur ${eur0(all)} · ${all > 0 ? Math.round(rep / all * 100) : 0} %</span></div>` : ''}
+    ${D.map(d => { const i = debtInfo(d);
+      return `<button class="drow${i.done ? ' done' : ''}" data-a="debt-open" data-id="${d.id}">
+        <span class="gemo">${i.done ? '✅' : esc(d.emo || '💸')}</span>
+        <span class="rt"><span class="rn">${esc(d.name)}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${d.who ? ' · ' + esc(d.who) : ''}</span>
+          <span class="bar" style="display:block;margin-top:6px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></span>
+        <b class="num dpct">${Math.round(i.p)} %</b></button>`; }).join('')
+      || '<p class="empty">Le compte a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le ici et note chaque remboursement : l\'app calcule ce qu\'il reste.</p>'}
+  </section>`;
+}
+function debtDialog(id, preset) {
+  const d = id ? debts().find(x => x.id === id) : null, v = d || preset || {};
+  formDialog({ title: d ? 'Modifier l\'avance' : 'Nouvelle avance à rembourser', intro: d ? '' : 'Argent avancé par « ' + accName() + ' », à lui rembourser.',
+    fields: [{ id: 'name', label: 'Pour quoi ?', value: v.name || '', ph: 'ex. Mariage, Restaurant, BlaBlaCar' }, { id: 'amount', label: 'Montant avancé', type: 'num', value: v.amount, ph: 'ex. 270' },
+      { id: 'who', label: 'Qui rembourse ? (facultatif)', value: v.who || '', ph: 'ex. Robin, nous deux…' }],
+    onDelete: d ? () => { if (!confirm('Supprimer cette avance ? Les mouvements de remboursement déjà créés restent dans les comptes.')) return; mutate(() => { S.debts = debts().filter(x => x.id !== id); }, 'Avance supprimée'); } : null,
+    onSave: r => {
+      if (!r.name) { toast('Indique pour quoi'); return false; }
+      if (!(r.amount > 0)) { toast('Indique le montant avancé'); return false; }
+      let nid = id;
+      mutate(() => { if (d) Object.assign(d, { name: r.name, amount: r.amount, who: r.who }); else { nid = uid(); debts().push({ id: nid, name: r.name, amount: r.amount, who: r.who, emo: v.emo || '💸', at: Date.now(), payments: (preset && preset.payments) || [] }); } }, d ? 'Avance modifiée' : 'Avance ajoutée : ' + r.name);
+      if (!d && preset?.fromGoal) { U.goals = goals().filter(g => g.id !== preset.fromGoal); saveUser(); }
+      setTimeout(() => debtView(nid), 60);
+    } });
+}
+function debtView(id) {
+  const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d), P_ = (d.payments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const dl = $('dlg'); dl.onclick = null;
+  dl.innerHTML = `<div class="dw" style="max-height:88vh;overflow:auto"><div class="dh"><h2>${esc(d.emo || '💸')} ${esc(d.name)}</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    <div class="dbig"><span class="note">${i.done ? 'Tout est remboursé 🎉' : 'Reste à rembourser'}</span><b class="num">${eur(i.left)}</b><span class="note">sur ${eur(i.t)} avancés · <b style="color:var(--ink)">${Math.round(i.p)} % remboursé</b></span>
+      <span class="bar" style="display:block;height:10px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></div>
+    ${i.done ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>`}
+    <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
+      ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}${p.fromName ? ' · depuis ' + esc(p.fromName) : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b><button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button></div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
+    ${d.who ? `<p class="note" style="font-size:12px">Rembourse : ${esc(d.who)}</p>` : ''}
+    <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
+  dl.onclick = e => {
+    if (e.target.closest('[data-x]')) return dl.close();
+    if (e.target.closest('[data-ed]')) { dl.close(); return debtDialog(id); }
+    if (e.target.closest('[data-pay]')) { dl.close(); return payDialog(id); }
+    const del = e.target.closest('[data-del]'); if (del && confirm('Supprimer ce remboursement ? Les mouvements créés seront retirés aussi.')) { payDelete(id, del.dataset.del); setTimeout(() => debtView(id), 60); }
+  };
+  if (!dl.open) dl.showModal();
+}
+function payDialog(id) {
+  const d = debts().find(x => x.id === id); if (!d) return; const i = debtInfo(d), here = active;
+  const src = accIds.filter(a => a !== here && ACC[a]);
+  const OTHER = 'Autre (espèces, quelqu\'un d\'autre…) — seulement l\'arrivée ici';
+  let last = null; try { last = localStorage.getItem('payFrom'); } catch (e) {}
+  const def = src.includes(last) ? ACC[last].name : src[0] ? ACC[src[0]].name : OTHER;
+  formDialog({ title: 'Remboursement · ' + d.name, intro: `Reste ${eur(i.left)}. L'argent arrive sur « ${accName()} ».`, ok: 'Enregistrer',
+    fields: [{ id: 'amt', label: 'Montant', type: 'num', value: i.left, ph: '0,00' },
+      { id: 'date', label: 'Date', value: todayISO() },
+      { id: 'from', label: 'Depuis quel compte ?', type: 'select', options: src.map(a => ACC[a].name).concat([OTHER]), value: def, hint: 'Depuis un de tes comptes : le virement y est ajouté aussi (sortie là-bas, entrée ici).' },
+      { id: 'label', label: 'Libellé', value: 'Remboursement ' + d.name, ph: 'Remboursement…' }],
+    onSave: r => {
+      const amt = Math.round(num(r.amt) * 100) / 100;
+      if (!(amt > 0)) { toast('Indique un montant'); return false; }
+      if (amt > i.left + 0.001 && !confirm(`Ce montant dépasse ce qu'il reste (${eur(i.left)}). Enregistrer quand même ?`)) return false;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) { toast('Choisis une date'); return false; }
+      const fromId = src.find(a => ACC[a].name === r.from) || null;
+      try { localStorage.setItem('payFrom', fromId || ''); } catch (e) {}
+      payCreate(id, { amount: amt, date: r.date, from: fromId, label: r.label.trim() || 'Remboursement ' + d.name });
+    } });
+  $('f_date').type = 'date';
+}
+async function payCreate(id, p) {
+  const d = debts().find(x => x.id === id); if (!d) return;
+  const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), here = active, hereName = accName(), pid = uid(), xid = uid(), incId = uid(), fromName = p.from ? ACC[p.from]?.name : '';
+  const pay = { id: pid, amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, k, inc: incId, xid: p.from ? xid : '' };
+  mutate(() => {
+    const dd_ = debts().find(x => x.id === id); (dd_.payments = dd_.payments || []).push(pay);
+    month(k).incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
+      p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, isShared() ? { by: currentUser.email } : {}));
+  }, '+' + eur(p.amount) + ' remboursés · ' + d.name);
+  if (p.from) {
+    try { await txMonth(p.from, k, m => m.expenses.unshift({ id: uid(), name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: here, accName: hereName } })); }
+    catch (e) { toast('⚠ Enregistré ici, mais pas sur « ' + fromName + ' » (' + (e.code || e.message) + ')'); }
+  }
+  const i = debtInfo(debts().find(x => x.id === id));
+  if (i.done) setTimeout(() => toast('🎉 « ' + d.name + ' » est entièrement remboursé !'), 1500);
+  setTimeout(() => debtView(id), 80);
+}
+function payDelete(id, pid) {
+  const d = debts().find(x => x.id === id); const p = d && (d.payments || []).find(x => x.id === pid); if (!p) return;
+  mutate(() => { const dd_ = debts().find(x => x.id === id); dd_.payments = dd_.payments.filter(x => x.id !== pid); const m = month(p.k); m.incomes = m.incomes.filter(x => x.id !== p.inc); }, 'Remboursement supprimé');
+  if (p.from && p.xid) txMonth(p.from, p.k, m => { m.expenses = m.expenses.filter(e => !(e.xfer && e.xfer.id === p.xid)); }).catch(() => {});
+}
+// Un « objectif » qui était en fait un remboursement → devient une avance de ce compte
+function goalToDebt(g) {
+  if (isSavAcc()) return toast('Ouvre d\'abord le compte qui a avancé l\'argent (ex. le compte joint)');
+  $('dlg').close();
+  const payments = num(g.saved) > 0 ? [{ id: uid(), amount: num(g.saved), date: todayISO(), label: 'Déjà remboursé (repris de l\'objectif)', from: '', fromName: '', k: nowK(), inc: '', xid: '' }] : [];
+  debtDialog(null, { name: g.name.replace(/^rembours[ée]+s?\s*/i, '').replace(/^\w/, c => c.toUpperCase()), amount: g.target, emo: g.emo && g.emo !== '🎯' ? g.emo : '💸', payments, fromGoal: g.id });
 }
 
 
@@ -3060,6 +3188,8 @@ document.addEventListener('click', ev => {
     case 'goal-new': return goalDialog(null);
     case 'goal-edit': return goalDialog(id);
     case 'goal-add': return goalAddDialog(id);
+    case 'debt-new': return debtDialog(null);
+    case 'debt-open': return debtView(id);
     case 'loan-new': return loanDialog(null);
     case 'loan-open': return loanView(id);
     case 'theme': try { localStorage.setItem('theme', b.dataset.v); } catch (e) {} applyTheme(b.dataset.v); render(); return toast({ auto: 'Apparence automatique', light: 'Mode clair', dark: 'Mode sombre' }[b.dataset.v]);
