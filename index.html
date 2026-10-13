@@ -8,7 +8,7 @@
 <script>/* thème choisi sur cet appareil (avant l'affichage, pour éviter un flash) */
 function applyTheme(t){try{t=t||localStorage.getItem('theme')||'auto'}catch(e){t='auto'}var r=document.documentElement;if(t==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',t);
 var dk=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.setAttribute('content',dk?'#0D1020':'#F3F4F8');m.removeAttribute('media')});}
-applyTheme();</script>
+applyTheme();try{if(localStorage.getItem('mode')==='simple')document.documentElement.classList.add('simple')}catch(e){}</script>
 <title>Budget</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
@@ -333,6 +333,32 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
   .tools .btn span{display:none}
   .tools .btn{padding:0 14px}
 }
+/* ============================================================
+   6. MODE SIMPLE (gros boutons, mots simples)
+   ============================================================ */
+.btn.big{min-height:52px;font-size:15px;justify-content:center}
+.seg.big button{min-height:48px;font-size:15px}
+.chk.big{font-size:15px;min-height:48px}
+.chk.big input{width:22px;height:22px}
+.sbtns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:76px;line-height:1.15;border-radius:18px;border:0;font-size:16px;font-weight:800;color:#fff;box-shadow:var(--shadow);cursor:pointer}
+.sbtn b{font-size:26px;line-height:1;font-weight:800}
+.sbtn.out{background:#E11D48}.sbtn.in{background:#059669}
+.sbtn:active{transform:scale(.98)}
+.simple-hero{gap:10px;flex:none}
+html.simple .tools [data-a=new]{display:none}
+.simple-hero .t{font-size:15px;color:var(--hero-t)}
+.simple-hero .s{font-size:14px}
+.srows{display:flex;flex-direction:column;border-top:1px solid var(--hero-line);margin-top:6px;padding-top:6px}
+.srow{display:flex;justify-content:space-between;align-items:center;gap:10px;background:none;border:0;color:#fff;padding:10px 0;font-size:15px;text-align:left;cursor:pointer}
+.srow span{color:var(--hero-t)}.srow b{font-size:18px}
+.srow+.srow{border-top:1px solid var(--hero-line)}
+.simple-p{gap:18px}
+.simple-p .fl{font-size:15px}
+.modeopt{border:1px solid var(--line);padding:14px}
+html.simple .tools .btn span{display:inline}
+html.simple .nav{font-size:13px;min-height:58px}
+html.simple .row .rn{font-size:15px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media print{
   body{background:#fff}
@@ -1363,7 +1389,7 @@ function rowHTML(x, type, k, opt = {}) {
   const amount = inc ? '+' + eur(num(x.amount)) : minus(eff(x));
   let pill = '';
   if (opt.pill !== false && (st !== 'ok' || x.isFixed)) {
-    const [cls, txt] = st === 'ok' ? ['ok', inc ? 'Reçu' : 'Payé'] : st === 'late' || st === 'due' ? ['warn', inc ? 'En attente' : 'À payer'] : ['', inc ? 'En attente' : 'Prévu'];
+    const [cls, txt] = st === 'ok' ? ['ok', inc ? 'Reçu' : 'Payé'] : st === 'late' || st === 'due' ? ['warn', inc ? 'En attente' : 'À payer'] : ['', inc ? 'En attente' : SIMPLE() ? 'À payer' : 'Prévu'];
     pill = `<button class="pill ${cls}" data-a="tst" data-t="${type}" data-id="${x.id}" title="Cliquer pour changer le statut">${txt}</button>`;
   }
   return `<div class="row"><button class="rowb" data-a="open" data-t="${type}" data-id="${x.id}">${ico(x, type)}<span class="rt"><span class="rn">${esc(name)}</span><span class="rs">${meta}</span></span><span class="ra num${inc ? ' pos' : ''}">${amount}</span></button>${pill}</div>`;
@@ -1386,17 +1412,20 @@ function render() {
   logoMap = null;
   keepFocus(() => {
     renderChrome();
-    VIEWS.concat(EXTRA_VIEWS).forEach(([v]) => $('v-' + v).hidden = v !== UI.view);
+    if (SIMPLE() && !SIMPLE_VIEWS.includes(UI.view)) UI.view = 'accueil';
+  VIEWS.concat(EXTRA_VIEWS).forEach(([v]) => $('v-' + v).hidden = v !== UI.view);
     ({ accueil: vAccueil, mouvements: vMouvements, budgets: vBudgets, epargne: vEpargne, historique: vHistorique, parametres: vParametres, messages: vMessages, comptes: vComptes })[UI.view]();
   });
 }
 function renderChrome() {
-  $('navlist').innerHTML = VIEWS.filter(([v]) => !(v === 'budgets' && isSavAcc())).map(([v, l, i]) => `<button class="nav${UI.view === v ? ' on' : ''}" data-view="${v}"${UI.view === v ? ' aria-current="page"' : ''}>${svg(i)}<span>${l}</span></button>`).join('');
+  if (SIMPLE() && !SIMPLE_VIEWS.includes(UI.view)) UI.view = 'accueil';
+  askModeOnce();
+  $('navlist').innerHTML = VIEWS.filter(([v]) => !(v === 'budgets' && isSavAcc()) && (!SIMPLE() || SIMPLE_VIEWS.includes(v))).map(([v, l, i]) => [v, SIMPLE() && v === 'parametres' ? 'Réglages' : l, i]).map(([v, l, i]) => `<button class="nav${UI.view === v ? ' on' : ''}" data-view="${v}"${UI.view === v ? ' aria-current="page"' : ''}>${svg(i)}<span>${l}</span></button>`).join('');
   const mv = MONTH_VIEWS.includes(UI.view), k = ck(), mn = MN[cur.getMonth()];
   $$('[data-a=prev],[data-a=next]').forEach(b => b.hidden = !mv);
   $$('[data-a=prev]')[0].innerHTML = svg('left', 18, 2.2); $$('[data-a=next]')[0].innerHTML = svg('right', 18, 2.2);
   $('btn-today').hidden = !mv || k === nowK();
-  $('title').textContent = UI.view === 'accueil' ? mlab(k) : mv ? `${VIEWS.find(v => v[0] === UI.view)[1]} · ${mn}` : VIEWS.concat(EXTRA_VIEWS).find(v => v[0] === UI.view)[1];
+  $('title').textContent = SIMPLE() && UI.view === 'parametres' ? 'Réglages' : UI.view === 'accueil' ? mlab(k) : mv ? `${VIEWS.find(v => v[0] === UI.view)[1]} · ${mn}` : VIEWS.concat(EXTRA_VIEWS).find(v => v[0] === UI.view)[1];
   const n = alerts(nowK()).length + unreadCount();
   $('bell').innerHTML = svg('bell') + (n ? `<span class="dot-badge">${n > 9 ? '9+' : n}</span>` : '');
   $('bell').setAttribute('aria-label', n ? `Messagerie (${n} nouveau${n > 1 ? 'x' : ''})` : 'Messagerie');
@@ -1416,6 +1445,7 @@ function finRange(c) {
 const todayLabel = (o = { weekday: 'long', day: 'numeric', month: 'long' }) => { const s = new Date().toLocaleDateString('fr-FR', o); return s.charAt(0).toUpperCase() + s.slice(1); };
 function vAccueil() {
   if (isSavAcc()) return vSavAccueil();
+  if (SIMPLE()) return vSimpleAccueil();
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil');
   const empty = !S.templates.expenses.length && !S.templates.incomes.length && !m.expenses.length && !m.incomes.length;
   const ravTip = tip('reste à vivre', 'Reste à vivre', c.past ? 'Mois terminé : ce qui restait sur le compte en fin de mois.' + eq([['Fin de mois', eur(c.est)]], ['= Reste à vivre', eur(c.rav)]) : "Ce qu'il te restera en fin de mois si tu ne dépenses plus rien. Tes budgets (courses, loisirs…) se dépensent là-dedans." + eq([
@@ -1542,17 +1572,18 @@ function groups(m, k, flt, q) {
 function vMouvements() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-mouvements');
   const cnt = f => groups(m, k, f, '').reduce((s, g) => s + g.items.length, 0);
-  const F = isSavAcc() ? [['all', 'Tout'], ['inc', 'Versements'], ['var', 'Retraits'], ['fixed', 'Automatiques']] : [['all', 'Tout'], ['todo', 'À payer'], ['fixed', 'Fixes'], ['var', 'Variables'], ['inc', 'Recettes']];
+  const simple = SIMPLE();
+  const F = simple ? (isSavAcc() ? [['all', 'Tout'], ['inc', 'Versements'], ['var', 'Retraits']] : [['all', 'Tout'], ['todo', 'À payer'], ['inc', 'Rentrées d\'argent']]) : isSavAcc() ? [['all', 'Tout'], ['inc', 'Versements'], ['var', 'Retraits'], ['fixed', 'Automatiques']] : [['all', 'Tout'], ['todo', 'À payer'], ['fixed', 'Fixes'], ['var', 'Variables'], ['inc', 'Recettes']];
   const gs = groups(m, k, UI.flt, UI.q.trim().toLowerCase());
   const list = gs.map(g => `<div class="lbl">${g.label}</div>` + g.items.map(([x, t]) => rowHTML(x, t, k)).join('')).join('')
     || `<p class="empty">${UI.q ? 'Aucun résultat pour « ' + esc(UI.q) + ' ».' : 'Aucun mouvement ici. Clique sur « + Ajouter ».'}</p>`;
   const searchFocused = document.activeElement && document.activeElement.id === 'q';
   V.innerHTML = `
-  <div class="tiles">
+  ${simple ? `<div class="sbtns"><button class="sbtn out" data-a="s-new" data-t="expenses"><b>−</b>${isSavAcc() ? 'Retrait' : 'Dépense'}</button><button class="sbtn in" data-a="s-new" data-t="incomes"><b>+</b>${isSavAcc() ? 'Versement' : 'Rentrée d\'argent'}</button></div>` : `<div class="tiles">
     <div class="kp"><span>${isSavAcc() ? 'Versements' : 'Recettes'}</span><b style="color:var(--ok)">+${eur(c.incAll)}</b><small>${eur(c.incIn)} reçues</small></div>
     <div class="kp"><span>Dépenses ${tip('dépenses', 'Dépenses du mois', eq([['Charges fixes', eur(c.fixAll)], ['+ Dépenses variables', eur(c.varAll)]], ['= Total', eur(c.outAll)], 'Montants « ½ » comptés pour ta part seulement.'))}</span><b>${minus(c.outAll)}</b><small>${eur(c.outPaid)} payées</small></div>
     <div class="kp"><span>Reste à payer ${tip('reste à payer', 'Reste à payer', 'Dépenses de ce mois pas encore marquées « Payé », charges fixes comprises. Clique sur l\'étiquette d\'une ligne pour changer son statut.', 'lf')}</span><b style="color:var(--warn)">${eur(c.outPlan)}</b><small>${m.expenses.filter(e => e.status !== 'Payé').length} élément(s)</small></div>
-  </div>
+  </div>`}
   <section class="card" aria-label="Liste des mouvements" style="display:flex;flex-direction:column;gap:2px">
     <div class="ch">
       <div class="chips" role="group" aria-label="Filtrer">${F.map(([f, l]) => `<button class="chip${UI.flt === f ? ' on' : ''}" data-a="flt" data-v="${f}" aria-pressed="${UI.flt === f}">${l} · ${cnt(f)}</button>`).join('')}</div>
@@ -1814,6 +1845,7 @@ function download(name, content, type) {
 
 /* ---------- PARAMÈTRES ---------- */
 function vParametres() {
+  if (SIMPLE() && !UI.allSet) return vSimpleParametres();
   const V = $('v-parametres'), T = S.templates, k = ck();
   const del = '<button class="x" data-a="tdel" title="Supprimer" aria-label="Supprimer">' + svg('trash', 17) + '</button>';
   const catSel = (sel) => { const c = S.categories.includes(sel) || !sel ? S.categories : [sel, ...S.categories]; return c.map(x => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join(''); };
@@ -1894,6 +1926,7 @@ function openPanel(type, id, opt = {}) {
     d: x ? JSON.parse(JSON.stringify(x)) : { name: '', amount: '', cat: opt.cat || S.categories[0] || 'Autre', date: opt.day != null ? String(opt.day) : isCur ? String(today()) : '',
       status: opt.repeat ? (type === 'incomes' ? 'En attente' : 'Prévu') : (type === 'incomes' ? 'Reçu' : 'Payé'), isDivided: false } };
   P.icon = P.d.img ? 'img' : P.d.site ? 'site' : 'cat';
+  if (!x && SIMPLE() && type === 'expenses' && S.categories.includes('Autre')) P.d.cat = 'Autre';
   if (!x && isSavAcc() && !opt.keepType) { P.type = type = 'incomes'; P.d.status = opt.repeat ? 'En attente' : 'Reçu'; }
   P.d.amount = fmtIn(P.d.amount);
   paintPanel();
@@ -1907,6 +1940,7 @@ function closePanel(silent) {
 function paintPanel() {
   if (!P) return;
   if (P.type === 'xfer') return paintXfer();
+  if (SIMPLE() && !P.full && !P.d.xfer) return paintSimplePanel();
   const sav = isSavAcc(), d = P.d, ex = P.type === 'expenses' && !sav, fixed = !P.isNew && P.id && month()[P.type].find(e => e.id === P.id)?.isFixed;
   const names = [...new Set(Object.values(S.months).flatMap(m => m[P.type].map(e => e.name)).filter(Boolean))].slice(-80);
   const paid = isPaid(d, P.type);
@@ -1954,6 +1988,8 @@ function panelClick(b) {
     case 'repeat': P.repeat = b.checked; return;
     case 'future': P.future = b.checked; return;
     case 'save': return P.type === 'xfer' ? saveXfer() : savePanel();
+    case 'spaid': d.status = b.dataset.v === '1' ? (P.type === 'incomes' ? 'Reçu' : 'Payé') : (P.type === 'incomes' ? 'En attente' : 'Prévu'); break;
+    case 'full': P.full = true; break;
     case 'xk': P.xk = b.dataset.v; if (P.xk === 'person') Object.keys(DIR_T).forEach(e => delete DIR_T[e]); break;
     case 'dest': P.dest = b.dataset.v; break;
     case 'sugg': d.email = b.dataset.v; P.toAccPicked = false; xfLookup(d.email); break;
@@ -2021,6 +2057,9 @@ function formDialog({ title, intro, fields, ok = 'Enregistrer', onSave, onDelete
 }
 function bankDialog() {
   const k = ck(), m = month(k), c = calc(m, k);
+  if (SIMPLE() && k === nowK()) return formDialog({ title: 'Combien as-tu sur ton compte ?', intro: 'Regarde le solde affiché par ta banque aujourd\'hui et recopie-le ici. L\'application se recale dessus.',
+    fields: [{ id: 'b', label: 'Solde aujourd\'hui', type: 'num', value: Math.round(c.current * 100) / 100, ph: '0,00' }],
+    onSave: v => { if (v.b == null) { toast('Indique un montant'); return false; } mutate(() => { month(k).bankBalance = Math.round((v.b - (c.incIn - c.outPaid)) * 100) / 100; }, 'Solde mis à jour : ' + eur(v.b)); } });
   formDialog({ title: 'Solde au 1er ' + MN[cur.getMonth()].toLowerCase(), intro: 'Le solde de ton compte bancaire au 1er du mois. Laisse vide pour reprendre le calcul automatique à partir du mois précédent' + (c.bankSet ? '' : ` (actuellement ${eur(c.init)})`) + '.',
     fields: [{ id: 'b', label: 'Solde réel', type: 'num', value: m.bankBalance, ph: eur(chainBalanceAuto(k)) }],
     onSave: v => mutate(() => { month(k).bankBalance = v.b; }, v.b == null ? 'Solde calculé automatiquement' : 'Solde du 1er enregistré') });
@@ -2369,7 +2408,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '13 oct. · v3';
+const APP_VERSION = '13 oct. · v4';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2387,8 +2426,122 @@ function installHTML() {
   let th = 'auto'; try { th = localStorage.getItem('theme') || 'auto'; } catch (e) {}
   const tb = (v, l) => `<button class="${th === v ? 'on' : ''}" data-a="theme" data-v="${v}">${l}</button>`;
   return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Application</h2>
+    <div class="fl">Affichage<div class="seg" role="group" aria-label="Affichage"><button class="${SIMPLE() ? 'on' : ''}" data-a="mode" data-v="simple">Simple</button><button class="${SIMPLE() ? '' : 'on'}" data-a="mode" data-v="full">Complet</button></div><small>Simple = l'essentiel, en gros. Choix propre à cet appareil.</small></div>
     <div class="fl">Apparence<div class="seg" role="group" aria-label="Apparence">${tb('auto', 'Auto')}${tb('light', 'Clair')}${tb('dark', 'Sombre')}</div><small>Auto = suit le réglage de l'appareil. Choix propre à cet appareil.</small></div>
     ${body}<small class="note" style="font-size:12px">Version ${APP_VERSION}</small></section>`;
+}
+
+
+/* ============================== MODE SIMPLE ==============================
+   L'essentiel seulement : combien il me reste, ajouter une dépense / une rentrée d'argent, ce qui reste à payer.
+   Choix propre à chaque appareil (ex. simple sur le téléphone, complet sur le PC).                              */
+const SIMPLE = () => { try { return localStorage.getItem('mode') === 'simple'; } catch (e) { return false; } };
+const SIMPLE_VIEWS = ['accueil', 'mouvements', 'parametres', 'messages', 'comptes'];
+function setMode(m) {
+  try { localStorage.setItem('mode', m); } catch (e) {}
+  document.documentElement.classList.toggle('simple', m === 'simple');
+  if (m === 'simple' && !SIMPLE_VIEWS.includes(UI.view)) UI.view = 'accueil';
+  if (m === 'simple' && !['all', 'todo', 'inc'].includes(UI.flt)) UI.flt = 'all';
+  UI.allSet = false; render();
+  toast(m === 'simple' ? 'Affichage simple' : 'Affichage complet');
+}
+document.documentElement.classList.toggle('simple', SIMPLE());
+
+// Première ouverture sur téléphone : on demande quel affichage la personne préfère
+let modeAsked = false;
+function askModeOnce() {
+  if (modeAsked) return; modeAsked = true;
+  const has = () => { try { return localStorage.getItem('mode') !== null; } catch (e) { return true; } };
+  if (has() || innerWidth > 760) return;
+  setTimeout(() => {
+    if (has() || $('dlg').open || P) return;
+    const d = $('dlg');
+    d.innerHTML = `<div class="dw"><div class="dh"><h2>Bienvenue 👋</h2></div>
+      <p class="note" style="font-size:15px">Comment veux-tu utiliser l'application ? Tu pourras changer à tout moment dans Réglages.</p>
+      <button class="row rowb modeopt" data-m="simple"><span class="ico" style="--c:#10B981">${svg('check')}</span><span class="rt"><span class="rn">Simple</span><span class="rs" style="white-space:normal">L'essentiel : ce qu'il me reste, ajouter une dépense, ce qui est à payer.</span></span></button>
+      <button class="row rowb modeopt" data-m="full"><span class="ico" style="--c:#4338CA">${svg('chart')}</span><span class="rt"><span class="rn">Complet</span><span class="rs" style="white-space:normal">Tout : budgets, épargne, historique, alertes, virements…</span></span></button></div>`;
+    d.onclick = e => { const b = e.target.closest('[data-m]'); if (!b) return; d.close(); setMode(b.dataset.m); };
+    d.showModal();
+  }, 700);
+}
+
+/* ---------- Accueil simple ---------- */
+function vSimpleAccueil() {
+  const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil'), isCur = k === nowK(), mn = MN[cur.getMonth()].toLowerCase();
+  const empty = !S.templates.expenses.length && !S.templates.incomes.length && !m.expenses.length && !m.incomes.length;
+  const al = alerts(k);
+  const unpaid = m.expenses.filter(e => e.status !== 'Payé').sort((a, b) => (parseInt(a.date) || 99) - (parseInt(b.date) || 99));
+  const recent = [...m.expenses.map(x => [x, 'expenses']), ...m.incomes.map(x => [x, 'incomes'])].filter(([x, t]) => isPaid(x, t))
+    .sort((a, b) => (parseInt(b[0].date) || 0) - (parseInt(a[0].date) || 0)).slice(0, 5);
+  V.innerHTML = `
+  ${empty ? `<section class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h2>Pour commencer</h2>
+      <p class="note" style="font-size:15px">Trois petites étapes, ensuite tout se fait tout seul chaque mois.</p>
+      <button class="btn big" data-a="bank">1. Combien j'ai sur mon compte</button>
+      <button class="btn big" data-a="ob-inc">2. Mon salaire (chaque mois)</button>
+      <button class="btn big" data-a="ob-fix">3. Une facture qui revient (loyer, abonnement…)</button></section>` : ''}
+  <section class="hero simple-hero" aria-label="Ce qu'il me reste" style="background:color-mix(in srgb,${ACC[active]?.color || '#4338CA'} 42%,#0B0A24)">
+    <span class="t">${c.past ? 'Il me restait fin ' + mn : 'Il me reste pour finir le mois'}</span>
+    <span class="v num${c.rav < 0 ? ' neg' : ''}">${eur(c.rav)}</span>
+    ${c.perDay != null && c.rav > 0 ? `<span class="s">soit environ <b class="num">${eur0(c.perDay)} par jour</b> jusqu'au ${dim(k)} ${mn}</span>` : c.rav < 0 ? '<span class="s">Attention : les dépenses prévues dépassent ce que tu as.</span>' : ''}
+    <div class="srows">
+      <button class="srow" data-a="bank"><span>Sur mon compte ${isCur ? 'aujourd\'hui' : ''}</span><b class="num">${eur(c.current)}</b></button>
+      <button class="srow" data-a="flt" data-v="todo" data-go="mouvements"><span>Encore à payer ce mois</span><b class="num">${eur(c.outPlan)}</b></button>
+    </div>
+  </section>
+  <div class="sbtns">
+    <button class="sbtn out" data-a="s-new" data-t="expenses"><b>−</b>Dépense</button>
+    <button class="sbtn in" data-a="s-new" data-t="incomes"><b>+</b>Rentrée d'argent</button>
+  </div>
+  ${al.length ? `<div class="alert ${al[0].lvl === 'bad' ? 'bad' : ''}" role="status">${svg('warn')}<span>${esc(al[0].text)}</span><button class="lnk" data-a="${al.length > 1 ? 'alerts' : 'alertgo'}">Voir</button></div>` : ''}
+  <section class="card" style="display:flex;flex-direction:column;gap:2px">
+    <div class="ch"><h2>À payer ce mois</h2>${unpaid.length > 4 ? '<button class="lnk" data-a="flt" data-v="todo" data-go="mouvements">Tout voir</button>' : ''}</div>
+    ${unpaid.slice(0, 4).map(e => rowHTML(e, 'expenses', k)).join('') || '<p class="empty">Tout est payé 👍</p>'}
+  </section>
+  <section class="card" style="display:flex;flex-direction:column;gap:2px">
+    <div class="ch"><h2>Derniers mouvements</h2><button class="lnk" data-view="mouvements">Tout voir</button></div>
+    ${recent.map(([x, t]) => rowHTML(x, t, k)).join('') || '<p class="empty">Rien pour l\'instant. Touche « Dépense » ou « Rentrée d\'argent ».</p>'}
+  </section>
+  <p class="note" style="text-align:center;font-size:13px">Touche une ligne pour la modifier. Touche l'étiquette « À payer » pour la marquer payée.</p>`;
+}
+
+/* ---------- Saisie simple ---------- */
+function paintSimplePanel() {
+  const d = P.d, ex = P.type === 'expenses', sav = isSavAcc(), paid = isPaid(d, P.type);
+  const fixed = !P.isNew && P.id && month()[P.type].find(e => e.id === P.id)?.isFixed;
+  const names = [...new Set(Object.values(S.months).flatMap(m => m[P.type].map(e => e.name)).filter(Boolean))].slice(-80);
+  const W = sav ? (ex ? ['Retrait', 'retiré'] : ['Versement', 'versé']) : ex ? ['Dépense', 'payé'] : ['Rentrée d\'argent', 'reçu'];
+  $('panel').innerHTML = `
+  <div class="pbody simple-p">
+    <div class="dh"><h2 id="pn-title">${P.isNew ? 'Nouvelle ' + W[0].toLowerCase() : 'Modifier'}</h2><button class="ib sm" data-p="close" aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    ${P.isNew ? `<div class="seg big" role="group" aria-label="Type"><button class="${ex ? 'on' : ''}" data-p="type" data-v="expenses">${sav ? 'Retrait' : 'Dépense'}</button><button class="${!ex ? 'on' : ''}" data-p="type" data-v="incomes">${sav ? 'Versement' : 'Rentrée d\'argent'}</button></div>` : ''}
+    <label class="fl">Combien ?<span class="amt" style="margin:0"><input id="pn-a" inputmode="decimal" placeholder="0,00" aria-label="Montant" value="${esc(d.amount)}" data-pf="amount"><span>€</span></span></label>
+    <label class="fl">C'est quoi ?<input class="in" id="pn-n" list="pn-dl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="${ex ? 'ex. Courses, Essence, Loyer' : 'ex. Salaire, Remboursement'}"><datalist id="pn-dl">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+    <div class="fl">C'est déjà ${W[1]} ?<div class="seg big" role="group"><button class="${paid ? 'on' : ''}" data-p="spaid" data-v="1">Oui, ${W[1]}</button><button class="${!paid ? 'on' : ''}" data-p="spaid" data-v="0">Pas encore</button></div></div>
+    <label class="fl">Quel jour du mois ?<input class="in" id="pn-d" type="number" min="1" max="31" inputmode="numeric" value="${esc(d.date)}" data-pf="date" placeholder="ex. ${today()}"></label>
+    ${fixed ? `<div class="fixinfo"><b>Revient chaque mois</b><button class="lnk" data-p="stop" style="align-self:flex-start;color:inherit;text-decoration:underline">Ne plus répéter à partir du mois prochain</button></div>`
+      : `<label class="chk big"><input type="checkbox" data-p="repeat" ${P.repeat ? 'checked' : ''}>Revient tous les mois</label>`}
+    ${sav ? '' : `<button class="lnk" data-p="full" style="align-self:flex-start;font-size:14px">Plus d'options (catégorie, icône${ex ? ', ½ partagé' : ''}…)</button>`}
+  </div>
+  <div class="pfoot">
+    <button class="btn p big" style="flex:1" data-p="save">Enregistrer</button>
+    ${!P.isNew ? `<button class="btn big danger" data-p="del">${svg('trash', 18)} Supprimer</button>` : ''}
+  </div>`;
+}
+
+/* ---------- Réglages simples ---------- */
+function vSimpleParametres() {
+  $('v-parametres').innerHTML = `
+  <div class="grid2">
+    ${installHTML()}
+    <section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Mon compte</h2>
+      <p class="note">${esc(currentUser?.email || '')}</p>
+      <button class="btn big" data-a="bank">Corriger le solde de mon compte</button>
+      <button class="btn big" data-a="pwd">Changer de mot de passe</button>
+      <button class="btn big" data-a="logout">${svg('out', 18)} Se déconnecter</button>
+    </section>
+  </div>
+  <button class="btn" data-a="s-allset" style="align-self:center">Afficher tous les réglages</button>`;
 }
 
 
@@ -2578,7 +2731,10 @@ document.addEventListener('click', ev => {
     case 'tst': { const x0 = m[t].find(e => e.id === id), was = isPaid(x0, t), nm = x0.name || x0.cat || 'Recette';
       return mutate(() => { const x = month(k)[t].find(e => e.id === id); x.status = t === 'incomes' ? (was ? 'En attente' : 'Reçu') : (was ? 'Prévu' : 'Payé'); },
         nm + ' : ' + (t === 'incomes' ? (was ? 'en attente' : 'reçu ✓') : (was ? 'à payer' : 'payé ✓')) + ' · ' + eur(t === 'incomes' ? num(x0.amount) : eff(x0))); }
-    case 'flt': UI.flt = b.dataset.v; return render();
+    case 'flt': if (b.dataset.go) return go(b.dataset.go, { flt: b.dataset.v }); UI.flt = b.dataset.v; return render();
+    case 's-new': return openPanel(t);
+    case 's-allset': UI.allSet = true; render(); return scrollTo({ top: 0 });
+    case 'mode': return setMode(b.dataset.v);
     case 'alerts': return go('messages');
     case 'theme': try { localStorage.setItem('theme', b.dataset.v); } catch (e) {} applyTheme(b.dataset.v); render(); return toast({ auto: 'Apparence automatique', light: 'Mode clair', dark: 'Mode sombre' }[b.dataset.v]);
     case 'install': if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; render(); }); } return;
