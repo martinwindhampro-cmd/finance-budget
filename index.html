@@ -387,6 +387,7 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .swi input:focus-visible+i{outline:2px solid var(--acc);outline-offset:2px}
 @media (max-width:900px){.savhero,.savgrid{grid-template-columns:minmax(0,1fr)}.savhero .v{font-size:40px}}
 @media (max-width:420px){.sleg{grid-template-columns:1fr}}
+.xtag{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#0284C7;margin:3px 0 0 10px}
 /* Objectifs, devises */
 .goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .goal{border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
@@ -599,6 +600,9 @@ function normalize(s) {
     [...m.expenses, ...m.incomes].forEach(x => {
       x.isFixed = !!x.isFixed;
       if (x.isFixed && !x.tmplId) { const t = s.templates[m.expenses.includes(x) ? 'expenses' : 'incomes'].find(t => t.name === x.name); x.tmplId = t ? t.tmplId : uid(); }
+      // virement automatique créé avant la v10 : la ligne du mois de création n'était pas reliée à son modèle
+      if (x.xfer?.kind === 'acc' && !x.isFixed) { const t = s.templates[m.expenses.includes(x) ? 'expenses' : 'incomes'].find(t => t.xfer?.kind === 'acc' && t.xfer.auto && t.xfer.acc === x.xfer.acc && t.name === x.name && num(t.amount) === num(x.amount));
+        if (t) { x.isFixed = true; x.tmplId = t.tmplId; } }
     });
   });
   s.templates.budgets.forEach(b => { delete b.name; delete b.date; delete b.isDivided; });
@@ -1949,11 +1953,11 @@ function vParametres() {
     fixes: () => `  <p class="note">Les éléments récurrents ci-dessous sont recopiés chaque mois. Une modification s'applique à ${mlab(k)} et aux mois suivants déjà ouverts ; ce qui est déjà payé ou reçu ne change pas.</p>
   <section class="card"><div class="ch"><h2>Recettes fixes</h2><button class="btn sm" data-a="tadd" data-t="incomes">${svg('plus', 16)} Recette fixe</button></div>
     <div class="tw"><table class="tpl"><thead><tr><th>Jour</th><th style="width:55%">Libellé</th><th>Montant</th><th></th></tr></thead><tbody>
-    ${T.incomes.map(t => `<tr data-tpl="incomes" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé"></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Aucune recette fixe (salaire, aides…).</td></tr>'}
+    ${T.incomes.map(t => `<tr data-tpl="incomes" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé">${t.xfer?.kind === 'acc' ? `<span class="xtag">${svg('swap', 12)} Virement auto ${(ACC[t.xfer.acc]?.name || t.xfer.accName) ? (T.incomes.includes(t) ? 'depuis' : 'vers') + ' « ' + esc(ACC[t.xfer.acc]?.name || t.xfer.accName) + ' »' : ''}</span>` : ''}</td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Aucune recette fixe (salaire, aides…).</td></tr>'}
     </tbody></table></div></section>
   <section class="card"><div class="ch"><h2>Charges fixes</h2><button class="btn sm" data-a="tadd" data-t="expenses">${svg('plus', 16)} Charge fixe</button></div>
     <div class="tw"><table class="tpl" style="min-width:760px"><thead><tr><th>Jour</th><th></th><th>Libellé</th><th>Catégorie</th><th>Montant</th><th>½</th><th>Site web (logo)</th><th></th></tr></thead><tbody>
-    ${T.expenses.map(t => `<tr data-tpl="expenses" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td>${ico(t, 'expenses', 'sm')}</td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé"></td><td><select data-f="cat" aria-label="Catégorie">${catSel(t.cat)}</select></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td><button class="half ${t.isDivided ? 'on' : ''}" data-a="thalf" title="Ne compter que ma moitié" aria-pressed="${!!t.isDivided}">½</button></td><td><input data-f="site" value="${esc(t.site || '')}" placeholder="ex. monfournisseur.fr" aria-label="Site web pour le logo"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Aucune charge fixe.</td></tr>'}
+    ${T.expenses.map(t => `<tr data-tpl="expenses" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td>${ico(t, 'expenses', 'sm')}</td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé">${t.xfer?.kind === 'acc' ? `<span class="xtag">${svg('swap', 12)} Virement auto ${(ACC[t.xfer.acc]?.name || t.xfer.accName) ? (T.incomes.includes(t) ? 'depuis' : 'vers') + ' « ' + esc(ACC[t.xfer.acc]?.name || t.xfer.accName) + ' »' : ''}</span>` : ''}</td><td><select data-f="cat" aria-label="Catégorie">${catSel(t.cat)}</select></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td><button class="half ${t.isDivided ? 'on' : ''}" data-a="thalf" title="Ne compter que ma moitié" aria-pressed="${!!t.isDivided}">½</button></td><td><input data-f="site" value="${esc(t.site || '')}" placeholder="ex. monfournisseur.fr" aria-label="Site web pour le logo"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Aucune charge fixe.</td></tr>'}
     </tbody></table></div></section>
   <section class="card"><div class="ch"><h2>Budgets mensuels</h2><button class="btn sm" data-a="tadd" data-t="budgets">${svg('plus', 16)} Budget</button></div>
     <div class="tw"><table class="tpl"><thead><tr><th>Catégorie</th><th>Montant</th><th></th></tr></thead><tbody>
@@ -2096,7 +2100,9 @@ function panelClick(b) {
     case 'xmove': return xferMove(b.dataset.v);
     case 'dup': { const t = P.type, src = month()[t].find(e => e.id === P.id); mutate(() => { const c = JSON.parse(JSON.stringify(src)); Object.assign(c, { id: uid(), isFixed: false, status: t === 'incomes' ? 'En attente' : 'Prévu' }); delete c.tmplId; const arr = month()[t]; arr.splice(arr.indexOf(src) + 1, 0, c); }, 'Dupliqué'); return closePanel(); }
     case 'del': { const t = P.type, id = P.id, xf = month()[t].find(e => e.id === id)?.xfer; mutate(() => { const m = month(); m[t] = m[t].filter(e => e.id !== id); }, 'Supprimé'); xferPropagate(xf, null); if (xf?.kind === 'person' && xf.id) { (U.xfHide = U.xfHide || []).push(xf.id); saveUser(); } return closePanel(); }
-    case 'stop': { const t = P.type, id = P.id; mutate(() => { const x = month()[t].find(e => e.id === id); tplDel(t, x.tmplId, shiftK(ck(), 1)); x.isFixed = false; delete x.tmplId; }, 'Récurrence arrêtée'); return closePanel(); }
+    case 'stop': { const t = P.type, id = P.id, x0 = month()[t].find(e => e.id === id), tp0 = x0 && S.templates[t].find(z => z.tmplId === x0.tmplId), cp = tp0 && JSON.parse(JSON.stringify(tp0));
+      if (cp?.xfer) setTimeout(() => xferTplSync(t, cp, 'stop'), 0);
+      mutate(() => { const x = month()[t].find(e => e.id === id); tplDel(t, x.tmplId, shiftK(ck(), 1)); x.isFixed = false; delete x.tmplId; }, 'Récurrence arrêtée'); return closePanel(); }
   }
   paintPanel();
 }
@@ -2107,7 +2113,9 @@ function savePanel() {
   if (P.isNew && !isSavAcc()) try { localStorage.setItem('lastCur', cur); } catch (e) {}
   const amt = cur === 'EUR' ? raw : Math.round(raw / fr * 100) / 100, fx = cur === 'EUR' ? null : { cur, amt: Math.round(raw * 100) / 100, rate: Math.round(1 / fr * 1e6) / 1e6, date: FX.date };
   const k = ck(), isNew = P.isNew, id = P.id, repeat = P.repeat, future = P.future, icon = P.icon, xf = d.xfer;
-  if (xf && !isNew) setTimeout(() => xferPropagate(xf, { amount: Math.round(amt * 100) / 100, date: day(d.date), label: d.name.trim() }), 0);
+  if (xf && !isNew) setTimeout(() => xferPropagate(xf, { amount: Math.round(amt * 100) / 100, date: day(d.date), label: d.name.trim(), paid: isPaid(d, t) }), 0);
+  const x0 = !isNew && month(k)[t].find(e => e.id === id), tp0 = x0?.isFixed && future && x0.xfer && S.templates[t].find(z => z.tmplId === x0.tmplId), old = tp0 && { name: tp0.name, amount: tp0.amount };
+  if (tp0) setTimeout(() => xferTplSync(t, tp0, 'upd', old), 0);
   mutate(() => {
     const m = month(k);
     const clean = { name: d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat), amount: Math.round(amt * 100) / 100, date: day(d.date), status: d.status };
@@ -2386,21 +2394,48 @@ function txMonth(accId, k, fn, metaFn) {
   });
 }
 // Répercute une modification (ou une suppression si upd = null) sur l'autre côté du virement
+// L'autre côté d'un virement entre mes comptes : même identifiant de virement, ou même virement automatique (rid)
+const xfMatch = (e, xf) => !!e.xfer && e.xfer.kind === 'acc' && (xf.id && e.xfer.id ? e.xfer.id === xf.id : !!xf.rid && e.xfer.rid === xf.rid);
 function xferPropagate(xf, upd) {
-  if (!xf || !xf.id) return;
+  if (!xf || (!xf.id && !xf.rid)) return;
   const k = ck();
   if (xf.kind === 'acc' && xf.acc && accIds.includes(xf.acc)) {
     txMonth(xf.acc, k, m => {
       ['expenses','incomes'].forEach(t => {
-        if (!upd) m[t] = m[t].filter(e => !(e.xfer && e.xfer.id === xf.id));
-        else m[t].forEach(e => { if (e.xfer && e.xfer.id === xf.id) { e.amount = upd.amount; e.date = upd.date; } });
+        if (!upd) m[t] = m[t].filter(e => !xfMatch(e, xf));
+        else m[t].forEach(e => { if (!xfMatch(e, xf)) return;
+          if (upd.amount != null) e.amount = upd.amount; if (upd.date !== undefined) e.date = upd.date; if (upd.label) e.name = upd.label;
+          if (upd.paid != null) e.status = t === 'incomes' ? (upd.paid ? 'Reçu' : 'En attente') : (upd.paid ? 'Payé' : 'Prévu'); });
       });
     }).catch(e => toast('⚠ L\'autre compte n\'a pas pu être mis à jour (' + (e.code || e.message) + ')'));
   }
-  if (xf.kind === 'person' && xf.to && xfStatus(xf.id) === 'sent') {
+  if (xf.kind === 'person' && xf.id && xf.to && xfStatus(xf.id) === 'sent') {
     const r = db.collection('transfers').doc(xf.id);
     (upd ? r.update({ amount: upd.amount, date: upd.date, label: upd.label }) : r.delete()).catch(() => {});
   }
+}
+// Virement automatique modifié / supprimé ici → même chose sur le compte d'en face (modèle + mois affiché)
+function xferTplSync(type, t, mode, old = t) {
+  const xf = t && t.xfer; if (!xf || xf.kind !== 'acc' || !xf.acc || !accIds.includes(xf.acc)) return Promise.resolve();
+  const other = type === 'expenses' ? 'incomes' : 'expenses', me = active, k = ck();
+  if (!xf.rid) { xf.rid = uid(); save(); }                                     // ancien virement : on crée le lien
+  return db.runTransaction(async tx => {
+    const aRef = accDoc(xf.acc), mRef = monthCol(xf.acc).doc(k), aS = await tx.get(aRef), mS = await tx.get(mRef);
+    if (!aS.exists) return;
+    const o = J(aS.data().meta) || {}; o.templates = o.templates || {}; const L = o.templates[other] = o.templates[other] || [];
+    const dt = L.find(z => z.xfer && z.xfer.kind === 'acc' && z.xfer.acc === me && (z.xfer.rid ? z.xfer.rid === xf.rid : z.name === old.name && num(z.amount) === num(old.amount)));
+    if (!dt) return;
+    dt.xfer.rid = xf.rid;
+    if (mode === 'upd') { dt.name = t.name; dt.amount = t.amount; dt.date = t.date; ['site', 'img'].forEach(f => { if (t[f]) dt[f] = t[f]; else delete dt[f]; }); }
+    else o.templates[other] = L.filter(z => z !== dt);
+    tx.update(aRef, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid });
+    if (mS.exists) {
+      const m = JSON.parse(mS.data().data), paid = e => e.status === 'Payé' || e.status === 'Reçu';
+      if (mode === 'del') m[other] = m[other].filter(e => e.tmplId !== dt.tmplId || paid(e));
+      else if (mode === 'upd') m[other].forEach(e => { if (e.tmplId === dt.tmplId && !paid(e)) { e.name = dt.name; e.amount = dt.amount; e.date = dt.date; } });
+      if (mode !== 'stop') tx.set(mRef, { data: canon(m), updatedAt: Date.now(), updatedBy: currentUser.uid });
+    }
+  }).catch(e => toast('⚠ « ' + (ACC[xf.acc]?.name || 'L\'autre compte') + ' » n\'a pas pu être mis à jour (' + (e.code || e.message) + ')'));
 }
 function contactSuggestions() {
   const me = myEmail(), seen = new Set(), out = [];
@@ -2452,14 +2487,15 @@ async function saveXfer() {
   const site = P.icon === 'site' ? cleanSite(d.site) : '', img = P.icon === 'img' ? (d.img || '') : '', deco = Object.assign({}, site ? { site } : {}, img ? { img } : {});
   if (P.xk === 'acc') {
     const dest = P.dest; if (!dest || !ACC[dest] || dest === src) return toast('Choisis le compte d\'arrivée');
-    const dn = ACC[dest].name, repeat = P.repeat; closePanel();
+    const dn = ACC[dest].name, repeat = P.repeat, rid = repeat ? uid() : null, stid = uid(), dtid = uid(); closePanel();
+    const link = repeat ? { rid } : {};
     mutate(() => {
-      month(k).expenses.unshift(Object.assign({ id: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, status: 'Payé', cat, isFixed: false, xfer: { id: xid, kind: 'acc', acc: dest, accName: dn } }, deco));
-      if (repeat) tplAdd('expenses', Object.assign({ tmplId: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, cat, xfer: { kind: 'acc', acc: dest, accName: dn, auto: true } }, deco), shiftK(k, 1));
+      month(k).expenses.unshift(Object.assign({ id: uid(), name: label || 'Virement vers ' + dn, amount: amt, date: dd, status: 'Payé', cat, isFixed: !!repeat, xfer: Object.assign({ id: xid, kind: 'acc', acc: dest, accName: dn }, link) }, repeat ? { tmplId: stid } : {}, deco));
+      if (repeat) tplAdd('expenses', Object.assign({ tmplId: stid, name: label || 'Virement vers ' + dn, amount: amt, date: dd, cat, isDivided: false, xfer: { kind: 'acc', acc: dest, accName: dn, auto: true, rid } }, deco), shiftK(k, 1));
     }, (label || 'Virement') + ' → ' + dn + ' · ' + eur(amt) + (cat !== 'Virement' ? ' (' + cat + ')' : ''));
     try {
-      await txMonth(dest, k, m => m.incomes.unshift(Object.assign({ id: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, status: 'Reçu', isFixed: false, xfer: { id: xid, kind: 'acc', acc: src, accName: srcName } }, deco, isShared(dest) ? { by: currentUser.email } : {})),
-        repeat ? o => o.templates.incomes.push(Object.assign({ tmplId: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, xfer: { kind: 'acc', acc: src, accName: srcName, auto: true } }, deco)) : null);
+      await txMonth(dest, k, m => m.incomes.unshift(Object.assign({ id: uid(), name: label || 'Virement de ' + srcName, amount: amt, date: dd, status: 'Reçu', isFixed: !!repeat, xfer: Object.assign({ id: xid, kind: 'acc', acc: src, accName: srcName }, link) }, repeat ? { tmplId: dtid } : {}, deco, isShared(dest) ? { by: currentUser.email } : {})),
+        repeat ? o => o.templates.incomes.push(Object.assign({ tmplId: dtid, name: label || 'Virement de ' + srcName, amount: amt, date: dd, isDivided: false, xfer: { kind: 'acc', acc: src, accName: srcName, auto: true, rid } }, deco)) : null);
       if (isShared(dest)) accDoc(dest).collection('activity').add({ by: currentUser.uid, byEmail: currentUser.email, text: 'Virement reçu de « ' + srcName + ' » · ' + eur(amt), at: Date.now(), month: k }).catch(() => {});
     } catch (e) { toast('⚠ Enregistré ici, mais pas sur « ' + dn + ' » (' + (e.code || e.message) + '). Vérifie ta connexion.'); }
   } else {
@@ -2514,7 +2550,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '13 oct. · v9';
+const APP_VERSION = '14 oct. · v10';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3011,6 +3047,7 @@ document.addEventListener('click', ev => {
     case 'new': return openPanel('expenses');
     case 'open': return openPanel(t, id);
     case 'tst': { const x0 = m[t].find(e => e.id === id), was = isPaid(x0, t), nm = x0.name || x0.cat || 'Recette';
+      if (x0.xfer?.kind === 'acc') setTimeout(() => xferPropagate(x0.xfer, { paid: !was }), 0);
       return mutate(() => { const x = month(k)[t].find(e => e.id === id); x.status = t === 'incomes' ? (was ? 'En attente' : 'Reçu') : (was ? 'Prévu' : 'Payé'); },
         nm + ' : ' + (t === 'incomes' ? (was ? 'en attente' : 'reçu ✓') : (was ? 'à payer' : 'payé ✓')) + ' · ' + eur(t === 'incomes' ? num(x0.amount) : eff(x0))); }
     case 'flt': if (b.dataset.go) return go(b.dataset.go, { flt: b.dataset.v }); UI.flt = b.dataset.v; return render();
@@ -3074,7 +3111,8 @@ document.addEventListener('click', ev => {
       return mutate(() => tplAdd(t, n, k), 'Ajouté'); }
     case 'thalf': { const tr = b.closest('[data-tpl]'), x = S.templates.expenses.find(y => y.tmplId === tr.dataset.id); return mutate(() => { x.isDivided = !x.isDivided; syncTpl('expenses', x, ['isDivided'], k); }, false); }
     case 'tdel': { const tr = b.closest('[data-tpl]'); if (!confirm('Supprimer cet élément récurrent ? Ce qui n\'est pas encore réglé sera retiré de ' + mlab(k) + ' et des mois suivants.')) return;
-      return mutate(() => tplDel(tr.dataset.tpl, tr.dataset.id, k), 'Supprimé'); }
+      const tp0 = S.templates[tr.dataset.tpl].find(z => z.tmplId === tr.dataset.id), cp = tp0 && JSON.parse(JSON.stringify(tp0));
+      mutate(() => tplDel(tr.dataset.tpl, tr.dataset.id, k), 'Supprimé'); if (cp?.xfer) xferTplSync(tr.dataset.tpl, cp, 'del'); return; }
   }
 });
 
@@ -3112,7 +3150,9 @@ document.addEventListener('change', ev => {
     let v = el.value; if (f === 'amount') v = Math.max(0, parseAmt(v)); if (f === 'date') v = day(v); if (f === 'site') v = cleanSite(v);
     const ty = tr.dataset.tpl, x = S.templates[ty].find(y => y.tmplId === tr.dataset.id);
     const c = f === 'name' && ty === 'expenses' ? autoCat(v) : null;
-    setTimeout(() => mutate(() => { if (v === '' && f === 'site') delete x[f]; else x[f] = v; syncTpl(ty, x, [f]); if (c && x.cat !== c) { x.cat = c; syncTpl(ty, x, ['cat']); } }, false), 0);  // après le déplacement du focus
+    const old = { name: x.name, amount: x.amount };
+    setTimeout(() => { mutate(() => { if (v === '' && f === 'site') delete x[f]; else x[f] = v; syncTpl(ty, x, [f]); if (c && x.cat !== c && !x.xfer) { x.cat = c; syncTpl(ty, x, ['cat']); } }, false);
+      if (x.xfer && ['name', 'amount', 'date', 'site'].includes(f)) xferTplSync(ty, x, 'upd', old); }, 0);  // après le déplacement du focus
   }
 });
 function importFile(f) {
