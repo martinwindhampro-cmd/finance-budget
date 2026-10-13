@@ -358,7 +358,35 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 /* Épargne */
 .simbtn{display:flex;align-items:center;gap:14px;border:0;text-align:left;cursor:pointer;color:var(--ink);width:100%}
 .simbtn:hover{background:var(--hov)}
+.simbtn .rs{white-space:normal}
 @media (max-width:600px){.budnew{min-height:56px!important;padding:12px!important}.sbar,.mavs{display:none!important}.sbra{width:auto!important}.ltot{grid-template-columns:1fr 1fr!important}}
+/* Onglet Épargne */
+.savhero{flex:none;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px 36px;align-items:center}
+.sh-l,.sh-r{display:flex;flex-direction:column;gap:10px;position:relative}
+.savhero .v{font-size:46px}
+.sh-meta{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--sav-t)}
+.sh-meta b{color:#fff}
+.sleg{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px}
+.sleg span{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sav-t);min-width:0}
+.sleg i{width:9px;height:9px;border-radius:3px;background:var(--c);flex-shrink:0}
+.sleg em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.sleg b{color:#fff;font-weight:700}.sleg small{width:34px;text-align:right;opacity:.8}
+.savgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+.scard{display:flex;flex-direction:column;gap:2px}
+.srow2{display:flex;align-items:center;gap:8px;border-radius:12px}
+.srow2 .rowb{flex:1;min-width:0}
+.srow2 .rowb>b{margin-left:auto;font-size:15px;white-space:nowrap;padding-left:8px}
+.srow2.off .rowb>b{color:var(--mute);text-decoration:line-through}
+.sfoot{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);margin-top:8px;padding:12px 8px 0;font-size:13px;color:var(--mute)}
+.sfoot b{color:var(--ink);font-size:15px}
+.swi{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-size:10.5px;color:var(--mute);font-weight:600;padding-right:6px;flex-shrink:0}
+.swi input{position:absolute;opacity:0;pointer-events:none}
+.swi i{width:36px;height:20px;border-radius:20px;background:var(--line);position:relative;transition:.15s}
+.swi i::after{content:'';position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:.15s}
+.swi input:checked+i{background:var(--ok)}.swi input:checked+i::after{left:18px}
+.swi input:focus-visible+i{outline:2px solid var(--acc);outline-offset:2px}
+@media (max-width:900px){.savhero,.savgrid{grid-template-columns:minmax(0,1fr)}.savhero .v{font-size:40px}}
+@media (max-width:420px){.sleg{grid-template-columns:1fr}}
 /* Objectifs, devises */
 .goals{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .goal{border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
@@ -1702,7 +1730,8 @@ function vBudgets() {
       ${done.length ? (sel || UI.showPaid ? done.map(line).join('') : `<button class="row rowb" data-a="showpaid" style="color:var(--mute)"><span class="ico" style="--c:#10B981">${svg('check')}</span><span class="rt"><span class="rn">${done.length} charge${done.length > 1 ? 's' : ''} payée${done.length > 1 ? 's' : ''}</span><span class="rs">Afficher le détail</span></span><span class="ra num" style="color:var(--ok)">✓ ${eur(paidTot)}</span></button>`) : ''}
       ${!fixed.length ? '<p class="empty">Aucune charge fixe ce mois-ci.</p>' : ''}
     </div>
-  </section>`;
+  </section>
+  ${loansHTML()}`;
 }
 
 
@@ -1740,53 +1769,61 @@ const savIncluded = id => U.savIncl[id] !== false;
 function vEpargne() {
   const V = $('v-epargne'), A = accs(), p = sv(), m = month(nowK());
   const SB = savBankIds(), simple = sum(A, a => aBal(a)), bankInc = sum(SB.filter(savIncluded), id => num(ACC[id].summary?.current));
-  const tot = simple + bankInc;
-  const goalSim = svSim(Object.assign({}, p, { capital: tot || p.capital, years: 60 }), num(p.rate));
-  const gp = num(p.goal) > 0 ? Math.min(100, pct(tot || p.capital, p.goal)) : 0;
-  const eta = num(p.goal) > 0 ? ((tot || p.capital) >= num(p.goal) ? 'Objectif atteint' : goalSim.gm ? (() => { const d = new Date(); d.setMonth(d.getMonth() + goalSim.gm); return 'Atteint vers ' + MS[d.getMonth()] + ' ' + d.getFullYear() + ' au rythme simulé'; })() : 'Non atteint en 60 ans au rythme simulé') : '';
+  const tot = simple + bankInc, it = sum(A, a => aBal(a) * num(a.rate) / 100);
+  const G = goals(), gs = sum(G, g => num(g.saved)), gt = sum(G, g => num(g.target));
   const keys = [...new Set(A.flatMap(a => Object.keys(a.hist || {})))].sort();
-  const rows = A.map(a => {
-    const [col, ic] = AT[a.type] || AT.Autre, b = aBal(a), lk = aLast(a);
-    return `<div class="row"><button class="rowb" data-a="sav-acc" data-id="${a.id}"><span class="ico" style="--c:${col}">${svg(ic)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(a.type)}${num(a.rate) ? ' · ' + String(num(a.rate)).replace('.', ',') + ' %' : ''}${lk ? ' · mis à jour ' + mshort(lk) : ''}</span></span>
-      <span class="bar sbar" style="width:110px;display:block"><i style="width:${tot > 0 ? b / tot * 100 : 0}%;--c:${col}"></i></span><span class="ra num" style="width:110px;text-align:right">${eur(b)}</span></button></div>`;
-  }).join('') || '<p class="empty">Ajoute tes livrets, PEA, assurance-vie… pour suivre ton épargne réelle.</p>';
-  const it = sum(A, a => aBal(a) * num(a.rate) / 100);
+  // Répartition de l'épargne totale
+  const BC = ['#38BDF8', '#FBBF24', '#F472B6', '#A3E635'];
+  const parts = SB.filter(savIncluded).map((id, i) => [ACC[id].name, num(ACC[id].summary?.current), BC[i % BC.length]])
+    .concat(A.map(a => [a.name, aBal(a), (AT[a.type] || AT.Autre)[0]])).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+  const top = parts.slice(0, 4), rest = sum(parts.slice(4), x => x[1]); if (rest > 0) top.push(['Autres', rest, '#94A3B8']);
+  const sim = svSim(p, num(p.rate));
+
+  const sbRows = SB.map(id => { const a = ACC[id], inc = savIncluded(id), mem = membersOf(id);
+    return `<div class="srow2${inc ? '' : ' off'}"><button class="rowb" data-a="acc-open" data-id="${id}"><span class="accbig">${accBadge(a, 20)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc([a.bank, mem.length > 1 ? 'partagé à ' + mem.length : ''].filter(Boolean).join(' · ') || 'Compte épargne')}</span></span><b class="num">${a.summary ? eur(a.summary.current) : '—'}</b></button>
+      <label class="swi" title="Compter ce compte dans mon épargne totale"><input type="checkbox" data-a="sav-incl" data-id="${id}" ${inc ? 'checked' : ''}><i></i><span>${inc ? 'Compté' : 'Ignoré'}</span></label></div>`; }).join('');
+  const saRows = A.map(a => { const [col, ic] = AT[a.type] || AT.Autre, lk = aLast(a);
+    return `<div class="srow2"><button class="rowb" data-a="sav-acc" data-id="${a.id}"><span class="ico" style="--c:${col}">${svg(ic)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc([a.type !== a.name ? a.type : '', num(a.rate) ? String(num(a.rate)).replace('.', ',') + ' %' : '', lk ? 'màj ' + mshort(lk) : ''].filter(Boolean).join(' · '))}</span></span><b class="num">${eur(aBal(a))}</b></button></div>`; }).join('');
 
   V.innerHTML = `
-  ${goalsHTML()}
-  <div class="grid2">
-    <section class="hero sav" aria-label="Épargne totale" style="flex:1 1 300px">
-      <div class="deco"><i style="right:-50px;top:-70px;width:220px;height:220px;background:var(--sav-2);opacity:.7"></i></div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <span class="t">Épargne totale ${tip('épargne totale', 'Épargne totale', 'Tes comptes d\'épargne simples + les comptes Épargne que tu as choisi d\'inclure.' + eq(A.map(a => [esc(a.name), eur(aBal(a))]).concat(SB.filter(savIncluded).map(id => [esc(ACC[id].name) + (isShared(id) ? ' (partagé)' : ''), eur(ACC[id].summary?.current)])), ['= Total', eur(tot)], it > 0 ? `Intérêts estimés sur un an (comptes simples) : ${eur(it)}.` : ''), 'dn rt')}</span>
-        <span class="v num" style="font-size:46px">${eur(tot)}</span>
-        <span class="s">Épargne prévue ce mois : <b class="num">${eur(num(m.savingGoal))}</b></span>
+  <section class="hero sav savhero" aria-label="Épargne totale">
+    <div class="deco"><i style="right:-50px;top:-70px;width:220px;height:220px;background:var(--sav-2);opacity:.6"></i></div>
+    <div class="sh-l">
+      <span class="t">Épargne totale ${tip('épargne totale', 'Épargne totale', 'Tes comptes d\'épargne simples + les comptes Épargne que tu as choisi de compter.' + eq(parts.map(x => [esc(x[0]), eur(x[1])]), ['= Total', eur(tot)]), 'dn rt')}</span>
+      <span class="v num">${eur(tot)}</span>
+      <div class="sh-meta">
+        <span>Prévue ce mois <b class="num">${eur(num(m.savingGoal))}</b> <button class="lnk" data-a="saving" style="color:inherit">modifier</button></span>
+        ${it > 0 ? `<span>Intérêts estimés <b class="num">≈ ${eur0(it)} / an</b></span>` : ''}
+        ${G.length ? `<span>Objectifs <b class="num">${eur0(gs)}</b> sur ${eur0(gt)}</span>` : ''}
       </div>
-      ${num(p.goal) > 0 ? `<div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sav-t)"><span>Objectif ${eur0(p.goal)}</span><b class="num" style="color:#fff">${Math.round(gp)} %</b></div>
-        <div class="hb"><i style="width:${gp}%"></i></div><span style="font-size:12px;color:var(--sav-t)">${eta}</span></div>` : ''}
-    </section>
-    <div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:20px">
-    <section class="card" aria-label="Comptes épargne bancaires" style="display:flex;flex-direction:column;gap:2px">
-      <div class="ch"><h2>Comptes Épargne ${tip('comptes épargne', 'Comptes Épargne', 'Les comptes du sélecteur dont le type est « Épargne » (Paramètres › Ce compte), partagés ou non. Leur solde se met à jour à chaque versement ou retrait. Coche ceux à compter dans ton épargne perso.', 'rt')}</h2><button class="btn sm" data-a="acc-new-sav">${svg('plus', 16)} Compte Épargne</button></div>
-      ${SB.map(id => { const a = ACC[id], inc = savIncluded(id), mem = membersOf(id);
-        return `<div class="row"><button class="rowb" data-a="acc-open" data-id="${id}"><span class="accbig">${accBadge(a, 20)}</span><span class="rt"><span class="rn">${esc(a.name)}</span><span class="rs">${esc(accSub(id))}</span></span>
-          ${mem.length > 1 ? `<span class="mavs" style="display:flex">${mem.map(x => `<span class="avatar" style="margin-left:-4px;box-shadow:0 0 0 2px var(--card)">${initials(x.email)}</span>`).join('')}</span>` : ''}
-          <span class="ra num sbra" style="width:110px;text-align:right;${inc ? '' : 'color:var(--mute);text-decoration:line-through'}">${a.summary ? eur(a.summary.current) : '—'}</span></button>
-          <label class="chk" style="min-height:0;font-size:12px;padding-right:8px" title="Compter ce compte dans mon épargne totale"><input type="checkbox" data-a="sav-incl" data-id="${id}" ${inc ? 'checked' : ''}>Inclure</label></div>`; }).join('')
-        || '<p class="empty" style="padding:14px">Aucun compte de type Épargne. Crée-en un, ou change le type d\'un compte existant dans Paramètres › Ce compte.</p>'}
-    </section>
-    <section class="card" aria-label="Mes comptes d'épargne simples" style="display:flex;flex-direction:column;gap:2px">
-      <div class="ch"><h2>Comptes d'épargne simples ${tip('comptes simples', 'Comptes simples', 'Un solde que tu mets à jour toi-même (Livret A, PEA, assurance-vie…). Personnels, visibles par toi seul.', 'rt')}</h2><div class="chips">${A.length ? '<button class="btn sm" data-a="sav-bal">Mettre à jour mes soldes</button>' : ''}<button class="btn sm" data-a="sav-new">${svg('plus', 16)} Compte d'épargne</button></div></div>
-      ${rows}
-    </section>
     </div>
+    <div class="sh-r">
+      ${tot > 0 ? `<span class="t" style="font-size:13px">Répartition</span>
+      <div class="stack" style="height:12px;background:rgba(255,255,255,.15)">${top.map(x => `<i style="flex:${x[1]};--c:${x[2]}"></i>`).join('')}</div>
+      <div class="sleg">${top.map(x => `<span><i style="--c:${x[2]}"></i><em>${esc(x[0])}</em><b class="num">${eur0(x[1])}</b><small>${Math.round(x[1] / tot * 100)} %</small></span>`).join('')}</div>`
+      : '<p style="color:var(--sav-t);font-size:14px;margin:0">Ajoute un compte d\'épargne ci-dessous pour suivre ton épargne.</p>'}
+    </div>
+  </section>
+
+  <div class="savgrid">
+    <section class="card scard" aria-label="Comptes Épargne">
+      <div class="ch"><h2>Comptes Épargne ${tip('comptes épargne', 'Comptes Épargne', 'Les comptes du sélecteur dont le type est « Épargne », partagés ou non. Leur solde suit les versements et retraits saisis dedans. « Compté / Ignoré » : choisis ceux qui entrent dans ton épargne totale (utile pour un compte joint).', 'rt')}</h2><button class="btn sm" data-a="acc-new-sav">${svg('plus', 16)} Ajouter</button></div>
+      ${sbRows || '<p class="empty">Un compte bancaire d\'épargne (Livret chez ta banque, compte joint épargne…) dont tu saisis les versements.</p>'}
+      ${SB.length ? `<div class="sfoot"><span>Total compté</span><b class="num">${eur(bankInc)}</b></div>` : ''}
+    </section>
+    <section class="card scard" aria-label="Comptes d'épargne simples">
+      <div class="ch"><h2>Comptes d'épargne simples ${tip('comptes simples', 'Comptes simples', 'Un solde que tu mets à jour toi-même de temps en temps (Livret A, PEA, assurance-vie…). Personnels, visibles par toi seul.', 'rt')}</h2><button class="btn sm" data-a="sav-new">${svg('plus', 16)} Ajouter</button></div>
+      ${saRows || '<p class="empty">Livret A, PEA, assurance-vie… : tu indiques juste le solde de temps en temps.</p>'}
+      ${A.length ? `<div class="sfoot"><button class="lnk" data-a="sav-bal">Mettre à jour mes soldes</button><b class="num">${eur(simple)}</b></div>` : ''}
+    </section>
   </div>
-  ${loansHTML()}
-  ${keys.length > 1 ? `<section class="card"><div class="ch"><h2>Évolution de mon épargne</h2></div><div class="cvh"><canvas id="c-acc"></canvas></div></section>` : ''}
-  ${!UI.simOpen ? `<button class="card simbtn" data-a="sim-open"><span class="ico" style="--c:#14B8A6">${svg('trend')}</span><span class="rt"><span class="rn">Simulateur d'épargne</span><span class="rs">Combien j'aurai dans 5, 10 ou 20 ans ?</span></span>${svg('right', 18)}</button>` : `<section class="card" aria-label="Simulateur d'épargne" style="display:flex;flex-wrap:wrap;gap:28px">
+
+  ${goalsHTML()}
+
+  ${!UI.simOpen ? `<button class="card simbtn" data-a="sim-open"><span class="ico" style="--c:#14B8A6">${svg('trend')}</span><span class="rt"><span class="rn">Simulateur d'épargne</span><span class="rs">${p.mode === 'pct' ? num(p.pct) + ' % du salaire' : eur0(sim.d1) + ' / mois'} à ${String(num(p.rate)).replace('.', ',')} % pendant ${Math.round(num(p.years))} ans → <b class="num" style="color:var(--ink)">${eur0(sim.cap)}</b></span></span><span class="btn sm">Ouvrir</span></button>`
+    : `<section class="card" aria-label="Simulateur d'épargne" style="display:flex;flex-wrap:wrap;gap:28px">
     <div style="flex:1 1 260px;display:flex;flex-direction:column;gap:16px">
-      <div class="ch" style="margin:0"><h2>Simulateur</h2><button class="lnk" data-a="sim-open">Fermer</button></div>
+      <div class="ch" style="margin:0"><h2>Simulateur</h2><button class="lnk" data-a="sim-open">Réduire</button></div>
       <div class="seg" role="group" aria-label="Mode de versement"><button class="${p.mode === 'fix' ? 'on' : ''}" data-a="svmode" data-v="fix">Montant fixe</button><button class="${p.mode === 'pct' ? 'on' : ''}" data-a="svmode" data-v="pct">% du salaire</button></div>
       ${p.mode === 'fix' ? svRange('monthly', 'Versement mensuel', 0, 2000, 10, ' €') : svRange('pct', 'Part du salaire épargnée', 0, 80, 1, ' %')}
       ${svRange('rate', 'Rendement annuel net', 0, 12, 0.1, ' %')}
@@ -1802,7 +1839,9 @@ function vEpargne() {
       <p class="note" style="font-size:12px">Simulation indicative : intérêts composés chaque mois, « prudent / dynamique » = rendement −2 / +2 points. Ce n'est pas un conseil financier.</p>
     </div>
     <div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:14px" id="sv-res"></div>
-  </section>`}`;
+  </section>`}
+
+  ${keys.length > 1 ? `<section class="card"><div class="ch"><h2>Évolution de mes comptes simples</h2></div><div class="cvh"><canvas id="c-acc"></canvas></div></section>` : ''}`;
   if (UI.simOpen) svResults();
   if (keys.length > 1) chart('c-acc', { type: 'bar', data: { labels: keys.map(mshort), datasets: A.map(a => ({ label: a.name, data: keys.map(k => aBal(a, k)), backgroundColor: (AT[a.type] || AT.Autre)[0], borderRadius: 4 })) },
     options: chartOpts({ scales: { x: { stacked: true, ticks: { color: cssv('--mute') }, grid: { display: false } }, y: { stacked: true, ticks: { color: cssv('--mute'), callback: v => Math.round(v).toLocaleString('fr-FR') + ' €' }, grid: { color: cssv('--line') }, border: { display: false } } } }) });
@@ -2470,7 +2509,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '13 oct. · v7';
+const APP_VERSION = '13 oct. · v8';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
