@@ -9,13 +9,13 @@
 function applyTheme(t){try{t=t||localStorage.getItem('theme')||'auto'}catch(e){t='auto'}var r=document.documentElement;if(t==='auto')r.removeAttribute('data-theme');else r.setAttribute('data-theme',t);
 var dk=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.querySelectorAll('meta[name=theme-color]').forEach(function(m){m.setAttribute('content',dk?'#0D1020':'#F3F4F8');m.removeAttribute('media')});}
 applyTheme();try{if(localStorage.getItem('mode')==='simple')document.documentElement.classList.add('simple')}catch(e){}</script>
-<title>Budget</title>
+<title>Suivi dépenses</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Budget">
+<meta name="apple-mobile-web-app-title" content="Suivi dépenses">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="format-detection" content="telephone=no">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -372,7 +372,7 @@ html.simple .row .rn{font-size:15px}
 <!-- ===================== CONNEXION ===================== -->
 <div id="auth-screen" class="auth" hidden>
   <div class="card">
-    <div class="brand"><i><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></i>Budget</div>
+    <div class="brand"><i style="background:linear-gradient(#3B82F6,#1D4ED8)"><svg width="30" height="30" viewBox="8 8 104 104" aria-hidden="true"><ellipse cx="60" cy="66" rx="32" ry="25" fill="#fff"/><circle cx="84" cy="62" r="3" fill="#1D4ED8"/><rect x="50" y="44" width="18" height="5" rx="2.5" fill="#1D4ED8"/><path d="M36 50 l-4 -12 l12 6z" fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><rect x="40" y="84" width="9" height="12" rx="3" fill="#fff"/><rect x="70" y="84" width="9" height="12" rx="3" fill="#fff"/><ellipse cx="93" cy="68" rx="6" ry="5" fill="#fff"/><circle cx="60" cy="28" r="9" fill="#FDE68A"/></svg></i>Suivi dépenses</div>
     <h1 id="auth-title">Connexion</h1>
     <input type="email" id="auth-email" class="in" placeholder="Adresse email" aria-label="Adresse email" autocomplete="email">
     <input type="password" id="auth-pass" class="in" placeholder="Mot de passe" aria-label="Mot de passe" autocomplete="current-password">
@@ -389,7 +389,7 @@ html.simple .row .rn{font-size:15px}
 <!-- ===================== APPLICATION ===================== -->
 <div class="app" id="app" hidden>
   <nav class="side" aria-label="Navigation principale">
-    <div class="brand"><i><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></i>Budget</div>
+    <div class="brand"><i style="background:linear-gradient(#3B82F6,#1D4ED8)"><svg width="30" height="30" viewBox="8 8 104 104" aria-hidden="true"><ellipse cx="60" cy="66" rx="32" ry="25" fill="#fff"/><circle cx="84" cy="62" r="3" fill="#1D4ED8"/><rect x="50" y="44" width="18" height="5" rx="2.5" fill="#1D4ED8"/><path d="M36 50 l-4 -12 l12 6z" fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><rect x="40" y="84" width="9" height="12" rx="3" fill="#fff"/><rect x="70" y="84" width="9" height="12" rx="3" fill="#fff"/><ellipse cx="93" cy="68" rx="6" ry="5" fill="#fff"/><circle cx="60" cy="28" r="9" fill="#FDE68A"/></svg></i>Suivi dépenses</div>
     <div class="accsw-slot side-sw"></div>
     <div id="navlist" style="display:contents"></div>
     <div class="who" id="who"></div>
@@ -2408,7 +2408,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '13 oct. · v4';
+const APP_VERSION = '13 oct. · v5';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2418,11 +2418,11 @@ if ('serviceWorker' in navigator && window.isSecureContext) addEventListener('lo
 function installHTML() {
   let body;
   if (standalone()) body = '<p class="note"><b style="color:var(--ok)">✓ Tu utilises l\'application installée.</b> Elle se met à jour toute seule à chaque ouverture.</p>';
-  else if (installEvt) body = '<p class="note">Ajoute Budget à ton ordinateur ou ton téléphone : une icône, sa propre fenêtre, sans barre d\'adresse.</p><button class="btn p" data-a="install">Installer l\'application</button>';
+  else if (installEvt) body = '<p class="note">Ajoute Suivi dépenses à ton ordinateur ou ton téléphone : une icône, sa propre fenêtre, sans barre d\'adresse.</p><button class="btn p" data-a="install">Installer l\'application</button>';
   else if (isIOS()) body = `<p class="note">Sur iPhone, l'installation se fait depuis <b>Safari</b> :</p>
-      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px"><li>Touche le bouton <b>Partager</b> <span style="display:inline-block;vertical-align:-3px">${'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>'}</span> en bas de l'écran</li><li>Fais défiler et choisis <b>« Sur l'écran d'accueil »</b></li><li>Touche <b>Ajouter</b>, puis ouvre Budget depuis son icône</li></ol>
+      <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px"><li>Touche le bouton <b>Partager</b> <span style="display:inline-block;vertical-align:-3px">${'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>'}</span> en bas de l'écran</li><li>Fais défiler et choisis <b>« Sur l'écran d'accueil »</b></li><li>Touche <b>Ajouter</b>, puis ouvre Suivi dépenses depuis son icône</li></ol>
       <p class="note" style="font-size:12px">Tu devras te reconnecter une fois dans l'application.</p>`;
-  else body = '<p class="note">Dans <b>Chrome</b> ou <b>Edge</b> : clique sur l\'icône d\'installation à droite de la barre d\'adresse (un écran avec une flèche), ou menu ⋮ › <b>Installer Budget</b> (Edge : ⋯ › Applications › Installer).</p>';
+  else body = '<p class="note">Dans <b>Chrome</b> ou <b>Edge</b> : clique sur l\'icône d\'installation à droite de la barre d\'adresse (un écran avec une flèche), ou menu ⋮ › <b>Installer Suivi dépenses</b> (Edge : ⋯ › Applications › Installer).</p>';
   let th = 'auto'; try { th = localStorage.getItem('theme') || 'auto'; } catch (e) {}
   const tb = (v, l) => `<button class="${th === v ? 'on' : ''}" data-a="theme" data-v="${v}">${l}</button>`;
   return `<section class="card" style="flex:1 1 300px;display:flex;flex-direction:column;gap:10px"><h2>Application</h2>

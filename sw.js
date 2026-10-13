@@ -1,8 +1,8 @@
-/* Budget — service worker : l'app s'ouvre vite et même sans réseau.
+/* Suivi dépenses — service worker : l'app s'ouvre vite et même sans réseau.
    • La page (index.html) : réseau d'abord → toujours la dernière version publiée ; copie de secours hors ligne.
    • Bibliothèques (Firebase, Chart.js, polices) et icônes : copie locale d'abord (leurs adresses ont un numéro de version).
    • Les données (Firestore, connexion) ne passent PAS par ici : Firebase gère lui-même le hors-ligne. */
-const V = 'budget-v2';
+const V = 'budget-v3';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 const LIBS = /^https:\/\/(www\.gstatic\.com\/firebasejs\/|cdn\.jsdelivr\.net\/npm\/|fonts\.googleapis\.com\/|fonts\.gstatic\.com\/)/;
 
