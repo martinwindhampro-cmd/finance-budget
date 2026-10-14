@@ -2581,7 +2581,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v13';
+const APP_VERSION = '14 oct. · v14';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3031,7 +3031,6 @@ function debtsHTML(compact) {
     <div class="ch"><h2>Remboursements ${compact ? '' : tip('remboursements', 'Remboursements', '<b>À recevoir</b> : de l\'argent que « ' + esc(accName()) + ' » a avancé et qu\'on lui rembourse.<br><b>À rembourser</b> : ce que ce compte doit rendre.<br>Avec une personne connectée, l\'avance est partagée : vous voyez tous les deux le reste à jour.', 'rt')}</h2>${compact ? '' : `<button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button>`}</div>
     ${IN.length ? part(IN, 'in') : ''}${OUT.length ? part(OUT, 'out') : ''}
     ${!IN.length && !OUT.length ? '<p class="empty">Quelqu\'un a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le : chaque remboursement met à jour le reste, des deux côtés.</p>' : ''}
-    ${compact ? '' : otherDebtsHTML(A)}
   </section>`;
 }
 function otherDebtsHTML(A) {
@@ -3042,6 +3041,22 @@ function otherDebtsHTML(A) {
 }
 
 /* ---------- Création / modification ---------- */
+async function dirOf(email) { try { const s = await db.collection('directory').doc(email).get(); return s.exists ? s.data() : null; } catch (e) { return null; } }
+// Sous un menu « personne », ajoute le choix de SON compte (lu dans son annuaire, visible car vous êtes connectés)
+function personAccPicker(selId, label, getPerson, current) {
+  const sel = $(selId); if (!sel) return;
+  const box = document.createElement('div'); box.className = 'fl'; sel.closest('label').after(box);
+  const upd = async () => {
+    const p = getPerson(); if (!p || p.kind !== 'user' || mine(p.uid)) { box.innerHTML = ''; return; }
+    box.innerHTML = `<span>${label(p)}</span><p class="note" style="font-size:12px">Chargement de ses comptes…</p>`;
+    const D = await dirOf(p.email), L = (D?.accounts || []);
+    if (!L.length) { box.innerHTML = `<span>${label(p)}</span><p class="note" style="font-size:12px">Ses comptes ne sont pas visibles : il faut qu'elle ouvre l'app à jour (et que vous soyez connectés). En attendant, ce sera son compte par défaut.</p>`; return; }
+    const cur = L.some(a => a.id === current) ? current : D.recv;
+    box.innerHTML = `<label class="fl">${label(p)}<select class="in" id="${selId}-acc">${L.map(a => `<option value="${esc(a.id)}" ${a.id === cur ? 'selected' : ''}>${esc(a.name)}${a.bank ? ' · ' + esc(a.bank) : ''}</option>`).join('')}</select></label>`;
+  };
+  sel.addEventListener('change', upd); upd();
+}
+const pickedAcc = selId => { const s = $(selId + '-acc'); return s ? { acc: s.value, accName: s.options[s.selectedIndex]?.text.split(' · ')[0] || '' } : {}; };
 const allAccs = () => accIds.filter(a => ACC[a]);
 function partyOptions() {      // [libellé, valeur] : mes comptes, puis les personnes connectées
   return allAccs().map(a => [ACC[a].name + (a === active ? ' (ce compte)' : ''), { kind: 'acc', acc: a, accName: ACC[a].name }])
@@ -3062,13 +3077,15 @@ function debtDialog(id, preset) {
     onSave: r => {
       if (!r.name) { toast('Indique pour quoi'); return false; }
       if (!(r.amount > 0)) { toast('Indique le montant avancé'); return false; }
-      const lender = (O.find(o => o[0] === r.lend) || [])[1], borrower = r.borr === TXT ? { kind: 'text', who: r.who } : (O.find(o => o[0] === r.borr) || [])[1];
+      let lender = (O.find(o => o[0] === r.lend) || [])[1]; if (lender?.kind === 'user') lender = Object.assign({}, lender, pickedAcc('f_lend'));
+      const borrower = r.borr === TXT ? { kind: 'text', who: r.who } : (O.find(o => o[0] === r.borr) || [])[1];
       if (!lender) { toast('Choisis qui a avancé'); return false; }
       if (sameParty(lender, borrower)) { toast('Ce ne peut pas être la même personne / le même compte'); return false; }
       const base = { name: r.name, amount: r.amount, lender, borrower, emo: v.emo || '💸' };
       if (d) { updateDebt(e, x => Object.assign(x, base)).then(() => toast('Avance modifiée')).catch(er => toast('⚠ ' + (er.code || er.message))); return; }
       createDebt(Object.assign(base, { id: uid(), at: Date.now(), payments: (preset && preset.payments) || [] }), preset?.fromGoal);
     } });
+  personAccPicker('f_lend', p => 'Sur quel compte de ' + esc(shortName(p.email)) + ' la rembourser ?', () => (O.find(o => o[0] === $('f_lend').value) || [])[1], L0.acc);
 }
 async function createDebt(d, fromGoal) {
   const other = [d.lender, d.borrower].find(s => s.kind === 'user');
@@ -3103,8 +3120,10 @@ function sharedEditDialog(e) {
     onSave: r => {
       if (!r.name || !(r.amount > 0)) { toast('Nom et montant obligatoires'); return false; }
       const acc = A.find(a => ACC[a].name === r.acc);
-      updateDebt(e, x => { x.name = r.name; x.amount = r.amount; const s = iL ? x.lender : x.borrower; s.acc = acc; s.accName = ACC[acc]?.name || ''; }).then(() => toast('Avance modifiée'));
+      const her = !iL ? pickedAcc('f_acc') : {};
+      updateDebt(e, x => { x.name = r.name; x.amount = r.amount; const s = iL ? x.lender : x.borrower; s.acc = acc; s.accName = ACC[acc]?.name || ''; if (her.acc) Object.assign(x.lender, her); }).then(() => toast('Avance modifiée'));
     } });
+  if (!iL) personAccPicker('f_acc', p => 'Sur quel compte de ' + esc(shortName(p.email)) + ' la rembourser ?', () => lenderOf(d), lenderOf(d).acc);
 }
 
 /* ---------- Fiche d'une avance ---------- */
