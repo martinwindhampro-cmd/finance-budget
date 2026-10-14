@@ -444,6 +444,7 @@ html.simple .tools [data-a=new]{display:none}
 .simple-p{gap:18px}
 .simple-p .fl{font-size:15px}
 .modeopt{border:1px solid var(--line);padding:14px}
+.modeopt .rn{white-space:normal}
 html.simple .tools .btn span{display:inline}
 html.simple .nav{font-size:13px;min-height:58px}
 html.simple .row .rn{font-size:15px}
@@ -1190,7 +1191,7 @@ function syncActivity() {
 function unreadCount() {
   const seen = USER?.seen || {}, me = currentUser?.uid;
   const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
-  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
+  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
 }
 function markSeen() {
   const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
@@ -2581,7 +2582,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v14';
+const APP_VERSION = '14 oct. · v15';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2975,7 +2976,8 @@ function debtInfo(d) {
 function pdebtListen() {
   return db.collection('pdebts').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
     PDEBTS = q.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (loaded && ['budgets', 'accueil'].includes(UI.view)) render();
+    processDebtReqs();
+    if (loaded) { renderChrome(); if (['budgets', 'accueil', 'messages'].includes(UI.view)) render(); }
   }, e => console.warn('Remboursements partagés', e.code));
 }
 // Ancien format (v11-v12) : to = compte qui a avancé, who = texte
@@ -2985,7 +2987,7 @@ const borrowerOf = d => d.borrower || { kind: 'text', who: d.who || '' };
 function allDebts() {
   const out = [];
   accIds.filter(a => ACC[a]).forEach(a => { const L = a === active ? debts() : ((J(ACC[a].meta) || {}).debts || []); L.forEach(d => out.push({ d, home: { acc: a } })); });
-  PDEBTS.forEach(d => out.push({ d, home: { shared: d.id } }));
+  PDEBTS.filter(d => !d.closed).forEach(d => out.push({ d, home: { shared: d.id } }));
   return out;
 }
 const findDebt = id => allDebts().find(x => x.d.id === id);
@@ -3016,7 +3018,7 @@ function debtRowHTML(e, role) {
   const who = sideLabel(other); const col = role === 'in' ? '#10B981' : '#F59E0B';
   return `<button class="drow${i.done ? ' done' : ''}" data-a="debt-open" data-id="${d.id}">
     <span class="gemo">${i.done ? '✅' : esc(d.emo || '💸')}</span>
-    <span class="rt"><span class="rn">${esc(d.name)}${who ? ` <span class="note" style="font-weight:500">· ${role === 'in' ? 'par ' : 'à '}${esc(who)}</span>` : ''}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${e.home.shared ? ' · 🤝 partagé' : ''}</span>
+    <span class="rt"><span class="rn">${esc(d.name)}${who ? ` <span class="note" style="font-weight:500">· ${role === 'in' ? 'par ' : 'à '}${esc(who)}</span>` : ''}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${e.home.shared ? ' · 🤝 partagé' : ''}${(d.reqs || []).some(q => q.status === 'pending') ? ' · <b style="color:var(--warn)">⏳ suppression demandée</b>' : ''}</span>
       <span class="bar" style="display:block;margin-top:6px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : col}"></i></span></span>
     <b class="num dpct">${Math.round(i.p)} %</b></button>`;
 }
@@ -3073,7 +3075,7 @@ function debtDialog(id, preset) {
       { id: 'lend', label: 'Qui a avancé l\'argent ? (à recevoir)', type: 'select', options: O.map(o => o[0]), value: lab(L0) || O[0][0] },
       { id: 'borr', label: 'Qui rembourse ? (à rembourser)', type: 'select', options: O.map(o => o[0]).concat([TXT]), value: lab(B0) || TXT },
       { id: 'who', label: 'Son nom (si « quelqu\'un d\'autre »)', value: B0.kind === 'text' ? B0.who : '', ph: 'ex. Julie, nous deux…' }],
-    onDelete: d ? () => { if (!confirm('Supprimer cette avance ? Les mouvements de remboursement déjà créés restent dans les comptes.')) return; removeDebt(e); } : null,
+    onDelete: d ? () => removeDebt(e) : null,
     onSave: r => {
       if (!r.name) { toast('Indique pour quoi'); return false; }
       if (!(r.amount > 0)) { toast('Indique le montant avancé'); return false; }
@@ -3105,10 +3107,91 @@ async function createDebt(d, fromGoal) {
     setTimeout(() => debtView(d.id), 400);
   } catch (er) { toast('⚠ Avance non enregistrée (' + (er.code || er.message) + ')'); }
 }
-function removeDebt(e) {
-  if (e.home.acc === active) return mutate(() => { S.debts = debts().filter(x => x.id !== e.d.id); }, 'Avance supprimée');
-  if (e.home.acc) return db.runTransaction(async tx => { const ref = accDoc(e.home.acc), s = await tx.get(ref), o = J(s.data().meta) || {}; o.debts = (o.debts || []).filter(x => x.id !== e.d.id); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); }).then(() => toast('Avance supprimée'));
-  return db.collection('pdebts').doc(e.home.shared).delete().then(() => toast('Avance supprimée')).catch(er => toast('⚠ ' + (er.code || er.message)));
+// ---- Suppression : choix de garder ou non les mouvements, accord des deux pour une avance partagée
+const payHasMov = p => !!(p.inc || p.exp || p.xid);
+function askDeleteMode(what, hasMov, shared) {
+  return new Promise(res => {
+    const d = $('dlg'); d.onclick = null; let done = false; const end = v => { if (done) return; done = true; d.close(); res(v); };
+    d.innerHTML = `<div class="dw"><div class="dh"><h2>Supprimer ${esc(what)} ?</h2><button class="ib sm" data-x aria-label="Annuler">${svg('x', 16, 2.4)}</button></div>
+      ${hasMov ? `<p class="note">Des virements / recettes ont déjà été enregistrés pour ces remboursements. Que veux-tu en faire ?</p>
+      <button class="row rowb modeopt" data-m="keep"><span class="ico" style="--c:#10B981">${svg('check')}</span><span class="rt"><span class="rn">Garder les mouvements</span><span class="rs" style="white-space:normal">L'argent déjà remboursé reste dans les comptes. Il n'y a simplement plus rien à rembourser.</span></span></button>
+      <button class="row rowb modeopt" data-m="all"><span class="ico" style="--c:#E11D48">${svg('trash')}</span><span class="rt"><span class="rn">Supprimer aussi les mouvements</span><span class="rs" style="white-space:normal">Les virements et recettes créés par ces remboursements sont retirés des comptes${shared ? ', des deux côtés' : ''}.</span></span></button>`
+      : `<p class="note">Aucun mouvement n'a été enregistré pour ${esc(what)}.</p><button class="btn danger big" data-m="all">Supprimer</button>`}
+      ${shared ? `<p class="note" style="font-size:12px">🤝 Avance partagée : la suppression sera faite quand l'autre personne aura accepté.</p>` : ''}
+      <button class="btn" data-x>Annuler</button></div>`;
+    d.onclick = e => { if (e.target.closest('[data-x]')) return end(null); const b = e.target.closest('[data-m]'); if (b) end(b.dataset.m); };
+    d.showModal();
+  });
+}
+// Retire de MES comptes les mouvements liés à un remboursement (recette, virement sortant, virement reçu)
+async function cleanMovs(p) {
+  const hit = x => (p.inc && x.id === p.inc) || (p.exp && x.id === p.exp) || (p.xid && x.xfer && x.xfer.id === p.xid);
+  const drop = m => { m.incomes = m.incomes.filter(x => !hit(x)); m.expenses = m.expenses.filter(x => !hit(x)); };
+  const jobs = accIds.filter(a => ACC[a]).map(async a => {
+    if (a === active) { const m = S.months[p.k]; if (m && [...m.incomes, ...m.expenses].some(hit)) mutate(() => drop(month(p.k)), false); return; }
+    const s = await monthCol(a).doc(p.k).get().catch(() => null); if (!s || !s.exists) return;
+    const m = JSON.parse(s.data().data); if ([...m.incomes, ...m.expenses].some(hit)) await txMonth(a, p.k, drop);
+  });
+  if (p.toUser && p.xid && xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).delete());
+  await Promise.allSettled(jobs);
+}
+// Prévenir les autres membres d'un compte partagé (messagerie)
+function warnMembers(e, text) {
+  const accs = [...new Set([e.home.acc, lenderOf(e.d, e.home.acc).acc, borrowerOf(e.d).acc].filter(a => a && ACC[a] && isShared(a)))];
+  accs.forEach(a => accDoc(a).collection('activity').add({ by: currentUser.uid, byEmail: currentUser.email, text: String(text).slice(0, 200), at: Date.now(), month: nowK() }).catch(() => {}));
+}
+async function removeDebt(e) {
+  const d = e.d, shared = !!e.home.shared, mode = await askDeleteMode('« ' + d.name + ' »', (d.payments || []).some(payHasMov), shared); if (!mode) return;
+  if (shared) return debtRequest(e, { type: 'debt', mode });
+  if (mode === 'all') for (const p of d.payments || []) await cleanMovs(p);
+  const drop = () => { S.debts = debts().filter(x => x.id !== d.id); };
+  if (e.home.acc === active) mutate(drop, false);
+  else await db.runTransaction(async tx => { const ref = accDoc(e.home.acc), s = await tx.get(ref), o = J(s.data().meta) || {}; o.debts = (o.debts || []).filter(x => x.id !== d.id); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); });
+  const txt = 'a supprimé l\'avance « ' + d.name + ' »' + (mode === 'keep' ? ' (mouvements gardés)' : ' et ses mouvements');
+  warnMembers(e, txt.charAt(0).toUpperCase() + txt.slice(1)); toast('Avance supprimée' + (mode === 'keep' ? ' · mouvements gardés' : '')); render();
+}
+// ---- Avance partagée : demande à l'autre personne, puis chacun nettoie ses propres comptes
+async function debtRequest(e, r) {
+  const other = e.d.members.find(u => !mine(u)), req = Object.assign({ id: uid(), by: currentUser.uid, at: Date.now(), status: 'pending', done: {} }, r);
+  await updateDebt(e, x => { x.reqs = (x.reqs || []).filter(q => !(q.status === 'pending' && q.by === currentUser.uid && q.type === r.type && q.pid === r.pid)); x.reqs.push(req); });
+  toast('Demande envoyée à ' + shortName(e.d.emails?.[other]) + ' : en attente de son accord');
+}
+function debtAnswer(id, rid, ok) {
+  const e = findDebt(id) || (PDEBTS.find(d => d.id === id) && { d: PDEBTS.find(d => d.id === id), home: { shared: id } }); if (!e) return;
+  return updateDebt(e, x => {
+    const q = (x.reqs || []).find(z => z.id === rid); if (!q || q.status !== 'pending') return;
+    q.status = ok ? 'approved' : 'declined'; q.answeredAt = Date.now();
+    if (ok && q.type === 'pay') { q.pay = (x.payments || []).find(p => p.id === q.pid) || null; x.payments = (x.payments || []).filter(p => p.id !== q.pid); }
+    if (ok && q.type === 'debt') { q.pays = x.payments || []; x.closed = true; }
+  }).then(() => toast(ok ? 'Suppression acceptée' : 'Suppression refusée'));
+}
+const reqText = (d, q) => (q.type === 'debt' ? 'supprimer l\'avance « ' + d.name + ' »' : 'supprimer un remboursement de « ' + d.name + ' » (' + eur(num((d.payments || []).find(p => p.id === q.pid)?.amount || q.pay?.amount)) + ')') + (q.mode === 'keep' ? ', en gardant les mouvements' : ', avec ses mouvements');
+const pendingForMe = () => PDEBTS.flatMap(d => (d.reqs || []).filter(q => q.status === 'pending' && !mine(q.by)).map(q => ({ d, q })));
+let reqSeen = new Set(), reqBusy = new Set();
+async function processDebtReqs() {
+  for (const d of PDEBTS) for (const q of d.reqs || []) {
+    const key = d.id + q.id;
+    if (q.status === 'pending' && !mine(q.by) && !reqSeen.has(key)) { reqSeen.add(key); if (loaded) { toast('🤝 ' + shortName(d.emails?.[q.by]) + ' demande de ' + reqText(d, q)); browserNotify('Demande de suppression', shortName(d.emails?.[q.by]) + ' : ' + reqText(d, q)); } }
+    if (q.status === 'declined' && mine(q.by) && !reqBusy.has(key)) { reqBusy.add(key); toast(shortName(d.emails?.[d.members.find(u => !mine(u))]) + ' a refusé de ' + reqText(d, q)); updateDebt({ d, home: { shared: d.id } }, x => { x.reqs = (x.reqs || []).filter(z => z.id !== q.id); }).catch(() => {}); }
+    if (q.status === 'approved' && !(q.done || {})[currentUser.uid] && !reqBusy.has(key)) {
+      reqBusy.add(key);
+      try {
+        if (q.mode === 'all') for (const p of (q.type === 'debt' ? q.pays || [] : [q.pay].filter(Boolean))) await cleanMovs(p);
+        if (mine(q.by)) toast('✓ Suppression acceptée : ' + reqText(d, q));
+        let gone = false;                                               // le dernier des deux à avoir nettoyé ses comptes efface l'avance
+        await updateDebt({ d, home: { shared: d.id } }, x => { const z = (x.reqs || []).find(r => r.id === q.id); if (!z) return; z.done = Object.assign({}, z.done, { [currentUser.uid]: true });
+          const all = x.members.every(u => z.done[u]); if (all && q.type === 'pay') x.reqs = x.reqs.filter(r => r.id !== q.id); gone = all && q.type === 'debt'; });
+        if (gone) await db.collection('pdebts').doc(d.id).delete();
+      } catch (er) { reqBusy.delete(key); console.warn('Suppression', er); }
+    }
+  }
+}
+function debtReqsMsgHTML() {
+  const L = pendingForMe(); if (!L.length) return '';
+  return `<section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Demandes de suppression</h2>
+    ${L.map(({ d, q }) => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="gemo">${esc(d.emo || '💸')}</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(shortName(d.emails?.[q.by]))}</b> veut ${esc(reqText(d, q))}</span><span class="rs">Avance partagée · ${ago(q.at)}</span></span>
+      <span class="chips"><button class="btn sm p" data-a="dreq-yes" data-id="${d.id}" data-r="${q.id}">Accepter</button><button class="btn sm" data-a="dreq-no" data-id="${d.id}" data-r="${q.id}">Refuser</button></span></div>`).join('')}
+  </section>`;
 }
 // Avance partagée : chacun règle son propre compte (où il reçoit / d'où il rembourse)
 function sharedEditDialog(e) {
@@ -3116,7 +3199,7 @@ function sharedEditDialog(e) {
   formDialog({ title: 'Modifier · ' + d.name, intro: 'Avance partagée avec ' + shortName((iL ? borrowerOf(d) : lenderOf(d)).email) + '.',
     fields: [{ id: 'name', label: 'Pour quoi ?', value: d.name }, { id: 'amount', label: 'Montant avancé', type: 'num', value: d.amount },
       { id: 'acc', label: iL ? 'Sur quel compte je reçois les remboursements ?' : 'Depuis quel compte je rembourse ?', type: 'select', options: A.map(a => ACC[a].name), value: ACC[me.acc]?.name || ACC[recvAccount()]?.name }],
-    onDelete: () => { if (confirm('Supprimer cette avance pour vous deux ? Les mouvements déjà créés restent.')) removeDebt(e); },
+    onDelete: () => removeDebt(e),
     onSave: r => {
       if (!r.name || !(r.amount > 0)) { toast('Nom et montant obligatoires'); return false; }
       const acc = A.find(a => ACC[a].name === r.acc);
@@ -3135,6 +3218,8 @@ function debtView(id) {
     <div class="dwho"><span><small>A avancé</small><b>${esc(sideLabel(L) || '—')}</b></span>${svg('right', 16)}<span><small>Rembourse</small><b>${esc(sideLabel(B) || '—')}</b></span></div>
     <div class="dbig"><span class="note">${i.done ? 'Tout est remboursé 🎉' : 'Reste à rembourser'}</span><b class="num">${eur(i.left)}</b><span class="note">sur ${eur(i.t)} avancés · <b style="color:var(--ink)">${Math.round(i.p)} % remboursé</b></span>
       <span class="bar" style="display:block;height:10px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></div>
+    ${(d.reqs || []).filter(q => q.status === 'pending').map(q => mine(q.by) ? `<div class="alert"><span>⏳ En attente de l'accord de ${esc(shortName(d.emails?.[d.members.find(u => !mine(u))]))} pour ${esc(reqText(d, q))}.</span><button class="lnk" data-rq-cancel="${q.id}">Annuler</button></div>`
+      : `<div class="alert bad" style="flex-wrap:wrap"><span>${esc(shortName(d.emails?.[q.by]))} veut ${esc(reqText(d, q))}.</span><span class="chips"><button class="btn sm p" data-rq-yes="${q.id}">Accepter</button><button class="btn sm" data-rq-no="${q.id}">Refuser</button></span></div>`).join('')}
     ${i.done ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
       ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
@@ -3143,7 +3228,9 @@ function debtView(id) {
     if (ev.target.closest('[data-x]')) return dl.close();
     if (ev.target.closest('[data-ed]')) { dl.close(); return debtDialog(id); }
     if (ev.target.closest('[data-pay]')) { dl.close(); return payDialog(id); }
-    const del = ev.target.closest('[data-del]'); if (del && confirm('Supprimer ce remboursement ? Les mouvements créés seront retirés aussi.')) payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 300));
+    const del = ev.target.closest('[data-del]'); if (del) { dl.close(); return payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 400)); }
+    const ry = ev.target.closest('[data-rq-yes],[data-rq-no]'); if (ry) { const rid = ry.dataset.rqYes || ry.dataset.rqNo; debtAnswer(id, rid, !!ry.dataset.rqYes).then(() => setTimeout(() => { dl.close(); if (findDebt(id)) debtView(id); }, 400)); return; }
+    const rc = ev.target.closest('[data-rq-cancel]'); if (rc) { updateDebt(findDebt(id), x => { x.reqs = (x.reqs || []).filter(q => q.id !== rc.dataset.rqCancel); }).then(() => setTimeout(() => debtView(id), 300)); return; }
   };
   if (!dl.open) dl.showModal();
 }
@@ -3209,14 +3296,14 @@ async function payCreate(id, p) {
   toast(res.some(r => r.status === 'rejected') ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name);
   setTimeout(() => { const n = findDebt(id); if (n && debtInfo(n.d).done) toast('🎉 « ' + d.name + ' » est entièrement remboursé !'); debtView(id); }, 500);
 }
-function payDelete(id, pid) {
-  const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return Promise.resolve();
-  const jobs = [updateDebt(e, x => { x.payments = (x.payments || []).filter(z => z.id !== pid); })];
-  const to = p.to || (p.toUser ? '' : e.home.acc || active);         // anciens remboursements : arrivés sur le compte de l'avance
-  if (p.inc && ACC[to]) jobs.push(onAcc(to, p.k, m => { m.incomes = m.incomes.filter(x => x.id !== p.inc); }));
-  if (p.from && ACC[p.from]) jobs.push(onAcc(p.from, p.k, m => { m.expenses = m.expenses.filter(x => !(p.exp ? x.id === p.exp : x.xfer && x.xfer.id === p.xid)); }));
-  if (p.toUser && p.xid && xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).delete());
-  return Promise.allSettled(jobs).then(() => toast(p.toUser && xfStatus(p.xid) === 'received' ? 'Supprimé de ton côté (déjà reçu chez ' + shortName(p.toUser) + ')' : 'Remboursement supprimé'));
+async function payDelete(id, pid) {
+  const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
+  const mode = await askDeleteMode('ce remboursement de ' + eur(p.amount), payHasMov(p), !!e.home.shared); if (!mode) return;
+  if (e.home.shared) return debtRequest(e, { type: 'pay', pid, mode });
+  if (mode === 'all') await cleanMovs(Object.assign({}, p, { inc: p.inc, exp: p.exp }));
+  await updateDebt(e, x => { x.payments = (x.payments || []).filter(z => z.id !== pid); });
+  warnMembers(e, 'Remboursement de ' + eur(p.amount) + ' supprimé sur « ' + e.d.name + ' »' + (mode === 'keep' ? ' (mouvements gardés)' : ''));
+  toast('Remboursement supprimé' + (mode === 'keep' ? ' · mouvements gardés' : ''));
 }
 // Un « objectif » qui était en fait un remboursement → devient une avance
 function goalToDebt(g) {
@@ -3312,6 +3399,7 @@ function vMessages() {
   const notifBtn = window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
   V.innerHTML = `
   ${linksMsgHTML()}
+  ${debtReqsMsgHTML()}
   ${inv.length ? `<section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Invitations</h2>
     ${!ver ? `<div class="alert">${svg('mail')}<span>Pour accepter, confirme d'abord ton adresse email (sécurité : ça prouve que l'invitation t'est bien destinée).</span></div>
       <div class="chips"><button class="btn sm" data-a="verify-send">Recevoir l'email de confirmation</button><button class="btn sm" data-a="verify-check">J'ai confirmé</button></div>` : ''}
@@ -3428,6 +3516,7 @@ document.addEventListener('click', ev => {
     case 'link-no': return linkAnswer(id, false);
     case 'link-del': return linkRemove(id);
     case 'link-req': { const e = $('link-email'); return linkRequest(e?.value).then(() => { if (e) e.value = ''; }); }
+    case 'dreq-yes': case 'dreq-no': return debtAnswer(id, b.dataset.r, a === 'dreq-yes');
     case 'debt-new': return debtDialog(null);
     case 'debt-open': return debtView(id);
     case 'debt-goto': { const acc = b.dataset.acc; openAccount(acc); go('budgets'); setTimeout(() => debtView(id), 700); return; }
