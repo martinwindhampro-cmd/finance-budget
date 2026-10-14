@@ -405,6 +405,10 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .dhead .note{font-size:12px}
 .dwho{display:flex;align-items:center;justify-content:space-around;gap:10px;background:var(--soft);border-radius:14px;padding:10px;text-align:center}
 .dwho span{display:flex;flex-direction:column;gap:2px;min-width:0}.dwho small{color:var(--mute);font-size:11px}.dwho b{font-size:14px;overflow:hidden;text-overflow:ellipsis}
+.dopts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dopt{display:flex;align-items:flex-start;gap:8px;text-align:left;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:10px;color:var(--ink);cursor:pointer;font-size:16px}
+.dopt span{display:flex;flex-direction:column;gap:2px;min-width:0}.dopt b{font-size:13px}.dopt small{font-size:11.5px;color:var(--mute);line-height:1.3}
+@media (max-width:420px){.dopts{grid-template-columns:1fr}}
 .dbig{display:flex;flex-direction:column;gap:6px;background:var(--soft);border-radius:16px;padding:16px}
 .dbig>b{font-size:30px;font-weight:800}
 /* Objectifs, devises */
@@ -823,6 +827,7 @@ function alerts(k = ck()) {
     if (late.length) o.push({ lvl: 'bad', text: `${late.length} charge${late.length > 1 ? 's' : ''} fixe${late.length > 1 ? 's' : ''} en retard · ${eur(sum(late, eff))}`, go: 'mouvements', flt: 'todo' });
   }
   o.push(...customAlerts(m, k, c));
+  if (k === nowK() && typeof debtAlerts === 'function') o.push(...debtAlerts());
   if (!c.past && c.est < num(A.thr)) o.push({ lvl: 'bad', text: `Fin de mois estimée : ${eur(c.est)} (seuil ${eur(A.thr)})`, go: 'accueil' });
   if (!c.past && c.rav < 0) o.push({ lvl: 'bad', text: `Reste à vivre négatif : ${eur(c.rav)}`, go: 'accueil' });
   m.budgets.forEach(b => {
@@ -1529,7 +1534,7 @@ function renderChrome() {
   $('bell').classList.toggle('on', UI.view === 'messages');
   $$('.accsw-slot').forEach(s => s.innerHTML = accSwitcherHTML());
   $$('[data-a=new]')[0].innerHTML = svg('plus', 18, 2.4) + '<span>Ajouter</span>';
-  setTimeout(notifyAlerts, 0);
+  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500);
   $('todayd').innerHTML = `<span class="tdl">${todayLabel()}</span><span class="tds">${todayLabel({ weekday: 'short', day: 'numeric', month: 'short' })}</span>`;
 }
 
@@ -2287,7 +2292,7 @@ function alertDialog(t, id) {
 function notifyAlerts() {
   if (!active || !S) return; let done = {}; const key = 'aln_' + active + '_' + nowK();
   try { done = JSON.parse(localStorage.getItem(key) || '{}'); } catch (e) {}
-  const L = customAlerts(month(nowK()), nowK(), calc(month(nowK()), nowK())).filter(a => !done[a.id]); if (!L.length) return;
+  const L = customAlerts(month(nowK()), nowK(), calc(month(nowK()), nowK())).concat(debtAlerts()).filter(a => !done[a.id]); if (!L.length) return;
   L.forEach(a => { done[a.id] = 1; browserNotify('Alerte · ' + accName(), a.text); });
   try { localStorage.setItem(key, JSON.stringify(done)); } catch (e) {}
 }
@@ -2582,7 +2587,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v15';
+const APP_VERSION = '14 oct. · v16';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3024,7 +3029,8 @@ function debtRowHTML(e, role) {
 }
 function debtsHTML(compact) {
   if (isSavAcc()) return '';
-  const A = allDebts(), IN = A.filter(e => lenderAcc(e) === active), OUT = A.filter(e => borrowerAcc(e) === active);
+  const All = allDebts().filter(e => lenderAcc(e) === active || borrowerAcc(e) === active), isOld = e => !!e.d.arch || debtInfo(e.d).done;
+  const IN = All.filter(e => !isOld(e) && lenderAcc(e) === active), OUT = All.filter(e => !isOld(e) && borrowerAcc(e) === active), OLD = All.filter(isOld);
   if (compact && !IN.length && !OUT.length) return '';
   const part = (L, role) => { const left = sum(L, e => debtInfo(e.d).left), tot = sum(L, e => num(e.d.amount));
     return `<div class="dpart"><div class="dhead ${role}"><b>${role === 'in' ? 'À recevoir' : 'À rembourser'}</b><span class="num">${eur(left)}</span><span class="note">${tot > 0 ? Math.round((tot - left) / tot * 100) : 0} % remboursé</span></div>
@@ -3032,9 +3038,20 @@ function debtsHTML(compact) {
   return `<section class="card" aria-label="Remboursements" style="display:flex;flex-direction:column;gap:6px">
     <div class="ch"><h2>Remboursements ${compact ? '' : tip('remboursements', 'Remboursements', '<b>À recevoir</b> : de l\'argent que « ' + esc(accName()) + ' » a avancé et qu\'on lui rembourse.<br><b>À rembourser</b> : ce que ce compte doit rendre.<br>Avec une personne connectée, l\'avance est partagée : vous voyez tous les deux le reste à jour.', 'rt')}</h2>${compact ? '' : `<button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button>`}</div>
     ${IN.length ? part(IN, 'in') : ''}${OUT.length ? part(OUT, 'out') : ''}
-    ${!IN.length && !OUT.length ? '<p class="empty">Quelqu\'un a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le : chaque remboursement met à jour le reste, des deux côtés.</p>' : ''}
+    ${!IN.length && !OUT.length ? `<p class="empty">${OLD.length ? 'Plus rien en cours 👍' : 'Quelqu\'un a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le : chaque remboursement met à jour le reste, des deux côtés.'}</p>` : ''}
+    ${!compact && OLD.length ? `<button class="lnk" data-a="debt-hist" style="align-self:flex-start;margin-top:4px">${UI.debtHist ? '▾' : '▸'} Historique (${OLD.length})</button>
+      ${UI.debtHist ? `<div class="dpart">${OLD.sort((a, b) => (b.d.arch?.at || b.d.doneAt || 0) - (a.d.arch?.at || a.d.doneAt || 0)).map(e => histRowHTML(e)).join('')}</div>` : ''}` : ''}
   </section>`;
 }
+function histRowHTML(e) {
+  const d = e.d, i = debtInfo(d), ab = !!d.arch, role = lenderAcc(e) === active ? 'in' : 'out';
+  return `<button class="drow done" data-a="debt-open" data-id="${d.id}"><span class="gemo">${ab ? '🗂️' : '✅'}</span>
+    <span class="rt"><span class="rn">${esc(d.name)} <span class="note" style="font-weight:500">· ${role === 'in' ? 'reçu' : 'rendu'} ${eur0(i.r)} sur ${eur0(i.t)}</span></span>
+    <span class="rs">${ab ? 'Abandonnée le ' + fmtD(d.arch.at) + (i.left > 0 ? ' · ' + eur0(i.left) + ' non remboursés' : '') : 'Soldée' + (lastPay(d) ? ' le ' + fmtD(lastPay(d)) : '')}${e.home.shared ? ' · 🤝' : ''}</span></span>
+    <b class="num dpct">${Math.round(i.p)} %</b></button>`;
+}
+const fmtD = t => new Date(typeof t === 'string' ? t + 'T12:00' : t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+const lastPay = d => (d.payments || []).map(p => p.date).sort().pop();
 function otherDebtsHTML(A) {
   const L = A.filter(e => !debtInfo(e.d).done).map(e => [e, lenderAcc(e), borrowerAcc(e)]).filter(([, la, ba]) => (la && la !== active) || (ba && ba !== active)).filter(([, la, ba]) => la !== active && ba !== active);
   if (!L.length) return '';
@@ -3109,12 +3126,12 @@ async function createDebt(d, fromGoal) {
 }
 // ---- Suppression : choix de garder ou non les mouvements, accord des deux pour une avance partagée
 const payHasMov = p => !!(p.inc || p.exp || p.xid);
-function askDeleteMode(what, hasMov, shared) {
+function askDeleteMode(what, hasMov, shared, purge) {
   return new Promise(res => {
     const d = $('dlg'); d.onclick = null; let done = false; const end = v => { if (done) return; done = true; d.close(); res(v); };
     d.innerHTML = `<div class="dw"><div class="dh"><h2>Supprimer ${esc(what)} ?</h2><button class="ib sm" data-x aria-label="Annuler">${svg('x', 16, 2.4)}</button></div>
       ${hasMov ? `<p class="note">Des virements / recettes ont déjà été enregistrés pour ces remboursements. Que veux-tu en faire ?</p>
-      <button class="row rowb modeopt" data-m="keep"><span class="ico" style="--c:#10B981">${svg('check')}</span><span class="rt"><span class="rn">Garder les mouvements</span><span class="rs" style="white-space:normal">L'argent déjà remboursé reste dans les comptes. Il n'y a simplement plus rien à rembourser.</span></span></button>
+      <button class="row rowb modeopt" data-m="keep"><span class="ico" style="--c:#10B981">${svg('check')}</span><span class="rt"><span class="rn">${purge ? 'Garder les mouvements' : 'Clôturer et garder les mouvements'}</span><span class="rs" style="white-space:normal">L'argent déjà remboursé reste dans les comptes.${purge ? '' : ' Plus rien à rembourser : l\'avance passe dans l\'historique (« abandonnée »).'}</span></span></button>
       <button class="row rowb modeopt" data-m="all"><span class="ico" style="--c:#E11D48">${svg('trash')}</span><span class="rt"><span class="rn">Supprimer aussi les mouvements</span><span class="rs" style="white-space:normal">Les virements et recettes créés par ces remboursements sont retirés des comptes${shared ? ', des deux côtés' : ''}.</span></span></button>`
       : `<p class="note">Aucun mouvement n'a été enregistré pour ${esc(what)}.</p><button class="btn danger big" data-m="all">Supprimer</button>`}
       ${shared ? `<p class="note" style="font-size:12px">🤝 Avance partagée : la suppression sera faite quand l'autre personne aura accepté.</p>` : ''}
@@ -3141,8 +3158,13 @@ function warnMembers(e, text) {
   accs.forEach(a => accDoc(a).collection('activity').add({ by: currentUser.uid, byEmail: currentUser.email, text: String(text).slice(0, 200), at: Date.now(), month: nowK() }).catch(() => {}));
 }
 async function removeDebt(e) {
-  const d = e.d, shared = !!e.home.shared, mode = await askDeleteMode('« ' + d.name + ' »', (d.payments || []).some(payHasMov), shared); if (!mode) return;
-  if (shared) return debtRequest(e, { type: 'debt', mode });
+  const d = e.d, shared = !!e.home.shared, purge = !!d.arch || debtInfo(d).done;
+  const mode = await askDeleteMode((purge ? 'définitivement ' : '') + '« ' + d.name + ' »', (d.payments || []).some(payHasMov), shared, purge); if (!mode) return;
+  if (shared) return debtRequest(e, { type: 'debt', mode, purge });
+  if (mode === 'keep' && !purge) {                                   // abandon : on garde la trace dans l'historique
+    await updateDebt(e, x => { x.arch = { at: Date.now(), by: currentUser.uid, kind: 'abandon', left: debtInfo(x).left }; delete x.auto; });
+    warnMembers(e, 'Avance « ' + d.name + ' » clôturée (' + eur(debtInfo(d).left) + ' abandonnés, mouvements gardés)'); toast('Avance clôturée · dans l\'historique'); return render();
+  }
   if (mode === 'all') for (const p of d.payments || []) await cleanMovs(p);
   const drop = () => { S.debts = debts().filter(x => x.id !== d.id); };
   if (e.home.acc === active) mutate(drop, false);
@@ -3162,10 +3184,11 @@ function debtAnswer(id, rid, ok) {
     const q = (x.reqs || []).find(z => z.id === rid); if (!q || q.status !== 'pending') return;
     q.status = ok ? 'approved' : 'declined'; q.answeredAt = Date.now();
     if (ok && q.type === 'pay') { q.pay = (x.payments || []).find(p => p.id === q.pid) || null; x.payments = (x.payments || []).filter(p => p.id !== q.pid); }
+    if (ok && q.type === 'debt' && q.mode === 'keep' && !q.purge) { x.arch = { at: Date.now(), by: q.by, kind: 'abandon', left: debtInfo(x).left }; delete x.auto; x.reqs = x.reqs.filter(z => z.id !== rid); return; }
     if (ok && q.type === 'debt') { q.pays = x.payments || []; x.closed = true; }
   }).then(() => toast(ok ? 'Suppression acceptée' : 'Suppression refusée'));
 }
-const reqText = (d, q) => (q.type === 'debt' ? 'supprimer l\'avance « ' + d.name + ' »' : 'supprimer un remboursement de « ' + d.name + ' » (' + eur(num((d.payments || []).find(p => p.id === q.pid)?.amount || q.pay?.amount)) + ')') + (q.mode === 'keep' ? ', en gardant les mouvements' : ', avec ses mouvements');
+const reqText = (d, q) => (q.type === 'debt' ? (q.purge ? 'retirer de l\'historique « ' + d.name + ' »' : q.mode === 'keep' ? 'clôturer l\'avance « ' + d.name + ' » (abandonner le reste)' : 'supprimer l\'avance « ' + d.name + ' »') : 'supprimer un remboursement de « ' + d.name + ' » (' + eur(num((d.payments || []).find(p => p.id === q.pid)?.amount || q.pay?.amount)) + ')') + (q.type === 'debt' && q.mode === 'keep' ? '' : q.mode === 'keep' ? ', en gardant les mouvements' : ', avec ses mouvements');
 const pendingForMe = () => PDEBTS.flatMap(d => (d.reqs || []).filter(q => q.status === 'pending' && !mine(q.by)).map(q => ({ d, q })));
 let reqSeen = new Set(), reqBusy = new Set();
 async function processDebtReqs() {
@@ -3220,7 +3243,12 @@ function debtView(id) {
       <span class="bar" style="display:block;height:10px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></div>
     ${(d.reqs || []).filter(q => q.status === 'pending').map(q => mine(q.by) ? `<div class="alert"><span>⏳ En attente de l'accord de ${esc(shortName(d.emails?.[d.members.find(u => !mine(u))]))} pour ${esc(reqText(d, q))}.</span><button class="lnk" data-rq-cancel="${q.id}">Annuler</button></div>`
       : `<div class="alert bad" style="flex-wrap:wrap"><span>${esc(shortName(d.emails?.[q.by]))} veut ${esc(reqText(d, q))}.</span><span class="chips"><button class="btn sm p" data-rq-yes="${q.id}">Accepter</button><button class="btn sm" data-rq-no="${q.id}">Refuser</button></span></div>`).join('')}
-    ${i.done ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>`}
+    ${d.arch ? `<div class="alert"><span>🗂️ Clôturée le ${fmtD(d.arch.at)}${d.arch.left > 0 ? ' : ' + eur(d.arch.left) + ' abandonnés' : ''}. Elle est dans l'historique.</span><button class="lnk" data-reopen>Rouvrir</button></div>` : ''}
+    ${i.done || d.arch ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>
+    <div class="dopts">
+      <button class="dopt" data-auto>${d.auto ? `🔁 <span><b>${eur(d.auto.amount)} le ${d.auto.day} de chaque mois</b><small>prochain : ${fmtD(d.auto.next + '-' + String(Math.min(d.auto.day, dim(d.auto.next))).padStart(2, '0'))} · fin prévue ${mlab(autoEnd(d)).toLowerCase()}${d.auto.by !== currentUser.uid ? ' · réglé par ' + esc(shortName(d.emails?.[d.auto.by] || '')) : ''}</small></span>` : '🔁 <span><b>Remboursement automatique</b><small>ex. 20 € le 5 de chaque mois, jusqu\'au bout</small></span>'}</button>
+      <button class="dopt" data-remind>${d.remind ? `🔔 <span><b>Rappel</b><small>${esc(remindText(d.remind))}</small></span>` : '🔔 <span><b>Rappel</b><small>choisis quand être prévenu</small></span>'}</button>
+    </div>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
       ${P_.map(p => `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
@@ -3228,6 +3256,9 @@ function debtView(id) {
     if (ev.target.closest('[data-x]')) return dl.close();
     if (ev.target.closest('[data-ed]')) { dl.close(); return debtDialog(id); }
     if (ev.target.closest('[data-pay]')) { dl.close(); return payDialog(id); }
+    if (ev.target.closest('[data-auto]')) { dl.close(); return autoDialog(id); }
+    if (ev.target.closest('[data-remind]')) { dl.close(); return remindDialog(id); }
+    if (ev.target.closest('[data-reopen]')) { updateDebt(e, x => { delete x.arch; }).then(() => { toast('Avance rouverte'); render(); setTimeout(() => debtView(id), 300); }); return; }
     const del = ev.target.closest('[data-del]'); if (del) { dl.close(); return payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 400)); }
     const ry = ev.target.closest('[data-rq-yes],[data-rq-no]'); if (ry) { const rid = ry.dataset.rqYes || ry.dataset.rqNo; debtAnswer(id, rid, !!ry.dataset.rqYes).then(() => setTimeout(() => { dl.close(); if (findDebt(id)) debtView(id); }, 400)); return; }
     const rc = ev.target.closest('[data-rq-cancel]'); if (rc) { updateDebt(findDebt(id), x => { x.reqs = (x.reqs || []).filter(q => q.id !== rc.dataset.rqCancel); }).then(() => setTimeout(() => debtView(id), 300)); return; }
@@ -3240,6 +3271,21 @@ function debtView(id) {
 function onAcc(acc, k, fn) {
   if (acc === active) { mutate(() => fn(month(k)), false); return Promise.resolve(); }
   return txMonth(acc, k, fn);
+}
+async function payTargets(e) {
+  const d = e.d, L = lenderOf(d, e.home.acc), B = borrowerOf(d);
+  const A = allAccs(), nm = a => ACC[a].name + (a === active ? ' (ce compte)' : ''), OTHER = 'Autre : espèces, quelqu\'un d\'autre…';
+  const lenderIsOther = L.kind === 'user' && !mine(L.uid);
+  let TO = A.map(a => [nm(a), { acc: a }]), toDef = lenderAcc(e);
+  if (lenderIsOther) {
+    const D = await dirOf(L.email);
+    if (!D || !(D.accounts || []).length) TO = [['Son compte de réception (' + shortName(L.email) + ')', { user: L, acc: L.acc || '' }]];
+    else TO = D.accounts.map(a => [a.name + ' · ' + shortName(L.email), { user: L, acc: a.id, accName: a.name }]);
+    toDef = L.acc || D?.recv;
+  }
+  const fromDef = B.kind === 'acc' ? B.acc : B.kind === 'user' && mine(B.uid) ? (B.acc && A.includes(B.acc) ? B.acc : null) : null;
+  const fromLab = fromDef ? nm(fromDef) : (B.kind === 'user' && !mine(B.uid)) || B.kind === 'text' ? OTHER : A[0] ? nm(A[0]) : OTHER;
+  return { A, nm, OTHER, TO, toLab: (TO.find(t => t[1].acc === toDef) || TO[0])[0], fromLab, lenderIsOther, FROM: A.map(nm).concat([OTHER]) };
 }
 async function payDialog(id) {
   const e = findDebt(id); if (!e) return; const d = e.d, i = debtInfo(d), L = lenderOf(d, e.home.acc), B = borrowerOf(d);
@@ -3277,11 +3323,11 @@ async function payDialog(id) {
     } });
   $('f_date').type = 'date';
 }
-async function payCreate(id, p) {
+async function payCreate(id, p, opt = {}) {
   const e = findDebt(id); if (!e) return; const d = e.d;
   const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), xid = uid(), incId = uid(), expId = uid();
   const fromName = p.from ? ACC[p.from].name : 'Autre', toUser = p.to.user, toName = toUser ? (p.to.accName || 'compte de ' + shortName(toUser.email)) : ACC[p.to.acc].name;
-  const pay = { id: uid(), amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: toUser ? '' : p.to.acc, toName, toUser: toUser ? toUser.email : '', k, inc: toUser ? '' : incId, exp: p.from ? expId : '', xid: p.from ? xid : '', by: currentUser.uid };
+  const pay = { auto: !!opt.auto, id: uid(), amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: toUser ? '' : p.to.acc, toName, toUser: toUser ? toUser.email : '', k, inc: toUser ? '' : incId, exp: p.from ? expId : '', xid: p.from ? xid : '', by: currentUser.uid };
   const jobs = [updateDebt(e, x => { (x.payments = x.payments || []).push(pay); })];
   if (!toUser) {
     jobs.push(onAcc(p.to.acc, k, m => m.incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
@@ -3293,8 +3339,11 @@ async function payCreate(id, p) {
     jobs.push(db.collection('transfers').doc(xid).set(Object.assign({ from: currentUser.uid, fromEmail: currentUser.email, to: toUser.email, amount: p.amount, label: p.label, date: dd, k, site: '', img: '', status: 'sent', at: Date.now(), debt: id }, p.to.acc ? { toAcc: p.to.acc, toAccName: p.to.accName || '' } : {})));
   }
   const res = await Promise.allSettled(jobs);
-  toast(res.some(r => r.status === 'rejected') ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name);
-  setTimeout(() => { const n = findDebt(id); if (n && debtInfo(n.d).done) toast('🎉 « ' + d.name + ' » est entièrement remboursé !'); debtView(id); }, 500);
+  const bad = res.some(r => r.status === 'rejected');
+  if ((opt.leftBefore ?? debtInfo(d).left) - p.amount <= 0.005) await updateDebt(findDebt(id) || e, x => { if (debtInfo(x).done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } }).catch(() => {});
+  if (opt.silent) return !bad;
+  toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name);
+  setTimeout(() => { const n2 = findDebt(id); if (n2 && debtInfo(n2.d).done) toast('🎉 « ' + d.name + ' » est entièrement remboursé !'); debtView(id); }, 500);
 }
 async function payDelete(id, pid) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
@@ -3310,6 +3359,99 @@ function goalToDebt(g) {
   $('dlg').close();
   const payments = num(g.saved) > 0 ? [{ id: uid(), amount: num(g.saved), date: todayISO(), label: 'Déjà remboursé (repris de l\'objectif)', from: '', fromName: 'Autre', to: '', toName: '', k: nowK(), inc: '', xid: '', by: currentUser.uid }] : [];
   debtDialog(null, { name: g.name.replace(/^rembours[ée]+s?\s*/i, '').replace(/^\w/, c => c.toUpperCase()), amount: g.target, emo: g.emo && g.emo !== '🎯' ? g.emo : '💸', payments, fromGoal: g.id, lender: { kind: 'acc', acc: active } });
+}
+
+/* ============================== REMBOURSEMENT AUTOMATIQUE ==============================
+   « 20 € le 5 de chaque mois jusqu'au bout » : à la date prévue, l'app enregistre le remboursement (et ses mouvements)
+   tout seule, dans l'app de celui qui l'a réglé. Elle s'arrête quand tout est remboursé.                                  */
+function autoEnd(d) { const a = d.auto; if (!a) return ''; const n = Math.max(1, Math.ceil(debtInfo(d).left / Math.max(0.01, num(a.amount)))); return kAdd(a.next, n - 1); }
+async function autoDialog(id) {
+  const e = findDebt(id); if (!e) return; const d = e.d, i = debtInfo(d), T = await payTargets(e), a = d.auto;
+  const nextDef = today() <= 28 ? nowK() : kAdd(nowK(), 1);
+  formDialog({ title: '🔁 Remboursement automatique', intro: `Reste ${eur(i.left)}. Chaque mois à la date choisie, l'app enregistre le remboursement et les mouvements, jusqu'à ce que tout soit remboursé. Pense à programmer le même virement dans ta banque.`,
+    ok: a ? 'Enregistrer' : 'Activer', delLabel: 'Arrêter', onDelete: a ? () => updateDebt(e, x => { delete x.auto; }).then(() => { toast('Remboursement automatique arrêté'); render(); }) : null,
+    fields: [{ id: 'amt', label: 'Montant chaque mois', type: 'num', value: a?.amount ?? Math.min(i.left, Math.ceil(i.left / 3)), ph: 'ex. 20' },
+      { id: 'day', label: 'Le combien du mois ?', value: a?.day ?? 5, ph: 'ex. 5' },
+      { id: 'start', label: 'À partir de', value: a?.next || nextDef },
+      { id: 'from', label: 'Depuis quel compte ?', type: 'select', options: T.FROM, value: a ? (a.from ? T.nm(a.from) : T.OTHER) : T.fromLab },
+      { id: 'to', label: 'Vers quel compte ?', type: 'select', options: T.TO.map(t => t[0]), value: a ? (T.TO.find(t => t[1].acc === (a.to?.acc ?? a.to)) || T.TO[0])[0] : T.toLab }],
+    onSave: r => {
+      const amt = Math.round(num(r.amt) * 100) / 100, day = parseInt(r.day);
+      if (!(amt > 0)) { toast('Indique le montant mensuel'); return false; }
+      if (!(day >= 1 && day <= 31)) { toast('Jour entre 1 et 31'); return false; }
+      if (!/^\d{4}-\d{2}$/.test(r.start)) { toast('Choisis le mois de départ'); return false; }
+      const f = T.A.find(x => T.nm(x) === r.from) || null, to = (T.TO.find(x => x[0] === r.to) || [])[1];
+      if (!to || (!to.user && f === to.acc)) { toast('Choisis deux comptes différents'); return false; }
+      if (to.user && !f) { toast('Choisis le compte d\'où part le virement'); return false; }
+      const auto = { amount: amt, day, next: r.start, from: f || '', to: to.user ? { user: to.user, acc: to.acc, accName: to.accName || '' } : { acc: to.acc }, by: currentUser.uid, label: 'Remboursement ' + d.name };
+      updateDebt(e, x => { x.auto = auto; }).then(() => { toast('🔁 ' + eur(amt) + ' le ' + day + ' de chaque mois'); render(); setTimeout(() => autoRun(true), 1200); setTimeout(() => debtView(id), 600); });
+    } });
+  $('f_start').type = 'month';
+}
+let autoBusy = false, autoLast = 0;
+async function autoRun(force) {
+  if (autoBusy || !loaded || !currentUser || (!force && Date.now() - autoLast < 30000)) return; autoBusy = true; autoLast = Date.now();
+  try {
+    for (const e0 of allDebts()) {
+      const e = e0; if (!e.d.auto || e.d.auto.by !== currentUser.uid || e.d.arch || debtInfo(e.d).done) continue;
+      const a = Object.assign({}, e.d.auto); let guard = 0;
+      while (guard++ < 24) {
+        const k = a.next, dd = Math.min(a.day, dim(k));
+        if (k > nowK() || (k === nowK() && today() < dd)) break;
+        let claimed = false, leftNow = 0;                       // on réserve l'échéance avant d'écrire (pas de doublon)
+        await updateDebt(e, x => { if (x.auto && x.auto.next === k) { x.auto.next = kAdd(k, 1); claimed = true; leftNow = debtInfo(x).left; } else claimed = false; });
+        if (!claimed) break;
+        const amt = Math.min(num(a.amount), leftNow);
+        const to = a.to?.user ? { user: a.to.user, acc: a.to.acc, accName: a.to.accName } : { acc: a.to?.acc ?? a.to };
+        if (amt > 0 && (to.user || ACC[to.acc])) { await payCreate(e.d.id, { amount: Math.round(amt * 100) / 100, date: k + '-' + String(dd).padStart(2, '0'), from: a.from && ACC[a.from] ? a.from : null, to, label: a.label || 'Remboursement ' + e.d.name }, { silent: true, auto: true, leftBefore: leftNow });
+          toast('🔁 Remboursement automatique : ' + eur(amt) + ' · ' + e.d.name); }
+        a.next = kAdd(k, 1); if (leftNow - amt <= 0.005) break;      // échéance suivante (sans attendre la synchro)
+      }
+    }
+  } catch (er) { console.warn('Auto', er); }
+  finally { autoBusy = false; }
+}
+
+/* ============================== RAPPELS (critère choisi par l'utilisateur) ============================== */
+const RM = { none: 'Aucun rappel', idle: 'Si aucun remboursement depuis… (jours)', monthly: 'Chaque mois, à une date', deadline: 'Avant une date limite' };
+function remindText(r) {
+  if (!r) return '';
+  return r.type === 'idle' ? 'si rien depuis ' + r.days + ' jours' : r.type === 'monthly' ? 'le ' + r.day + ' de chaque mois s\'il reste quelque chose' : r.type === 'deadline' ? 'à rembourser avant le ' + fmtD(r.date) + (r.before ? ' (prévenir ' + r.before + ' j avant)' : '') : '';
+}
+function remindDialog(id) {
+  const e = findDebt(id); if (!e) return; const r = e.d.remind || {};
+  formDialog({ title: '🔔 Rappel · ' + e.d.name, intro: 'Choisis quand être prévenu (sur l\'accueil, dans la cloche et en notification). Le rappel est visible des deux côtés.',
+    fields: [{ id: 'type', label: 'Me prévenir', type: 'select', options: Object.values(RM), value: RM[r.type || 'idle'] },
+      { id: 'days', label: 'Nombre de jours sans remboursement', value: r.days ?? 30, ph: 'ex. 30' },
+      { id: 'day', label: 'Jour du mois', value: r.day ?? 5, ph: 'ex. 5' },
+      { id: 'date', label: 'Date limite', value: r.date || '' },
+      { id: 'before', label: 'Prévenir combien de jours avant ?', value: r.before ?? 7, ph: 'ex. 7' }],
+    onSave: v => {
+      const type = Object.keys(RM).find(k => RM[k] === v.type); let rem = null;
+      if (type === 'idle') { const n = parseInt(v.days); if (!(n >= 1)) { toast('Nombre de jours ?'); return false; } rem = { type, days: n }; }
+      if (type === 'monthly') { const n = parseInt(v.day); if (!(n >= 1 && n <= 31)) { toast('Jour entre 1 et 31'); return false; } rem = { type, day: n }; }
+      if (type === 'deadline') { if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date)) { toast('Choisis la date limite'); return false; } rem = { type, date: v.date, before: Math.max(0, parseInt(v.before) || 0) }; }
+      updateDebt(e, x => { if (rem) x.remind = rem; else delete x.remind; }).then(() => { toast(rem ? '🔔 Rappel : ' + remindText(rem) : 'Rappel retiré'); render(); setTimeout(() => debtView(id), 300); });
+    } });
+  $('f_date').type = 'date';
+  // n'afficher que les champs utiles au choix
+  const show = () => { const t = Object.keys(RM).find(k => RM[k] === $('f_type').value); [['days', 'idle'], ['day', 'monthly'], ['date', 'deadline'], ['before', 'deadline']].forEach(([f, ty]) => { $('f_' + f).closest('label').hidden = t !== ty; }); };
+  $('f_type').addEventListener('change', show); show();
+}
+// Rappels déclenchés pour le compte affiché (repris dans les alertes : accueil, cloche, notifications)
+function debtAlerts() {
+  const out = [], now = new Date(), td = todayISO();
+  allDebts().filter(e => !e.d.arch && !debtInfo(e.d).done && e.d.remind && (lenderAcc(e) === active || borrowerAcc(e) === active)).forEach(e => {
+    const d = e.d, r = d.remind, left = eur(debtInfo(d).left), role = lenderAcc(e) === active ? 'à recevoir' : 'à rembourser';
+    if (r.type === 'idle') { const last = lastPay(d) ? new Date(lastPay(d) + 'T12:00') : new Date(d.at || Date.now()), n = Math.floor((now - last) / 864e5);
+      if (n >= r.days) out.push({ id: 'dr_' + d.id + '_' + (lastPay(d) || 'c'), lvl: 'warn', text: `🔔 « ${d.name} » : aucun remboursement depuis ${n} jours (${left} ${role})`, go: 'budgets' }); }
+    if (r.type === 'monthly' && today() >= r.day && !(d.payments || []).some(p => p.date.slice(0, 7) === nowK()))
+      out.push({ id: 'dr_' + d.id + '_' + nowK(), lvl: 'warn', text: `🔔 « ${d.name} » : rappel du ${r.day} · ${left} ${role}`, go: 'budgets' });
+    if (r.type === 'deadline') { const n = Math.round((new Date(r.date + 'T12:00') - new Date(td + 'T12:00')) / 864e5);
+      if (n < 0) out.push({ id: 'dr_' + d.id + '_late', lvl: 'bad', text: `🔔 « ${d.name} » : date limite dépassée (${fmtD(r.date)}) · ${left} ${role}`, go: 'budgets' });
+      else if (n <= (r.before || 0)) out.push({ id: 'dr_' + d.id + '_' + n, lvl: 'warn', text: `🔔 « ${d.name} » : ${n ? 'plus que ' + n + ' jour' + (n > 1 ? 's' : '') : 'c\'est aujourd\'hui'} avant la date limite · ${left} ${role}`, go: 'budgets' }); }
+  });
+  return out;
 }
 
 
@@ -3517,6 +3659,7 @@ document.addEventListener('click', ev => {
     case 'link-del': return linkRemove(id);
     case 'link-req': { const e = $('link-email'); return linkRequest(e?.value).then(() => { if (e) e.value = ''; }); }
     case 'dreq-yes': case 'dreq-no': return debtAnswer(id, b.dataset.r, a === 'dreq-yes');
+    case 'debt-hist': UI.debtHist = !UI.debtHist; return render();
     case 'debt-new': return debtDialog(null);
     case 'debt-open': return debtView(id);
     case 'debt-goto': { const acc = b.dataset.acc; openAccount(acc); go('budgets'); setTimeout(() => debtView(id), 700); return; }
