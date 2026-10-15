@@ -406,6 +406,10 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .dwho{display:flex;align-items:center;justify-content:space-around;gap:10px;background:var(--soft);border-radius:14px;padding:10px;text-align:center}
 .dwho span{display:flex;flex-direction:column;gap:2px;min-width:0}.dwho small{color:var(--mute);font-size:11px}.dwho b{font-size:14px;overflow:hidden;text-overflow:ellipsis}
 .dopts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sprow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 92px 32px;gap:6px;align-items:center}.sprow:not(:has([data-who])){grid-template-columns:minmax(0,1fr) 110px 32px}.sprow .in{min-height:42px;padding:8px 10px;font-size:15px}.sprow [readonly]{background:var(--soft);color:var(--mute)}
+@media(max-width:420px){.sprow{grid-template-columns:minmax(0,1fr) 84px 32px}.sprow:has([data-who]) select{grid-column:1/-1}}
+.sprow:has([data-who]){padding:8px;border:1px dashed var(--line);border-radius:12px}
+.spsum{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;background:var(--soft);border-radius:12px;padding:10px 12px;font-size:14px}
 .dopt{display:flex;align-items:flex-start;gap:8px;text-align:left;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:10px;color:var(--ink);cursor:pointer;font-size:16px}
 .dopt span{display:flex;flex-direction:column;gap:2px;min-width:0}.dopt b{font-size:13px}.dopt small{font-size:11.5px;color:var(--mute);line-height:1.3}
 @media (max-width:420px){.dopts{grid-template-columns:1fr}}
@@ -1196,7 +1200,7 @@ function syncActivity() {
 function unreadCount() {
   const seen = USER?.seen || {}, me = currentUser?.uid;
   const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
-  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
+  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + invitesForMe().length + declinedForMe().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
 }
 function markSeen() {
   const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
@@ -2081,7 +2085,7 @@ function paintPanel() {
     ${d.xfer ? `<div class="fixinfo" style="background:color-mix(in srgb,#0EA5E9 14%,var(--card));color:var(--ink)"><b>${svg('swap', 16)} ${esc(xferLabel(d, P.type))}</b><span style="font-size:12px">${d.xfer.kind === 'acc' && d.xfer.id ? 'Montant, date et suppression sont répercutés sur l\'autre compte.' : d.xfer.kind === 'person' && P.type === 'expenses' ? (xfStatus(d.xfer.id) === 'received' ? 'Déjà reçu : une modification ne change que ton côté.' : 'Pas encore reçu : tes modifications lui seront transmises.') : d.xfer.kind === 'person' ? 'Reçu de ' + esc(d.xfer.from || '') : ''}</span>${d.xfer.kind === 'person' && P.type === 'incomes' && !P.isNew && accIds.filter(id => id !== active && ACC[id]).length ? `<span style="font-size:12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">Déplacer vers ${accIds.filter(id => id !== active && ACC[id]).map(id => `<button class="chip" data-p="xmove" data-v="${id}">${accBadge(ACC[id], 14)} ${esc(ACC[id].name)}</button>`).join('')}</span>` : ''}</div>` : ''}
     <label class="amt"><input id="pn-a" inputmode="decimal" placeholder="0,00" aria-label="Montant" value="${esc(d.amount)}" data-pf="amount"><span>${P.cur && P.cur !== 'EUR' ? esc(P.cur) : '€'}</span></label>
     ${fxSelectHTML()}
-    ${ex ? `<div style="display:flex;justify-content:center;margin-top:-8px"><button class="tog half${d.isDivided ? ' on' : ''}" data-p="half" aria-pressed="${!!d.isDivided}">½ Partagé${d.isDivided ? ' · ma part ' + eur(parseAmt(d.amount) / 2) : ''}</button></div>` : ''}
+    ${ex ? `<div style="display:flex;justify-content:center;margin-top:-8px"><button class="tog half${d.isDivided ? ' on' : ''}" data-p="half" aria-pressed="${!!d.isDivided}">½ Partagé${d.isDivided ? ' · ma part ' + eur(parseAmt(d.amount) / 2) : ''}</button>${!P.isNew && !d.xfer ? `<button class="tog" data-p="split" style="margin-left:8px">${d.split && grpParts(d.split).length ? '👥 Partagée · voir' : '👥 Se faire rembourser'}</button>` : ''}</div>` : ''}
     <label class="fl">Libellé<input class="in" id="pn-n" list="pn-dl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="${ex ? 'ex. Courses' : 'ex. Salaire'}"><datalist id="pn-dl">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
     ${ex ? `<div class="fl">Catégorie<div class="chips">${(d.xfer ? ['Virement', ...S.categories.filter(c => c !== 'Virement')] : S.categories).map(c => `<button class="chip cat${c === d.cat ? ' on' : ''}" style="--c:${catInfo(c).col}" data-p="cat" data-v="${esc(c)}"><i></i>${esc(c)}</button>`).join('')}<button class="chip" data-p="addcat">+ Nouvelle</button></div>
       ${P.addCat ? `<span style="display:flex;gap:8px"><input class="in" id="pn-nc" placeholder="Nom de la catégorie"><button class="btn" data-p="addcat-ok">Ajouter</button></span>` : ''}</div>` : ''}
@@ -2110,6 +2114,7 @@ function panelClick(b) {
     case 'close': return closePanel();
     case 'type': if (b.dataset.v === 'xfer') { P.type = 'xfer'; P.xk = P.xk || 'acc'; d.cat = 'Virement'; P.icon = d.site ? 'site' : d.img ? 'img' : 'cat'; break; } P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
     case 'half': d.isDivided = !d.isDivided; break;
+    case 'split': { const g = d.split && grpParts(d.split).length ? d.split : null, pre = { name: d.name, amount: parseAmt(d.amount), expId: P.id, k: ck(), acc: active }; closePanel(); return setTimeout(() => g ? groupView(g) : splitDialog(pre), 260); }
     case 'cat': d.cat = b.dataset.v; break;
     case 'addcat': P.addCat = !P.addCat; paintPanel(); return $('pn-nc')?.focus();
     case 'addcat-ok': { const v = $('pn-nc').value.trim(); if (!v) return; if (!S.categories.includes(v)) S.categories.push(v); d.cat = v; P.addCat = false; break; }
@@ -2587,7 +2592,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '14 oct. · v16';
+const APP_VERSION = '15 oct. · v17';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2981,7 +2986,7 @@ function debtInfo(d) {
 function pdebtListen() {
   return db.collection('pdebts').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
     PDEBTS = q.docs.map(d => ({ id: d.id, ...d.data() }));
-    processDebtReqs();
+    processDebtReqs(); splitNotify();
     if (loaded) { renderChrome(); if (['budgets', 'accueil', 'messages'].includes(UI.view)) render(); }
   }, e => console.warn('Remboursements partagés', e.code));
 }
@@ -2992,7 +2997,7 @@ const borrowerOf = d => d.borrower || { kind: 'text', who: d.who || '' };
 function allDebts() {
   const out = [];
   accIds.filter(a => ACC[a]).forEach(a => { const L = a === active ? debts() : ((J(ACC[a].meta) || {}).debts || []); L.forEach(d => out.push({ d, home: { acc: a } })); });
-  PDEBTS.filter(d => !d.closed).forEach(d => out.push({ d, home: { shared: d.id } }));
+  PDEBTS.filter(d => !d.closed && !invNotMine(d)).forEach(d => out.push({ d, home: { shared: d.id } }));
   return out;
 }
 const findDebt = id => allDebts().find(x => x.d.id === id);
@@ -3023,24 +3028,30 @@ function debtRowHTML(e, role) {
   const who = sideLabel(other); const col = role === 'in' ? '#10B981' : '#F59E0B';
   return `<button class="drow${i.done ? ' done' : ''}" data-a="debt-open" data-id="${d.id}">
     <span class="gemo">${i.done ? '✅' : esc(d.emo || '💸')}</span>
-    <span class="rt"><span class="rn">${esc(d.name)}${who ? ` <span class="note" style="font-weight:500">· ${role === 'in' ? 'par ' : 'à '}${esc(who)}</span>` : ''}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${e.home.shared ? ' · 🤝 partagé' : ''}${(d.reqs || []).some(q => q.status === 'pending') ? ' · <b style="color:var(--warn)">⏳ suppression demandée</b>' : ''}</span>
+    <span class="rt"><span class="rn">${esc(d.name)}${who ? ` <span class="note" style="font-weight:500">· ${role === 'in' ? 'par ' : 'à '}${esc(who)}</span>` : ''}</span><span class="rs">${i.done ? 'Entièrement remboursé' : 'Reste <b class="num" style="color:var(--ink)">' + eur(i.left) + '</b> sur ' + eur(i.t)}${e.home.shared ? ' · 🤝 partagé' : ''}${invPending(d) ? ' · ⏳ en attente de son accord' : ''}${invDeclined(d) ? ' · <b style="color:var(--bad)">❌ refusé</b>' : ''}${(d.reqs || []).some(q => q.status === 'pending') ? ' · <b style="color:var(--warn)">⏳ suppression demandée</b>' : ''}</span>
       <span class="bar" style="display:block;margin-top:6px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : col}"></i></span></span>
     <b class="num dpct">${Math.round(i.p)} %</b></button>`;
 }
 function debtsHTML(compact) {
   if (isSavAcc()) return '';
   const All = allDebts().filter(e => lenderAcc(e) === active || borrowerAcc(e) === active), isOld = e => !!e.d.arch || debtInfo(e.d).done;
-  const IN = All.filter(e => !isOld(e) && lenderAcc(e) === active), OUT = All.filter(e => !isOld(e) && borrowerAcc(e) === active), OLD = All.filter(isOld);
-  if (compact && !IN.length && !OUT.length) return '';
-  const part = (L, role) => { const left = sum(L, e => debtInfo(e.d).left), tot = sum(L, e => num(e.d.amount));
+  // Partages (une part par personne) : regroupés côté de celui qui a payé
+  const G = {}; All.filter(e => e.d.grp && lenderAcc(e) === active).forEach(e => (G[e.d.grp.id] = G[e.d.grp.id] || []).push(e));
+  const gOld = gid => G[gid].every(e => isOld(e)), inG = e => e.d.grp && G[e.d.grp.id] && lenderAcc(e) === active;
+  const IN = All.filter(e => !inG(e) && !isOld(e) && lenderAcc(e) === active), OUT = All.filter(e => !inG(e) && !isOld(e) && borrowerAcc(e) === active), OLD = All.filter(e => !inG(e) && isOld(e));
+  const GA = Object.keys(G).filter(g => !gOld(g)), GO = Object.keys(G).filter(gOld);
+  const tsOld = e => e.d.arch?.at || e.d.doneAt || 0;
+  const H = OLD.map(e => [tsOld(e), histRowHTML(e)]).concat(GO.map(g => [Math.max(...G[g].map(tsOld)), groupHistRowHTML(g, G[g])])).sort((a, b) => b[0] - a[0]);
+  if (compact && !IN.length && !OUT.length && !GA.length) return '';
+  const part = (L, role, gs = []) => { const LL = L.concat(...gs.map(g => G[g])), left = sum(LL, e => e.d.arch || invDeclined(e.d) ? 0 : debtInfo(e.d).left), tot = sum(LL, e => num(e.d.amount));
     return `<div class="dpart"><div class="dhead ${role}"><b>${role === 'in' ? 'À recevoir' : 'À rembourser'}</b><span class="num">${eur(left)}</span><span class="note">${tot > 0 ? Math.round((tot - left) / tot * 100) : 0} % remboursé</span></div>
-      ${L.map(e => debtRowHTML(e, role)).join('')}</div>`; };
+      ${gs.map(g => groupRowHTML(g, G[g])).join('')}${L.map(e => debtRowHTML(e, role)).join('')}</div>`; };
   return `<section class="card" aria-label="Remboursements" style="display:flex;flex-direction:column;gap:6px">
-    <div class="ch"><h2>Remboursements ${compact ? '' : tip('remboursements', 'Remboursements', '<b>À recevoir</b> : de l\'argent que « ' + esc(accName()) + ' » a avancé et qu\'on lui rembourse.<br><b>À rembourser</b> : ce que ce compte doit rendre.<br>Avec une personne connectée, l\'avance est partagée : vous voyez tous les deux le reste à jour.', 'rt')}</h2>${compact ? '' : `<button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button>`}</div>
-    ${IN.length ? part(IN, 'in') : ''}${OUT.length ? part(OUT, 'out') : ''}
-    ${!IN.length && !OUT.length ? `<p class="empty">${OLD.length ? 'Plus rien en cours 👍' : 'Quelqu\'un a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le : chaque remboursement met à jour le reste, des deux côtés.'}</p>` : ''}
-    ${!compact && OLD.length ? `<button class="lnk" data-a="debt-hist" style="align-self:flex-start;margin-top:4px">${UI.debtHist ? '▾' : '▸'} Historique (${OLD.length})</button>
-      ${UI.debtHist ? `<div class="dpart">${OLD.sort((a, b) => (b.d.arch?.at || b.d.doneAt || 0) - (a.d.arch?.at || a.d.doneAt || 0)).map(e => histRowHTML(e)).join('')}</div>` : ''}` : ''}
+    <div class="ch"><h2>Remboursements ${compact ? '' : tip('remboursements', 'Remboursements', '<b>À recevoir</b> : de l\'argent que « ' + esc(accName()) + ' » a avancé et qu\'on lui rembourse.<br><b>À rembourser</b> : ce que ce compte doit rendre.<br>Avec une personne connectée, l\'avance est partagée : vous voyez tous les deux le reste à jour.', 'rt')}</h2>${compact ? '' : `<span class="chips"><button class="btn sm" data-a="split-new">👥 Partager</button><button class="btn sm" data-a="debt-new">${svg('plus', 16)} Avance</button></span>`}</div>
+    ${IN.length || GA.length ? part(IN, 'in', GA) : ''}${OUT.length ? part(OUT, 'out') : ''}
+    ${!IN.length && !OUT.length && !GA.length ? `<p class="empty">${H.length ? 'Plus rien en cours 👍' : 'Quelqu\'un a avancé de l\'argent (mariage, restaurant, covoiturage…) ? Ajoute-le. Tu as payé pour plusieurs ? « Partager » répartit la dépense et envoie une demande à chacun.'}</p>` : ''}
+    ${!compact && H.length ? `<button class="lnk" data-a="debt-hist" style="align-self:flex-start;margin-top:4px">${UI.debtHist ? '▾' : '▸'} Historique (${H.length})</button>
+      ${UI.debtHist ? `<div class="dpart">${H.map(h => h[1]).join('')}</div>` : ''}` : ''}
   </section>`;
 }
 function histRowHTML(e) {
@@ -3159,6 +3170,10 @@ function warnMembers(e, text) {
 }
 async function removeDebt(e) {
   const d = e.d, shared = !!e.home.shared, purge = !!d.arch || debtInfo(d).done;
+  if (shared && d.invite && d.invite.status !== 'accepted') {                // demande pas (encore) acceptée : retrait direct
+    if (!confirm('Retirer la part de ' + sideLabel(borrowerOf(d)) + ' (' + eur(d.amount) + ') ?')) return;
+    return declinedAction(d.id, 'drop');
+  }
   const mode = await askDeleteMode((purge ? 'définitivement ' : '') + '« ' + d.name + ' »', (d.payments || []).some(payHasMov), shared, purge); if (!mode) return;
   if (shared) return debtRequest(e, { type: 'debt', mode, purge });
   if (mode === 'keep' && !purge) {                                   // abandon : on garde la trace dans l'historique
@@ -3243,8 +3258,11 @@ function debtView(id) {
       <span class="bar" style="display:block;height:10px"><i style="width:${i.p}%;--c:${i.done ? 'var(--ok)' : '#F59E0B'}"></i></span></div>
     ${(d.reqs || []).filter(q => q.status === 'pending').map(q => mine(q.by) ? `<div class="alert"><span>⏳ En attente de l'accord de ${esc(shortName(d.emails?.[d.members.find(u => !mine(u))]))} pour ${esc(reqText(d, q))}.</span><button class="lnk" data-rq-cancel="${q.id}">Annuler</button></div>`
       : `<div class="alert bad" style="flex-wrap:wrap"><span>${esc(shortName(d.emails?.[q.by]))} veut ${esc(reqText(d, q))}.</span><span class="chips"><button class="btn sm p" data-rq-yes="${q.id}">Accepter</button><button class="btn sm" data-rq-no="${q.id}">Refuser</button></span></div>`).join('')}
+    ${d.grp ? `<button class="dopt" data-grp style="width:100%">👥 <span><b>Partage « ${esc(d.grp.name)} » · ${eur(d.grp.total)}</b><small>${esc(d.grp.parts.map(p => p.who + ' ' + eur(p.amount)).join(' · '))}${mine(d.grp.by) ? ' · voir tout' : ''}</small></span></button>` : ''}
+    ${invPending(d) ? `<div class="alert"><span>⏳ Demande envoyée à ${esc(sideLabel(B))} : en attente de son accord.</span></div>` : ''}
+    ${invDeclined(d) ? `<div class="alert bad" style="flex-wrap:wrap"><span>❌ ${esc(sideLabel(B))} a refusé cette part.</span><span class="chips"><button class="btn sm" data-dec="keep">Garder en suivi perso</button><button class="btn sm" data-dec="resend">Renvoyer</button><button class="btn sm" data-dec="drop">Retirer</button></span></div>` : ''}
     ${d.arch ? `<div class="alert"><span>🗂️ Clôturée le ${fmtD(d.arch.at)}${d.arch.left > 0 ? ' : ' + eur(d.arch.left) + ' abandonnés' : ''}. Elle est dans l'historique.</span><button class="lnk" data-reopen>Rouvrir</button></div>` : ''}
-    ${i.done || d.arch ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>
+    ${i.done || d.arch || invDeclined(d) ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>
     <div class="dopts">
       <button class="dopt" data-auto>${d.auto ? `🔁 <span><b>${eur(d.auto.amount)} le ${d.auto.day} de chaque mois</b><small>prochain : ${fmtD(d.auto.next + '-' + String(Math.min(d.auto.day, dim(d.auto.next))).padStart(2, '0'))} · fin prévue ${mlab(autoEnd(d)).toLowerCase()}${d.auto.by !== currentUser.uid ? ' · réglé par ' + esc(shortName(d.emails?.[d.auto.by] || '')) : ''}</small></span>` : '🔁 <span><b>Remboursement automatique</b><small>ex. 20 € le 5 de chaque mois, jusqu\'au bout</small></span>'}</button>
       <button class="dopt" data-remind>${d.remind ? `🔔 <span><b>Rappel</b><small>${esc(remindText(d.remind))}</small></span>` : '🔔 <span><b>Rappel</b><small>choisis quand être prévenu</small></span>'}</button>
@@ -3258,6 +3276,8 @@ function debtView(id) {
     if (ev.target.closest('[data-pay]')) { dl.close(); return payDialog(id); }
     if (ev.target.closest('[data-auto]')) { dl.close(); return autoDialog(id); }
     if (ev.target.closest('[data-remind]')) { dl.close(); return remindDialog(id); }
+    if (ev.target.closest('[data-grp]')) { if (mine(d.grp.by) && d.grp.id) { dl.close(); return setTimeout(() => groupView(d.grp.id), 50); } return; }
+    const dec = ev.target.closest('[data-dec]'); if (dec) { dl.close(); return declinedAction(id, dec.dataset.dec); }
     if (ev.target.closest('[data-reopen]')) { updateDebt(e, x => { delete x.arch; }).then(() => { toast('Avance rouverte'); render(); setTimeout(() => debtView(id), 300); }); return; }
     const del = ev.target.closest('[data-del]'); if (del) { dl.close(); return payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 400)); }
     const ry = ev.target.closest('[data-rq-yes],[data-rq-no]'); if (ry) { const rid = ry.dataset.rqYes || ry.dataset.rqNo; debtAnswer(id, rid, !!ry.dataset.rqYes).then(() => setTimeout(() => { dl.close(); if (findDebt(id)) debtView(id); }, 400)); return; }
@@ -3301,12 +3321,13 @@ async function payDialog(id) {
   }
   const fromDef = B.kind === 'acc' ? B.acc : B.kind === 'user' && mine(B.uid) ? (B.acc && A.includes(B.acc) ? B.acc : null) : null;
   let last = null; try { last = localStorage.getItem('payFrom'); } catch (er) {}
-  const fromSel = fromDef || (A.includes(last) && last !== toDef ? last : null);
+  const outside = B.kind === 'text' || (B.kind === 'user' && !mine(B.uid));   // c'est quelqu'un d'autre qui rembourse
+  const fromSel = fromDef || (!outside && A.includes(last) && last !== toDef ? last : null);
   const toLab = (TO.find(t => t[1].acc === toDef) || TO[0])[0];
   formDialog({ title: 'Remboursement · ' + d.name, intro: `Reste ${eur(i.left)} à rembourser.`, ok: 'Enregistrer',
     fields: [{ id: 'amt', label: 'Montant', type: 'num', value: i.left, ph: '0,00' },
       { id: 'date', label: 'Date', value: todayISO() },
-      { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: fromSel ? nm(fromSel) : (B.kind === 'user' && !mine(B.uid) ? OTHER : A[0] ? nm(A[0]) : OTHER) },
+      { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: fromSel ? nm(fromSel) : ((B.kind === 'user' && !mine(B.uid)) || B.kind === 'text' ? OTHER : A.find(x => x !== toDef) ? nm(A.find(x => x !== toDef)) : OTHER) },
       { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: TO.map(t => t[0]), value: toLab, hint: lenderIsOther ? 'Le virement lui arrive en direct sur ce compte.' : 'Les deux comptes sont mis à jour tout de suite.' },
       { id: 'label', label: 'Libellé', value: 'Remboursement ' + d.name, ph: 'Remboursement…' }],
     onSave: r => {
@@ -3393,7 +3414,7 @@ async function autoRun(force) {
   if (autoBusy || !loaded || !currentUser || (!force && Date.now() - autoLast < 30000)) return; autoBusy = true; autoLast = Date.now();
   try {
     for (const e0 of allDebts()) {
-      const e = e0; if (!e.d.auto || e.d.auto.by !== currentUser.uid || e.d.arch || debtInfo(e.d).done) continue;
+      const e = e0; if (!e.d.auto || e.d.auto.by !== currentUser.uid || e.d.arch || debtInfo(e.d).done || (e.d.invite && e.d.invite.status !== 'accepted')) continue;
       const a = Object.assign({}, e.d.auto); let guard = 0;
       while (guard++ < 24) {
         const k = a.next, dd = Math.min(a.day, dim(k));
@@ -3441,7 +3462,7 @@ function remindDialog(id) {
 // Rappels déclenchés pour le compte affiché (repris dans les alertes : accueil, cloche, notifications)
 function debtAlerts() {
   const out = [], now = new Date(), td = todayISO();
-  allDebts().filter(e => !e.d.arch && !debtInfo(e.d).done && e.d.remind && (lenderAcc(e) === active || borrowerAcc(e) === active)).forEach(e => {
+  allDebts().filter(e => !e.d.arch && !invDeclined(e.d) && !debtInfo(e.d).done && e.d.remind && (lenderAcc(e) === active || borrowerAcc(e) === active)).forEach(e => {
     const d = e.d, r = d.remind, left = eur(debtInfo(d).left), role = lenderAcc(e) === active ? 'à recevoir' : 'à rembourser';
     if (r.type === 'idle') { const last = lastPay(d) ? new Date(lastPay(d) + 'T12:00') : new Date(d.at || Date.now()), n = Math.floor((now - last) / 864e5);
       if (n >= r.days) out.push({ id: 'dr_' + d.id + '_' + (lastPay(d) || 'c'), lvl: 'warn', text: `🔔 « ${d.name} » : aucun remboursement depuis ${n} jours (${left} ${role})`, go: 'budgets' }); }
@@ -3452,6 +3473,221 @@ function debtAlerts() {
       else if (n <= (r.before || 0)) out.push({ id: 'dr_' + d.id + '_' + n, lvl: 'warn', text: `🔔 « ${d.name} » : ${n ? 'plus que ' + n + ' jour' + (n > 1 ? 's' : '') : 'c\'est aujourd\'hui'} avant la date limite · ${left} ${role}`, go: 'budgets' }); }
   });
   return out;
+}
+
+
+/* ============================== PARTAGE D'UNE DÉPENSE ==============================
+   « J'ai payé 120 € pour 4 » : une part à rembourser par personne (égale ou non).
+   • personne connectée → avance partagée (pdebts) avec une DEMANDE qu'elle accepte (et choisit son compte) ou refuse ;
+   • simple nom → avance suivie seulement de mon côté.
+   Chaque part porte grp = { id, name, total, mine, n, parts:[{who, amount}] } pour afficher le partage complet. */
+const SPLIT_TXT = 'Quelqu\'un d\'autre (juste un nom)';
+const invPending = d => d.invite && d.invite.status === 'pending';
+const invDeclined = d => d.invite && d.invite.status === 'declined';
+// Les demandes reçues (pas encore acceptées) ne comptent pas encore chez moi
+const invNotMine = d => d.invite && d.invite.status !== 'accepted' && mine(borrowerOf(d).uid);
+const invitesForMe = () => PDEBTS.filter(d => !d.closed && invPending(d) && mine(borrowerOf(d).uid));
+const declinedForMe = () => PDEBTS.filter(d => !d.closed && invDeclined(d) && mine(lenderOf(d).uid));
+
+let SP = null;
+function splitDialog(preset = {}) {
+  const A = allAccs().filter(a => ACC[a].kind !== 'epargne'); if (!A.length) return toast('Ajoute d\'abord un compte courant');
+  const ppl = linkedPeople().filter(p => p.uid);
+  SP = { mode: 'eq', me: true, add: !preset.expId, rows: [{ p: ppl[0] ? 'u:' + ppl[0].uid : 'txt', who: '', amt: '' }], ppl, A, preset };
+  const d = $('dlg'); d.onclick = null; d.oninput = null; d.onchange = null;
+  d.innerHTML = `<form class="dw" style="max-height:90vh;overflow:auto" novalidate>
+    <div class="dh"><h2>👥 Partager une dépense</h2><button type="button" class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    <p class="note">Tu as payé pour plusieurs personnes ? Chacune a sa part à te rembourser. ${ppl.length ? 'Les personnes connectées reçoivent une demande à accepter.' : 'Pour envoyer une demande à quelqu\'un, connecte-toi d\'abord à lui (Paramètres › Mes connexions).'}</p>
+    <label class="fl">Pour quoi ?<input class="in" id="sp-name" value="${esc(preset.name || '')}" placeholder="ex. Restaurant, Airbnb, Cadeau"></label>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+      <label class="fl">Total payé<input class="in" id="sp-tot" inputmode="decimal" value="${esc(preset.amount != null ? fmtIn(preset.amount) : '')}" placeholder="ex. 120"></label>
+      <label class="fl">Payé depuis<select class="in" id="sp-acc">${A.map(a => `<option value="${a}" ${a === (preset.acc || (A.includes(active) ? active : A[0])) ? 'selected' : ''}>${esc(ACC[a].name)}</option>`).join('')}</select></label>
+    </div>
+    ${preset.expId ? '' : `<label class="chk"><input type="checkbox" id="sp-add" checked>Ajouter aussi la dépense dans ce compte</label>`}
+    <div class="fl">Répartition<div class="seg" role="group"><button type="button" class="on" data-sp-mode="eq">Parts égales</button><button type="button" data-sp-mode="free">Montants libres</button></div></div>
+    <label class="chk"><input type="checkbox" id="sp-me" checked>Je participe aussi (ma part reste à ma charge)</label>
+    <div id="sp-rows" style="display:flex;flex-direction:column;gap:8px"></div>
+    <button type="button" class="btn sm" data-sp-add style="align-self:flex-start">${svg('plus', 15)} Ajouter une personne</button>
+    <div id="sp-sum" class="spsum"></div>
+    <div class="dact"><button type="button" class="btn" data-x>Annuler</button><button class="btn p" id="sp-ok">Créer le partage</button></div></form>`;
+  splitRows(); splitSum();
+  d.onclick = ev => {
+    if (ev.target.closest('[data-x]')) return d.close();
+    const m = ev.target.closest('[data-sp-mode]'); if (m) { splitRead(); SP.mode = m.dataset.spMode; d.querySelectorAll('[data-sp-mode]').forEach(b => b.classList.toggle('on', b === m)); splitRows(); return splitSum(); }
+    if (ev.target.closest('[data-sp-add]')) { splitRead(); const used = SP.rows.map(r => r.p); const nx = SP.ppl.find(p => !used.includes('u:' + p.uid)); SP.rows.push({ p: nx ? 'u:' + nx.uid : 'txt', who: '', amt: '' }); splitRows(); splitSum(); return d.querySelector('#sp-rows .sprow:last-child select')?.focus(); }
+    const rm = ev.target.closest('[data-sp-rm]'); if (rm) { splitRead(); SP.rows.splice(+rm.dataset.spRm, 1); splitRows(); return splitSum(); }
+  };
+  d.oninput = () => { splitRead(); splitSum(); };
+  d.onchange = ev => { splitRead(); if (ev.target.matches('.sprow select')) splitRows(); splitSum(); };
+  d.querySelector('form').onsubmit = ev => { ev.preventDefault(); splitRead(); splitSave(); };
+  d.showModal(); (preset.name ? $('sp-me') : $('sp-name')).focus();
+}
+function splitRead() {
+  if (!SP) return;
+  SP.me = $('sp-me').checked; SP.add = $('sp-add') ? $('sp-add').checked : false;
+  document.querySelectorAll('#sp-rows .sprow').forEach((el, i) => { const r = SP.rows[i]; if (!r) return;
+    r.p = el.querySelector('select').value; const w = el.querySelector('[data-who]'); if (w) r.who = w.value; const a = el.querySelector('[data-amt]'); if (a && SP.mode === 'free') r.amt = a.value; });
+}
+function splitRows() {
+  const used = SP.rows.map(r => r.p);
+  $('sp-rows').innerHTML = SP.rows.map((r, i) => `<div class="sprow">
+    <select class="in" aria-label="Personne ${i + 1}">${SP.ppl.map(p => `<option value="u:${p.uid}" ${r.p === 'u:' + p.uid ? 'selected' : ''} ${used.includes('u:' + p.uid) && r.p !== 'u:' + p.uid ? 'disabled' : ''}>👤 ${esc(shortName(p.email))}</option>`).join('')}<option value="txt" ${r.p === 'txt' ? 'selected' : ''}>${SPLIT_TXT}</option></select>
+    ${r.p === 'txt' ? `<input class="in" data-who value="${esc(r.who)}" placeholder="Son nom" aria-label="Son nom">` : ''}
+    <input class="in num" data-amt inputmode="decimal" aria-label="Sa part" ${SP.mode === 'eq' ? 'readonly tabindex="-1"' : ''} value="${esc(r.amt)}" placeholder="sa part">
+    <button type="button" class="x" data-sp-rm="${i}" aria-label="Retirer" ${SP.rows.length < 2 ? 'disabled' : ''}>${svg('x', 15)}</button></div>`).join('');
+}
+// Parts en centimes : égales (les centimes en trop pour moi si je participe, sinon pour les premiers)
+function splitShares() {
+  const T = Math.round(parseAmt($('sp-tot').value || '0') * 100), n = SP.rows.length;
+  if (SP.mode === 'eq') {
+    const k = n + (SP.me ? 1 : 0), base = Math.floor(T / k), rem = T - base * k;
+    const parts = SP.rows.map((_, i) => base + (!SP.me && i < rem ? 1 : 0));
+    return { T, parts, mine: SP.me ? base + rem : 0, ok: T > 0 };
+  }
+  const parts = SP.rows.map(r => Math.round(parseAmt(r.amt || '0') * 100)), rest = T - parts.reduce((s, x) => s + x, 0);
+  return { T, parts, mine: SP.me ? rest : 0, rest, ok: T > 0 && (SP.me ? rest >= 0 : rest === 0) };
+}
+function splitSum() {
+  const s = splitShares(), c = v => eur(v / 100);
+  if (SP.mode === 'eq') document.querySelectorAll('#sp-rows [data-amt]').forEach((el, i) => { el.value = s.T > 0 ? fmtIn(s.parts[i] / 100) : ''; });
+  const others = s.parts.reduce((a, b) => a + b, 0);
+  $('sp-sum').innerHTML = s.T <= 0 ? '<span class="note">Indique le total payé.</span>'
+    : SP.mode === 'free' && !s.ok ? `<b style="color:var(--bad)">${s.rest > 0 ? 'Reste ' + c(s.rest) + ' à répartir' : 'Dépasse le total de ' + c(-s.rest)}</b>`
+    : `<span>À récupérer <b class="num">${c(others)}</b> · ${SP.rows.length} personne${SP.rows.length > 1 ? 's' : ''}</span>${SP.me ? `<span class="note">Ma part : <b class="num" style="color:var(--ink)">${c(s.mine)}</b></span>` : ''}`;
+  const n = SP.rows.filter(r => r.p !== 'txt').length;
+  $('sp-ok').textContent = n ? 'Envoyer ' + (n > 1 ? 'les ' + n + ' demandes' : 'la demande') : 'Créer le partage';
+}
+async function splitSave() {
+  const name = $('sp-name').value.trim(), acc = $('sp-acc').value, s = splitShares();
+  if (!name) return toast('Indique pour quoi');
+  if (!(s.T > 0)) return toast('Indique le total payé');
+  if (!s.ok) return toast(s.rest > 0 ? 'Il reste ' + eur(s.rest / 100) + ' à répartir' : 'Les parts dépassent le total');
+  if (SP.rows.some(r => r.p === 'txt' && !r.who.trim())) return toast('Indique le nom de chaque personne');
+  if (s.parts.some(x => x <= 0)) return toast('Chaque part doit être supérieure à 0');
+  const gid = uid(), P0 = SP.preset, k = P0.k || nowK(), now = Date.now();
+  const who = r => r.p === 'txt' ? r.who.trim() : shortName(SP.ppl.find(p => 'u:' + p.uid === r.p)?.email);
+  const grp = { id: gid, name, total: s.T / 100, mine: s.mine / 100, me: SP.me, by: currentUser.uid, acc, parts: SP.rows.map((r, i) => ({ who: who(r), amount: s.parts[i] / 100 })) };
+  if (SP.me) grp.parts.unshift({ who: shortName(myEmail()), amount: s.mine / 100, payer: true });
+  const local = [], shared = [];
+  SP.rows.forEach((r, i) => {
+    const d = { id: uid(), name, amount: s.parts[i] / 100, emo: '👥', at: now, payments: [], grp };
+    if (r.p === 'txt') local.push(Object.assign(d, { lender: { kind: 'acc', acc, accName: ACC[acc].name }, borrower: { kind: 'text', who: r.who.trim() } }));
+    else { const p = SP.ppl.find(x => 'u:' + x.uid === r.p);
+      shared.push(Object.assign(d, { lender: { kind: 'user', uid: currentUser.uid, email: myEmail(), acc, accName: ACC[acc].name }, borrower: { kind: 'user', uid: p.uid, email: p.email },
+        invite: { status: 'pending', at: now }, members: [currentUser.uid, p.uid], emails: { [currentUser.uid]: myEmail(), [p.uid]: p.email }, createdBy: currentUser.uid, updatedAt: now })); }
+  });
+  $('dlg').close(); const add = SP.add; SP = null;
+  const jobs = shared.map(d => db.collection('pdebts').doc(d.id).set(d));
+  if (local.length) {
+    if (acc === active) mutate(() => { debts().push(...local); }, false);
+    else jobs.push(db.runTransaction(async tx => { const ref = accDoc(acc), sn = await tx.get(ref), o = J(sn.data().meta) || {}; o.debts = (o.debts || []).concat(local); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); }));
+  }
+  if (add) jobs.push(onAcc(acc, k, m => m.expenses.unshift({ id: uid(), name, amount: s.T / 100, date: String(today()), status: 'Payé', cat: autoCat(name) || 'Autre', isFixed: false, isDivided: false, split: gid })));
+  else if (P0.expId) jobs.push(onAcc(acc, k, m => { const x = m.expenses.find(e => e.id === P0.expId); if (x) x.split = gid; }));
+  const res = await Promise.allSettled(jobs), bad = res.filter(r => r.status === 'rejected');
+  if (bad.length) console.warn('Partage', bad.map(b => b.reason));
+  toast(bad.length ? '⚠ Partage incomplet, vérifie ta connexion' : '👥 Partage créé' + (shared.length ? ' · ' + shared.length + ' demande' + (shared.length > 1 ? 's envoyées' : ' envoyée') : ''));
+  render(); setTimeout(() => groupView(gid), 500);
+}
+
+/* ---------- Affichage d'un partage ---------- */
+const grpParts = gid => allDebts().filter(e => e.d.grp?.id === gid);
+function grpStats(L) {
+  const t = sum(L, e => num(e.d.amount)), left = sum(L, e => e.d.arch || invDeclined(e.d) ? 0 : debtInfo(e.d).left), r = sum(L, e => debtInfo(e.d).r);
+  return { t, left, r, p: t > 0 ? Math.min(100, r / t * 100) : 0, wait: L.filter(e => invPending(e.d)).length, no: L.filter(e => invDeclined(e.d)).length };
+}
+function groupRowHTML(gid, L) {
+  const g = L[0].d.grp, s = grpStats(L);
+  return `<button class="drow" data-a="grp-open" data-id="${esc(gid)}"><span class="gemo">👥</span>
+    <span class="rt"><span class="rn">${esc(g.name)} <span class="note" style="font-weight:500">· ${L.length} personne${L.length > 1 ? 's' : ''}</span></span>
+      <span class="rs">Reste <b class="num" style="color:var(--ink)">${eur(s.left)}</b> sur ${eur(s.t)}${s.wait ? ' · ⏳ ' + s.wait : ''}${s.no ? ' · <b style="color:var(--bad)">❌ ' + s.no + ' refus</b>' : ''}</span>
+      <span class="bar" style="display:block;margin-top:6px"><i style="width:${s.p}%;--c:#10B981"></i></span></span>
+    <b class="num dpct">${Math.round(s.p)} %</b></button>`;
+}
+function groupHistRowHTML(gid, L) {
+  const g = L[0].d.grp, s = grpStats(L);
+  return `<button class="drow done" data-a="grp-open" data-id="${esc(gid)}"><span class="gemo">👥</span>
+    <span class="rt"><span class="rn">${esc(g.name)} <span class="note" style="font-weight:500">· reçu ${eur0(s.r)} sur ${eur0(s.t)}</span></span><span class="rs">Partage entre ${g.parts.length} · total ${eur0(g.total)}</span></span>
+    <b class="num dpct">${Math.round(s.p)} %</b></button>`;
+}
+function partState(d) {
+  if (invPending(d)) return ['⏳ en attente de son accord', 'var(--warn)'];
+  if (invDeclined(d)) return ['❌ a refusé', 'var(--bad)'];
+  if (d.arch) return ['🗂️ clôturée', 'var(--mute)'];
+  const i = debtInfo(d); return i.done ? ['✅ remboursé', 'var(--ok)'] : ['reste ' + eur(i.left), 'var(--ink)'];
+}
+function groupView(gid) {
+  const L = grpParts(gid); if (!L.length) return;
+  const g = L[0].d.grp, s = grpStats(L), dl = $('dlg'); dl.onclick = null; dl.oninput = null; dl.onchange = null;
+  dl.innerHTML = `<div class="dw" style="max-height:88vh;overflow:auto"><div class="dh"><h2>👥 ${esc(g.name)}</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
+    <div class="dbig"><span class="note">${s.left > 0 ? 'Reste à récupérer' : 'Tout est récupéré 🎉'}</span><b class="num">${eur(s.left)}</b>
+      <span class="note">Total payé ${eur(g.total)} depuis ${esc(ACC[g.acc]?.name || '')}${g.me ? ' · ma part ' + eur(g.mine) : ''}</span>
+      <span class="bar" style="display:block;height:10px"><i style="width:${s.p}%;--c:#10B981"></i></span></div>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      ${g.me ? `<div class="row rowb" style="padding:8px 4px;cursor:default"><span class="avatar">${initials(myEmail())}</span><span class="rt"><span class="rn">Moi</span><span class="rs">ma part, à ma charge</span></span><b class="num">${eur(g.mine)}</b></div>` : ''}
+      ${L.map(e => { const d = e.d, st = partState(d), B = borrowerOf(d);
+        return `<button class="row rowb" style="padding:8px 4px" data-part="${d.id}"><span class="avatar">${initials(B.email || B.who)}</span><span class="rt"><span class="rn">${esc(sideLabel(B))}${B.kind === 'user' ? ' 🤝' : ''}</span><span class="rs" style="color:${st[1]}">${st[0]}</span></span><b class="num">${eur(num(d.amount))}</b></button>`; }).join('')}
+    </div>
+    ${s.no ? '<p class="note" style="font-size:12px">Touche une part refusée pour la garder en suivi perso ou la retirer.</p>' : ''}
+    <div class="dact"><button class="btn" data-x>Fermer</button></div></div>`;
+  dl.onclick = ev => {
+    if (ev.target.closest('[data-x]')) return dl.close();
+    const p = ev.target.closest('[data-part]'); if (p) { const id = p.dataset.part; dl.close(); setTimeout(() => debtView(id), 50); }
+  };
+  if (!dl.open) dl.showModal();
+}
+
+/* ---------- Demande reçue : accepter (et choisir son compte) / refuser ---------- */
+function inviteDialog(id) {
+  const d = PDEBTS.find(x => x.id === id); if (!d || !invPending(d)) return;
+  const A = allAccs(), def = A.includes(recvAccount()) ? recvAccount() : A[0], L = lenderOf(d), g = d.grp;
+  formDialog({ title: '👥 ' + esc(d.name), ok: 'Accepter', delLabel: 'Refuser',
+    intro: `<b>${esc(shortName(L.email))}</b> a payé <b>${eur(g?.total ?? d.amount)}</b>${g ? ' pour ' + g.parts.length + ' personnes' : ''}. Ta part : <b>${eur(d.amount)}</b>.${g ? '<br><small>' + g.parts.map(p => esc(p.who) + ' ' + eur(p.amount)).join(' · ') + '</small>' : ''}`,
+    fields: [{ id: 'acc', label: 'Depuis quel compte tu rembourseras ?', type: 'select', options: A.map(a => ACC[a].name), value: ACC[def]?.name }],
+    onDelete: () => inviteAnswer(id, false),
+    onSave: r => { inviteAnswer(id, true, A.find(a => ACC[a].name === r.acc)); } });
+}
+function inviteAnswer(id, ok, acc) {
+  const d = PDEBTS.find(x => x.id === id); if (!d) return;
+  return updateDebt({ d, home: { shared: id } }, x => {
+    if (!invPending(x)) return;
+    x.invite = Object.assign({}, x.invite, { status: ok ? 'accepted' : 'declined', answeredAt: Date.now() });
+    if (ok && acc) { x.borrower.acc = acc; x.borrower.accName = ACC[acc]?.name || ''; }
+  }).then(() => { toast(ok ? '✓ Part acceptée : ' + eur(d.amount) + ' à rembourser' : 'Demande refusée'); render(); })
+    .catch(er => toast('⚠ ' + (er.code || er.message)));
+}
+// Côté de celui qui a payé, quand une part est refusée
+async function declinedAction(id, what) {
+  const e = findDebt(id); if (!e) return; const d = e.d;
+  if (what === 'resend') return updateDebt(e, x => { x.invite = { status: 'pending', at: Date.now() }; }).then(() => { toast('Demande renvoyée'); render(); });
+  if (what === 'keep') {                                        // devient une avance suivie de mon côté, au nom de la personne
+    const acc = lenderAcc(e), loc = { id: uid(), name: d.name, amount: d.amount, emo: d.emo, at: d.at, payments: d.payments || [], grp: d.grp, lender: { kind: 'acc', acc, accName: ACC[acc]?.name || '' }, borrower: { kind: 'text', who: shortName(borrowerOf(d).email) } };
+    if (acc === active) mutate(() => debts().push(loc), false);
+    else await db.runTransaction(async tx => { const ref = accDoc(acc), s = await tx.get(ref), o = J(s.data().meta) || {}; o.debts = (o.debts || []).concat([loc]); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); });
+  }
+  await updateDebt(e, x => { x.closed = true; }); await db.collection('pdebts').doc(id).delete().catch(() => {});
+  toast(what === 'keep' ? 'Gardée en suivi perso' : 'Part retirée'); render();
+}
+function splitMsgHTML() {
+  const I = invitesForMe(), D = declinedForMe(); if (!I.length && !D.length) return '';
+  return `<section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>Remboursements partagés</h2>
+    ${I.map(d => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="gemo">👥</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(shortName(lenderOf(d).email))}</b> te demande <b>${eur(d.amount)}</b> · ${esc(d.name)}</span><span class="rs">${d.grp ? 'Total ' + eur(d.grp.total) + ' entre ' + d.grp.parts.length + ' personnes · ' : ''}${ago(d.invite.at)}</span></span>
+      <span class="chips"><button class="btn sm p" data-a="inv-split" data-id="${d.id}">Voir et accepter</button><button class="btn sm" data-a="inv-split-no" data-id="${d.id}">Refuser</button></span></div>`).join('')}
+    ${D.map(d => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="gemo">❌</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(shortName(borrowerOf(d).email))}</b> a refusé sa part de ${eur(d.amount)} · ${esc(d.name)}</span><span class="rs">${ago(d.invite.answeredAt || d.invite.at)}</span></span>
+      <span class="chips"><button class="btn sm" data-a="split-dec" data-v="keep" data-id="${d.id}">Garder en suivi perso</button><button class="btn sm" data-a="split-dec" data-v="resend" data-id="${d.id}">Renvoyer</button><button class="btn sm" data-a="split-dec" data-v="drop" data-id="${d.id}">Retirer</button></span></div>`).join('')}
+  </section>`;
+}
+// Notifications : nouvelle demande reçue, réponse à mes demandes
+let splitSeen = null;
+function splitNotify() {
+  const st = {}; PDEBTS.forEach(d => { if (d.invite) st[d.id] = d.invite.status; });
+  if (splitSeen && loaded) PDEBTS.forEach(d => {
+    if (!d.invite || splitSeen[d.id] === d.invite.status) return;
+    const s = d.invite.status;
+    if (s === 'pending' && mine(borrowerOf(d).uid)) { const t = shortName(lenderOf(d).email) + ' te demande ' + eur(d.amount) + ' · ' + d.name; toast('👥 ' + t); browserNotify('Remboursement partagé', t); }
+    if (s !== 'pending' && splitSeen[d.id] === 'pending' && mine(lenderOf(d).uid)) { const t = shortName(borrowerOf(d).email) + (s === 'accepted' ? ' a accepté sa part (' : ' a refusé sa part (') + eur(d.amount) + ') · ' + d.name; toast((s === 'accepted' ? '✓ ' : '❌ ') + t); browserNotify('Remboursement partagé', t); }
+  });
+  splitSeen = st;
 }
 
 
@@ -3542,6 +3778,7 @@ function vMessages() {
   V.innerHTML = `
   ${linksMsgHTML()}
   ${debtReqsMsgHTML()}
+  ${splitMsgHTML()}
   ${inv.length ? `<section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Invitations</h2>
     ${!ver ? `<div class="alert">${svg('mail')}<span>Pour accepter, confirme d'abord ton adresse email (sécurité : ça prouve que l'invitation t'est bien destinée).</span></div>
       <div class="chips"><button class="btn sm" data-a="verify-send">Recevoir l'email de confirmation</button><button class="btn sm" data-a="verify-check">J'ai confirmé</button></div>` : ''}
@@ -3661,6 +3898,11 @@ document.addEventListener('click', ev => {
     case 'dreq-yes': case 'dreq-no': return debtAnswer(id, b.dataset.r, a === 'dreq-yes');
     case 'debt-hist': UI.debtHist = !UI.debtHist; return render();
     case 'debt-new': return debtDialog(null);
+    case 'split-new': return splitDialog();
+    case 'grp-open': return groupView(id);
+    case 'inv-split': return inviteDialog(id);
+    case 'inv-split-no': return inviteAnswer(id, false);
+    case 'split-dec': return declinedAction(id, b.dataset.v);
     case 'debt-open': return debtView(id);
     case 'debt-goto': { const acc = b.dataset.acc; openAccount(acc); go('budgets'); setTimeout(() => debtView(id), 700); return; }
     case 'loan-new': return loanDialog(null);
