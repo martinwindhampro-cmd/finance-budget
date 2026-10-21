@@ -2614,7 +2614,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '21 oct. · v22';
+const APP_VERSION = '21 oct. · v23';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3829,7 +3829,7 @@ function bkMapDialog(rows, name) {
 }
 function bkLoad(r) {
   r.lines.forEach((l, i) => { l.i = i; l.h = bkHash(l); l.label = l.label || '(sans libellé)'; });
-  const months = [...new Set(r.lines.map(l => l.date.slice(0, 7)))].sort();
+  const all = [...new Set(r.lines.map(l => l.date.slice(0, 7)))].sort(), tracked = all.filter(k => S.months[k] && (S.months[k].expenses.length || S.months[k].incomes.length)), months = tracked.length ? tracked : all;
   const k = months.includes(ck()) ? ck() : months.reduce((a, b) => r.lines.filter(l => l.date.startsWith(b)).length > r.lines.filter(l => l.date.startsWith(a)).length ? b : a, months[0]);
   BK = Object.assign(r, { months, k, acc: active });
   bkView();
@@ -3856,6 +3856,15 @@ function bkMatch(k) {
   // 1. même montant au centime (date la plus proche, libellé ressemblant)
   const P1 = []; A.forEach(a => B.forEach(b => { if (a.amt === b.amt) P1.push({ a, b, s: dd(a, b) - lsim(a.label, b.label) * 3 }); }));
   take(P1, p => R.ok.push(p));
+  // 1b. le relevé contient la fin du mois précédent, que l'app ne suit pas : des lignes du début du mois dans l'app
+  //     sont en fait passées en banque avant le 1er (ex. virement Super U du 30/09 noté le 1/10)
+  const pm = S.months[pk], appPrev = pm && (pm.expenses.length || pm.incomes.length);
+  R.prevInfo = !appPrev && BK.lines.some(l => l.date.startsWith(pk)); R.prevm = []; R.prevc = [];
+  if (R.prevInfo) {
+    const P = BK.lines.filter(l => l.date.startsWith(pk)).map(l => Object.assign({}, l, { day: +l.date.slice(8, 10) })), used = new Set(), PP = [];
+    A.filter(a => !usedA.has(a) && (!a.day || a.day <= 7)).forEach(a => P.forEach(b => { if (a.amt === b.amt || (a.x.isDivided && a.t === 'expenses' && b.amt === -cents(eff(a.x)))) PP.push({ a, b, s: -b.day - lsim(a.label, b.label) * 3 }); }));
+    PP.sort((p, q) => p.s - q.s).forEach(p => { if (usedA.has(p.a) || used.has(p.b)) return; usedA.add(p.a); used.add(p.b); R.prevm.push(p); });
+  }
   // 2. « je n'ai noté que le net » : 1 ligne de l'app = 2 opérations de la banque (ex. −40 payé, +20 remboursé → −20)
   A.filter(a => !usedA.has(a)).forEach(a => {
     let best = null; const fb = B.filter(b => !usedB.has(b));
@@ -3900,7 +3909,7 @@ function bkMatch(k) {
     for (let i = 0; i < cand.length; i++) { test([cand[i]]); for (let j = i + 1; j < cand.length; j++) { test([cand[i], cand[j]]); for (let l = j + 1; l < cand.length; l++) test([cand[i], cand[j], cand[l]]); } }
     if (best) { usedB.add(c); best.free = best.D.filter(b => !usedB.has(b)); best.apps = best.D.map(b => okB.get(b)).filter(Boolean); best.D.forEach(b => usedB.add(b)); R.approx.push(best); }
   });
-  B.filter(b => !usedB.has(b)).forEach(b => (ign.has(b.h) ? R.ign : R.bOnly).push(b));
+  B.filter(b => !usedB.has(b)).forEach(b => (R.prevInfo && b.prev ? R.prevc : ign.has(b.h) ? R.ign : R.bOnly).push(b));
   R.aOnly = A.filter(a => !usedA.has(a));
   R.unpaid = R.ok.filter(p => !p.a.paid).concat(R.near.filter(p => !p.a.paid), R.net.filter(p => !p.a.paid));
   R.last = B.reduce((x, b) => b.day > x ? b.day : x, 0);
@@ -3971,7 +3980,7 @@ function bkLine(b, acts = '') {
 }
 const aLbl = a => `${esc(a.label)}${a.day ? ' · le ' + a.day : ''}`;
 // Chaque écart = une carte : une proposition (corriger, ajouter…) ou « C'est normal ✓ » pour le valider
-function bkItems(R, V) {
+function bkItems(R, V, rest) {
   const I = [], d2 = b => b.date.slice(8, 10) + '/' + b.date.slice(5, 7), sg = v => (v > 0 ? '+' : v < 0 ? '−' : '') + eur(c2e(Math.abs(v)));
   const appRow = a => `<div class="row bkl"><span class="bkd">${a.day ? String(a.day).padStart(2, '0') : '—'}</span><span class="rt"><span class="rn">${esc(a.label)}</span><span class="rs">dans l'app</span></span><b class="num">${a.t === 'expenses' ? '−' + eur(eff(a.x)) : '+' + eur(c2e(a.amt))}</b></div>`;
   R.approx.forEach((g, i) => { const tot = -g.D.reduce((t, b) => t + b.amt, 0);
@@ -3989,6 +3998,16 @@ function bkItems(R, V) {
   // cas reconnus comme normaux : un clic pour valider
   const pend = R.pend.filter(a => !V.after.includes(a));
   if (pend.length) I.push({ key: 'p:' + pend.map(a => a.x.id).sort().join(','), ic: '⏳', ok: 1, t: `Paiements carte pas encore débités (${pend.length})`, s: 'Notés à l\'avance : la banque les débite 1 à 3 jours après', imp: pend.reduce((s, a) => s + cents(eff(a.x)), 0), body: pend.map(appRow).join('') });
+  if (R.prevInfo && rest != null) {
+    const pmn = mlab(kAdd(R.k, -1)).split(' ')[0].toLowerCase(), mn = mlab(R.k).split(' ')[0].toLowerCase();
+    const body = R.prevm.map(p => `<div class="row bkl"><span class="bkd">${d2(p.b)}</span><span class="rt"><span class="rn">${esc(p.a.label)}</span><span class="rs">noté le ${p.a.day || '?'} ${mn} · passé le ${d2(p.b)} : ${esc(bkShow(p.b.label))}</span></span><b class="num ${p.b.amt > 0 ? 'pos' : ''}">${p.b.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt))}</b></div>`).join('')
+      + R.prevc.map(b => bkLine(b, `<span class="note" style="font-size:12px">achat de ${pmn}</span>`)).join('');
+    const sub = [R.prevm.length ? R.prevm.length + ' ligne(s) notée(s) début ' + mn + ', passée(s) fin ' + pmn : '', R.prevc.length ? R.prevc.length + ' achat(s) de ' + pmn + ' débité(s) en ' + mn : ''].filter(Boolean).join(' · ');
+    if (!rest) I.push({ key: 's1:' + R.k + ':' + V.init, ic: '🗓', ok: 1, t: 'Solde au 1er cohérent avec le relevé', s: sub || 'Rien de particulier', imp: 0, body });
+    else I.push({ key: 's1:' + R.k + ':' + V.init, ic: '🗓', t: 'Solde au 1er : ' + eur(c2e(V.init)) + ' dans l\'app, ' + eur(c2e(V.init + rest)) + ' d\'après le relevé', s: 'Calculé avec les opérations de fin ' + pmn + (sub ? ' (' + sub + ')' : ''), imp: rest, body,
+      acts: `<button class="btn sm p" data-recal="${rest}" data-nc="1">Corriger à ${eur(c2e(V.init + rest))}</button>`,
+      why: 'Le solde au 1er doit être le solde de ta banque au 30, moins ce que tu as noté début ' + mn + ' alors que c\'est passé avant, plus les achats de ' + pmn + ' débités en ' + mn + '.' });
+  }
   if (R.start.length) I.push({ key: 's:' + R.start.map(z => z.x ? z.x.id : z.h).sort().join(','), ic: '🗓', ok: 1, t: 'Début de mois : déjà dans le solde de départ', s: 'Passées en banque avant le 1er, ou achats du mois précédent débités le 1er', imp: 0, body: R.start.map(z => z.x ? appRow(z) : bkLine(z)).join('') });
   R.pairs.forEach(p => I.push({ key: 'x:' + p.b.h, ic: '↔', ok: 1, t: 'S\'annulent : ' + eur(c2e(-p.b.amt)) + ' payé, ' + eur(c2e(p.b2.amt)) + ' reçu', s: 'Effet nul sur ton solde, pas besoin de les saisir', imp: 0, body: bkLine(p.b) + bkLine(p.b2) }));
   R.net.forEach(p => I.push({ key: 'm:' + p.a.x.id, ic: '➗', ok: 1, t: (p.same ? 'Payé en 2 fois : ' : 'Noté en net : ') + p.a.label, s: '1 ligne de l\'app = 2 opérations de la banque', imp: 0, body: appRow(p.a) + bkLine(p.b) + bkLine(p.b2) }));
@@ -4000,10 +4019,11 @@ function bkView() {
   const R = bkMatch(BK.k), V = bkBalances(R);
   let E = bkExplain(R, V.after), expl = E.reduce((s, e) => s + e[1], 0);
   const gap = V.bank != null ? V.bank - V.app : null;
-  if (gap != null) { bkStart(R, V.after, gap - expl); if (R.start.length) { E = bkExplain(R, V.after); expl = E.reduce((s, e) => s + e[1], 0); } }
+  if (gap != null && !R.prevInfo) { bkStart(R, V.after, gap - expl); if (R.start.length) { E = bkExplain(R, V.after); expl = E.reduce((s, e) => s + e[1], 0); } }
   const rest = gap != null ? gap - expl : null, m0 = month(BK.k), val = new Set(m0.rec?.val || []);
-  const I = bkItems(R, V), TODO = I.filter(i => !val.has(i.key)), DONE = I.filter(i => val.has(i.key)), normal = TODO.filter(i => i.ok);
-  const done = gap != null && !TODO.length && !rest;
+  const I = bkItems(R, V, rest), TODO = I.filter(i => !val.has(i.key)), DONE = I.filter(i => val.has(i.key)), normal = TODO.filter(i => i.ok);
+  const restH = R.prevInfo ? 0 : rest;                                  // avec le mois précédent dans le relevé, le solde au 1er devient une carte
+  const done = gap != null && !TODO.length && !restH;
   const card = (i, v) => `<div class="bki${v ? ' val' : ''}${i.ok ? ' okc' : ''}"><div class="bkih"><span class="bkic">${i.ic}</span><span class="rt"><span class="rn">${esc(i.t)}</span><span class="rs">${esc(i.s)}</span></span>${i.imp ? `<b class="num bkimp">${i.imp > 0 ? '+' : '−'}${eur(c2e(Math.abs(i.imp)))}</b>` : ''}</div>
     ${v ? '' : `<details class="bkdet"><summary>Détail</summary>${i.body}${i.why ? `<p class="note" style="font-size:12px;margin:4px 0 0">${i.why}</p>` : ''}</details>`}
     <div class="chips">${v ? `<span class="note" style="font-size:12px">✓ validé</span><button class="lnk" data-unval="${esc(i.key)}">Annuler</button>` : (i.acts || '') + `<button class="btn sm${i.ok ? ' p' : ''}" data-val="${esc(i.key)}">C'est normal ✓</button>`}</div></div>`;
@@ -4017,7 +4037,7 @@ function bkView() {
     ${gap == null ? `<p class="note" style="font-size:13px">Saisis le solde affiché par ta banque${R.last ? ' au ' + R.last + '/' + BK.k.slice(5) : ''} pour calculer l'écart.</p>`
       : done ? `<div class="bkok">✓ Relevé pointé${gap ? ' · écart de ' + eur(c2e(gap)) + ' validé' : ' · aucun écart'}</div>`
       : `<div class="bkgap"><b>Écart : ${gap > 0 ? '+' : ''}${eur(c2e(gap))}</b> <span>(banque − app) · ${TODO.length} point${TODO.length > 1 ? 's' : ''} à vérifier</span>
-        ${rest ? `<p>${rest === gap ? 'Aucune opération du mois ne l\'explique' : eur(c2e(rest)) + ' ne s\'expliquent pas par les opérations du mois'} : ça vient d'<b>avant ce mois</b> (solde au 1er). <button class="lnk" data-recal="${rest}">Corriger le solde au 1er de ${rest > 0 ? '+' : ''}${eur(c2e(rest))}</button></p>` : '<p>✓ Tout l\'écart s\'explique par les points ci-dessous.</p>'}
+        ${restH ? `<p>${rest === gap ? 'Aucune opération du mois ne l\'explique' : eur(c2e(rest)) + ' ne s\'expliquent pas par les opérations du mois'} : ça vient d'<b>avant ce mois</b> (solde au 1er). <button class="lnk" data-recal="${rest}">Corriger le solde au 1er de ${rest > 0 ? '+' : ''}${eur(c2e(rest))}</button></p>` : '<p>✓ Tout l\'écart s\'explique par les points ci-dessous.</p>'}
         <span class="bkprog"><i style="width:${I.length ? Math.round(DONE.length / I.length * 100) : 0}%"></i></span></div>`}
     ${normal.length > 1 ? `<button class="btn" data-valall>✓ Valider les ${normal.length} cas normaux reconnus</button>` : ''}
     ${TODO.length ? `<div class="bklist">${TODO.map(i => card(i, false)).join('')}</div>` : ''}
@@ -4029,7 +4049,7 @@ function bkView() {
     ${V.after.length ? `<p class="note" style="font-size:12px">${V.after.length} ligne(s) notée(s) après le ${V.lastDay} : pas encore dans ce relevé, non comptée(s).</p>` : ''}
     <div class="dact"><button class="btn" data-again>Autre fichier</button><button class="btn p" data-x>${done ? 'Terminé' : 'Fermer'}</button></div></div>`;
   // Mémorise le résultat (affiché dans Mouvements)
-  const rec = m0.rec || {}, todo = gap == null ? I.length : TODO.length + (rest ? 1 : 0);
+  const rec = m0.rec || {}, todo = gap == null ? I.length : TODO.length + (restH ? 1 : 0);
   if (rec.gap !== gap || rec.todo !== todo || rec.done !== done || !rec.at || Date.now() - rec.at > 60000) mutate(() => { const mm = month(BK.k); mm.rec = Object.assign({}, mm.rec, { at: Date.now(), gap, todo, done, n: R.B.length }); }, false);
   const re = () => setTimeout(bkView, 30), setVal = fn => { mutate(() => { const mm = month(BK.k); mm.rec = Object.assign({}, mm.rec); mm.rec.val = fn(mm.rec.val || []); }, false); re(); };
   d.onchange = e => { if (e.target.id === 'bk-k') { BK.k = e.target.value; UI.bkBal = null; re(); } if (e.target.id === 'bk-bal') { const v = e.target.value.trim(); UI.bkBal = v ? Math.round(parseAmt(v) * 100) : null; if (UI.bkBal != null) mutate(() => { month(BK.k).rec = Object.assign({}, month(BK.k).rec, { bank: { k: BK.k, amt: UI.bkBal } }); }, false); re(); } };
@@ -4063,7 +4083,7 @@ function bkView() {
     if (b.dataset.unpaid) { mutate(() => { const x = item(); if (x) x.status = b.dataset.t === 'incomes' ? 'En attente' : 'Prévu'; }, false); return re(); }
     if (b.dataset.unhalf) { mutate(() => { const x = month(k).expenses.find(y => y.id === b.dataset.unhalf); if (x) x.isDivided = false; }, '« ½ Partagé » retiré'); return re(); }
     if (b.dataset.open) { const t = b.dataset.t, id = b.dataset.open; d.close(); if (ck() !== k) { cur = new Date(+k.slice(0, 4), +k.slice(5) - 1, 1); } return openPanel(t, id); }
-    if (b.dataset.recal) { const v = +b.dataset.recal; if (!confirm('Le solde au 1er ' + mlab(k).toLowerCase() + ' passera de ' + eur(c2e(V.init)) + ' à ' + eur(c2e(V.init + v)) + '. Continuer ?')) return;
+    if (b.dataset.recal) { const v = +b.dataset.recal; if (!b.dataset.nc && !confirm('Le solde au 1er ' + mlab(k).toLowerCase() + ' passera de ' + eur(c2e(V.init)) + ' à ' + eur(c2e(V.init + v)) + '. Continuer ?')) return;
       mutate(() => { month(k).bankBalance = c2e(V.init + v); }, 'Solde au 1er corrigé'); return re(); }
   };
   if (!d.open) d.showModal();
