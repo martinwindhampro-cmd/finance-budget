@@ -426,6 +426,7 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .bkih{display:flex;gap:10px;align-items:flex-start}.bkih .rt{flex:1;min-width:0}.bkih .rn{font-size:14.5px;white-space:normal}.bkih .rs{font-size:12.5px;white-space:normal}.bkic{font-size:18px;width:26px;text-align:center;flex:none}.bkimp{font-size:14px;white-space:nowrap}
 .bkdet summary{font-size:12.5px;color:var(--mute);cursor:pointer}.bkdet[open] summary{margin-bottom:4px}
 .bkprog{display:block;height:6px;border-radius:9px;background:color-mix(in srgb,var(--warn) 25%,transparent);overflow:hidden;margin-top:4px}.bkprog i{display:block;height:100%;background:var(--ok);border-radius:9px}
+.stmm{padding:8px 4px;gap:10px}.stmm .rt{flex:1;min-width:0}.stmm .rn,.stmm .rs{white-space:normal}
 .bkhr{border:0;border-top:1px dashed var(--line);margin:4px 0;width:100%}
 .sbtns .bkbtn{grid-column:1/-1}
 .bkbtn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;width:100%;height:auto;padding:10px 14px}.bkbtn small{font-size:11.5px;color:var(--mute);font-weight:500}
@@ -534,6 +535,7 @@ html.simple .row .rn{font-size:15px}
     <section class="view" id="v-parametres" hidden></section>
     <section class="view" id="v-messages" hidden></section>
     <section class="view" id="v-comptes" hidden></section>
+    <section class="view" id="v-releves" hidden></section>
   </main>
 </div>
 
@@ -853,6 +855,7 @@ function alerts(k = ck()) {
   }
   o.push(...customAlerts(m, k, c));
   if (k === nowK() && typeof debtAlerts === 'function') o.push(...debtAlerts());
+  if (k === nowK() && typeof stmAlerts === 'function') o.push(...stmAlerts());
   if (!c.past && c.est < num(A.thr)) o.push({ lvl: 'bad', text: `Fin de mois estimée : ${eur(c.est)} (seuil ${eur(A.thr)})`, go: 'accueil' });
   if (!c.past && c.rav < 0) o.push({ lvl: 'bad', text: `Reste à vivre négatif : ${eur(c.rav)}`, go: 'accueil' });
   m.budgets.forEach(b => {
@@ -1525,7 +1528,7 @@ function rowHTML(x, type, k, opt = {}) {
 /* ============================== 8. ÉCRANS ============================== */
 const VIEWS = [['accueil','Accueil','home'],['mouvements','Mouvements','list'],['budgets','Budgets','pie'],['epargne','Épargne','leaf'],['historique','Historique','chart'],['parametres','Paramètres','gear']];
 const MONTH_VIEWS = ['accueil','mouvements','budgets'];
-const EXTRA_VIEWS = [['messages','Messagerie'],['comptes','Tous mes comptes']];
+const EXTRA_VIEWS = [['messages','Messagerie'],['comptes','Tous mes comptes'],['releves','Relevés bancaires']];
 
 function go(v, opt = {}) {
   UI.view = v;
@@ -1541,7 +1544,7 @@ function render() {
     renderChrome();
     if (SIMPLE() && !SIMPLE_VIEWS.includes(UI.view)) UI.view = 'accueil';
   VIEWS.concat(EXTRA_VIEWS).forEach(([v]) => $('v-' + v).hidden = v !== UI.view);
-    ({ accueil: vAccueil, mouvements: vMouvements, budgets: vBudgets, epargne: vEpargne, historique: vHistorique, parametres: vParametres, messages: vMessages, comptes: vComptes })[UI.view]();
+    ({ accueil: vAccueil, mouvements: vMouvements, budgets: vBudgets, epargne: vEpargne, historique: vHistorique, parametres: vParametres, messages: vMessages, comptes: vComptes, releves: vReleves })[UI.view]();
   });
 }
 function renderChrome() {
@@ -2614,7 +2617,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '21 oct. · v24';
+const APP_VERSION = '21 oct. · v25';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -2642,7 +2645,7 @@ function installHTML() {
    L'essentiel seulement : combien il me reste, ajouter une dépense / une rentrée d'argent, ce qui reste à payer.
    Choix propre à chaque appareil (ex. simple sur le téléphone, complet sur le PC).                              */
 const SIMPLE = () => { try { return localStorage.getItem('mode') === 'simple'; } catch (e) { return false; } };
-const SIMPLE_VIEWS = ['accueil', 'mouvements', 'parametres', 'messages', 'comptes'];
+const SIMPLE_VIEWS = ['accueil', 'mouvements', 'parametres', 'messages', 'comptes', 'releves'];
 function setMode(m) {
   try { localStorage.setItem('mode', m); } catch (e) {}
   document.documentElement.classList.toggle('simple', m === 'simple');
@@ -3722,7 +3725,10 @@ function splitNotify() {
 let BK = null;            // { lines:[{date,amt(centimes),label,h,i}], bal:{date,amt}|null, src, k }
 const c2e = c => c / 100;
 const cents = v => Math.round(num(v) * 100);
-const bkHash = l => l.date + '|' + l.amt + '|' + l.label.toLowerCase().replace(/\s+/g, ' ').slice(0, 40);
+// Identifiant d'une opération : date | montant | début du libellé sans ponctuation (identique en CSV, Excel ou OFX)
+const nk = s => nrm(s).replace(/[^a-z0-9]/g, '').slice(0, 24);
+const bkHash = l => l.date + '|' + l.amt + '|' + nk(l.label);
+const hkey = h => { const m = /^((?:[bxnug]:)?)(\d{4}-\d{2}-\d{2})\|(-?\d+)\|([^,]*)$/.exec(String(h)); return m ? m[1] + m[2] + '|' + m[3] + '|' + nk(m[4]) : h; };   // anciens identifiants
 const nrm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const words = s => new Set(nrm(s).replace(/[^a-z ]/g, ' ').split(' ').filter(w => w.length >= 3 && !/^(sepa|prlv|prelevement|paiement|carte|vir|virement|achat|inst|recu|emis|faveur|vers|from|card|payment|transfer|europe|fr|france|sas|sarl)$/.test(w)));
 function lsim(a, b) { const A = words(a), B = words(b); if (!A.size || !B.size) return 0; let n = 0; A.forEach(w => { if ([...B].some(v => v.startsWith(w) || w.startsWith(v))) n++; }); return n / Math.min(A.size, B.size); }
@@ -3815,14 +3821,21 @@ async function bankImport(file) {
       const csv = XLSX.utils.sheet_to_csv(ws, { FS: ';', blankrows: false });
       const r = bkParse(csv, file.name);
       if (r.need || !r.lines.length) return r.rows && r.rows.length > 1 ? bkMapDialog(r.rows, file.name) : toast('Fichier Excel non reconnu');
-      return bkLoad(r);
+      return bkStore(r, file.name);
     } catch (e) { return toast('⚠ Fichier Excel illisible (connexion ?) : essaie l\'export CSV'); }
   }
   let txt = new TextDecoder('utf-8').decode(buf);
   if (txt.includes('�')) try { txt = new TextDecoder('windows-1252').decode(buf); } catch (e) {}   // vieux exports en ISO-8859-1
   const r = bkParse(txt.replace(/^﻿/, ''), file.name);
   if (r.need || !r.lines.length) return r.rows && r.rows.length > 1 ? bkMapDialog(r.rows, file.name) : toast('Fichier non reconnu : exporte le relevé en CSV, Excel, OFX ou QIF');
-  bkLoad(r);
+  bkStore(r, file.name);
+}
+// Garde le relevé dans l'historique, puis ouvre le pointage avec tous les relevés connus
+async function bkStore(r, name) {
+  const all = [...new Set(r.lines.map(l => l.date.slice(0, 7)))].sort(), tr = all.filter(k => S.months[k] && (S.months[k].expenses.length || S.months[k].incomes.length));
+  const k = tr.includes(ck()) ? ck() : tr[tr.length - 1] || all[all.length - 1];
+  try { const s = await stmSave(r, name); toast('📄 Relevé enregistré : du ' + dmy(s.from) + ' au ' + dmy(s.to)); if (UI.view === 'releves') render(); return stmOpen(k); }
+  catch (e) { toast('⚠ Relevé non enregistré (' + (e.code || e.message) + ') : pointage sans sauvegarde'); bkLoad(r, k); }
 }
 // Colonnes à choisir à la main si le format n'est pas reconnu
 function bkMapDialog(rows, name) {
@@ -3834,20 +3847,20 @@ function bkMapDialog(rows, name) {
     onSave: v => {
       const ix = s => O.indexOf(s), g = { date: ix(v.d), label: ix(v.l), amount: ix(v.a), debit: ix(v.db), credit: ix(v.cr), fee: -1, state: -1, bal: -1 };
       const lines = csvLines(rows, hi, g); if (!lines.length) { toast('Aucune opération lue avec ces colonnes'); return false; }
-      setTimeout(() => bkLoad({ lines, bal: null, src: 'CSV' }), 50);
+      setTimeout(() => bkStore({ lines, bal: null, src: 'CSV' }, name), 50);
     } });
 }
-function bkLoad(r) {
+function bkLoad(r, want) {
   r.lines.forEach((l, i) => { l.i = i; l.h = bkHash(l); l.label = l.label || '(sans libellé)'; });
   const all = [...new Set(r.lines.map(l => l.date.slice(0, 7)))].sort(), tracked = all.filter(k => S.months[k] && (S.months[k].expenses.length || S.months[k].incomes.length)), months = tracked.length ? tracked : all;
-  const k = months.includes(ck()) ? ck() : months.reduce((a, b) => r.lines.filter(l => l.date.startsWith(b)).length > r.lines.filter(l => l.date.startsWith(a)).length ? b : a, months[0]);
+  const k = want && months.includes(want) ? want : months.includes(ck()) ? ck() : months.reduce((a, b) => r.lines.filter(l => l.date.startsWith(b)).length > r.lines.filter(l => l.date.startsWith(a)).length ? b : a, months[0]);
   BK = Object.assign(r, { months, k, acc: active });
   bkView();
 }
 
 /* ---------- Rapprochement ---------- */
 function bkMatch(k) {
-  const m = month(k), ign = new Set(m.rec?.ign || []);
+  const m = month(k), ign = new Set((m.rec?.ign || []).map(hkey));
   const pk = kAdd(k, -1);
   const B = BK.lines.filter(l => l.date.startsWith(k)).map(l => { const b = Object.assign({}, l, { day: +l.date.slice(8, 10) });
     const cd = l.label.match(/\b(\d{2})\/(\d{2})\b(?!\/\d)/);                       // date de l'achat par carte (« 30/09 ») : débité 1 à 3 jours après
@@ -3859,7 +3872,7 @@ function bkMatch(k) {
   const usedB = new Set(), usedA = new Set();
   // 0. regroupements déjà décidés (remboursement compté en net)
   R.grp = [];
-  (m.rec?.grp || []).forEach(g => { const bs = g.h.map(h => B.find(b => b.h === h && !usedB.has(b))), a = g.id ? A.find(x => x.x.id === g.id && !usedA.has(x)) : null;
+  (m.rec?.grp || []).forEach(g => { const bs = g.h.map(h => B.find(b => b.h === hkey(h) && !usedB.has(b))), a = g.id ? A.find(x => x.x.id === g.id && !usedA.has(x)) : null;
     if (bs.every(Boolean) && (a || !g.id)) { bs.forEach(b => usedB.add(b)); if (a) usedA.add(a); R.grp.push({ a, bs, g }); } });
   const dd = (a, b) => a.day == null ? 12 : Math.min(Math.abs(a.day - b.day), b.op ? Math.abs(a.day - b.op) : 99);
   const take = (list, fn) => list.sort((p, q) => p.s - q.s).forEach(p => { if (usedA.has(p.a) || usedB.has(p.b)) return; usedA.add(p.a); usedB.add(p.b); fn(p); });
@@ -3902,7 +3915,7 @@ function bkMatch(k) {
   //    (ex. carte SNCF 15 € + billet 7,20 € payés pour quelqu'un, 22,50 € remboursés → 0,30 € de trop)
   R.approx = [];
   const okB = new Map(R.ok.map(p => [p.b, p.a]));
-  const nog = new Set(m.rec?.nogrp || []);
+  const nog = new Set((m.rec?.nogrp || []).map(hkey));
   B.filter(b => !usedB.has(b) && !ign.has(b.h) && !nog.has(b.h) && b.amt > 0).sort((x, y) => y.amt - x.amt).forEach(c => {
     const cand = B.filter(b => b.amt < 0 && (!usedB.has(b) || okB.has(b)) && !ign.has(b.h) && (b.op || b.day) >= c.day - 7 && (b.op || b.day) <= c.day && !R.approx.some(g => g.D.includes(b)));
     const tol = 50; let best = null;
@@ -3917,7 +3930,10 @@ function bkMatch(k) {
       if (!best || sc < best.sc) best = { c, D, diff, sc };
     };
     for (let i = 0; i < cand.length; i++) { test([cand[i]]); for (let j = i + 1; j < cand.length; j++) { test([cand[i], cand[j]]); for (let l = j + 1; l < cand.length; l++) test([cand[i], cand[j], cand[l]]); } }
-    if (best) { usedB.add(c); best.free = best.D.filter(b => !usedB.has(b)); best.apps = best.D.map(b => okB.get(b)).filter(Boolean); best.D.forEach(b => usedB.add(b)); R.approx.push(best); }
+    if (best) { usedB.add(c); best.free = best.D.filter(b => !usedB.has(b)); best.apps = best.D.map(b => okB.get(b)).filter(Boolean); best.D.forEach(b => usedB.add(b));
+      // la différence est peut-être déjà notée à la main (ex. « +0,30 € surplus Marion »)
+      if (best.diff) { const na = A.find(a => !usedA.has(a) && a.amt === best.diff && (!a.day || Math.abs(a.day - c.day) <= 5)); if (na) { usedA.add(na); best.netA = na; } }
+      R.approx.push(best); }
   });
   B.filter(b => !usedB.has(b)).forEach(b => (R.prevInfo && b.prev ? R.prevc : ign.has(b.h) ? R.ign : R.bOnly).push(b));
   R.aOnly = A.filter(a => !usedA.has(a));
@@ -3961,7 +3977,7 @@ function bkExplain(R, after) {
   const E = [];
   const add = (txt, v) => { if (v) E.push([txt, v]); };
   add('Opérations seulement à la banque', R.bOnly.reduce((s, b) => s + b.amt, 0));
-  add('Remboursements à vérifier', R.approx.reduce((s, g) => s + g.c.amt + g.free.reduce((t, b) => t + b.amt, 0), 0));
+  add('Remboursements à vérifier', R.approx.reduce((s, g) => s + g.c.amt + g.free.reduce((t, b) => t + b.amt, 0) - (g.netA && g.netA.paid ? g.netA.amt : 0), 0));
   add('Opérations ignorées', R.ign.reduce((s, b) => s + b.amt, 0));
   add('Montants différents', R.near.filter(p => p.a.paid).reduce((s, p) => s + p.b.amt - p.a.amt, 0));
   add('Passées en banque mais « à payer » dans l\'app', R.unpaid.reduce((s, p) => s + p.b.amt + (p.b2 ? p.b2.amt : 0), 0));
@@ -3973,18 +3989,7 @@ function bkExplain(R, after) {
 }
 
 /* ---------- Écran ---------- */
-function bankCheck() {
-  const d = $('dlg'); d.onclick = null; d.oninput = null; d.onchange = null;
-  const r = month(ck()).rec;
-  d.innerHTML = `<div class="dw"><div class="dh"><h2>🏦 Pointer avec le relevé</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
-    <p class="note">Télécharge les opérations depuis l'appli ou le site de ta banque, au format <b>Excel</b>, <b>CSV</b>, <b>OFX</b> ou <b>QIF</b> (Crédit Agricole, Boursorama, Revolut et la plupart des banques sont reconnus). L'app compare chaque opération avec « ${esc(accName())} » et t'explique les écarts au centime près.</p>
-    <p class="note" style="font-size:13px">Les opérations qui s'annulent (ex. −22 € payés pour quelqu'un puis +22 € remboursés) sont reconnues : pas besoin de les saisir. Le fichier reste sur ton appareil, il n'est envoyé nulle part.</p>
-    ${r?.at ? `<p class="note" style="font-size:13px">Dernière vérification de ${esc(mlab(ck()).toLowerCase())} : ${fmtD(r.at)}${r.gap === 0 ? ' · ✓ aucun écart' : r.gap != null ? ' · écart ' + eur(c2e(r.gap)) : ''}.</p>` : ''}
-    <button class="btn p big" data-pick>${svg('up', 18)} Choisir le fichier du relevé</button>
-    <details class="note" style="font-size:13px"><summary>Où trouver ce fichier ?</summary><p style="margin:6px 0 0">• <b>Crédit Agricole</b> : site web › Mes comptes › le compte › « Télécharger » (Excel ou CSV).<br>• <b>Boursorama</b> : site web › le compte › Mouvements › « Exporter » (CSV).<br>• <b>Revolut</b> : appli › le compte › ⋯ › Relevé › format Excel/CSV, sur la période voulue.</p></details></div>`;
-  d.onclick = e => { if (e.target.closest('[data-x]')) return d.close(); if (e.target.closest('[data-pick]')) $('bkfile').click(); };
-  if (!d.open) d.showModal();
-}
+function bankCheck() { go('releves'); }
 function bkLine(b, acts = '') {
   return `<div class="row bkl"><span class="bkd">${b.date.slice(8, 10)}/${b.date.slice(5, 7)}</span><span class="rt"><span class="rn" title="${esc(b.label)}">${esc(bkShow(b.label))}</span></span><b class="num ${b.amt > 0 ? 'pos' : ''}">${b.amt > 0 ? '+' : ''}${eur(c2e(b.amt))}</b>${acts ? `<span class="chips">${acts}</span>` : ''}</div>`;
 }
@@ -3994,9 +3999,9 @@ function bkItems(R, V, rest) {
   const I = [], d2 = b => b.date.slice(8, 10) + '/' + b.date.slice(5, 7), sg = v => (v > 0 ? '+' : v < 0 ? '−' : '') + eur(c2e(Math.abs(v)));
   const appRow = a => `<div class="row bkl"><span class="bkd">${a.day ? String(a.day).padStart(2, '0') : '—'}</span><span class="rt"><span class="rn">${esc(a.label)}</span><span class="rs">dans l'app</span></span><b class="num">${a.t === 'expenses' ? '−' + eur(eff(a.x)) : '+' + eur(c2e(a.amt))}</b></div>`;
   R.approx.forEach((g, i) => { const tot = -g.D.reduce((t, b) => t + b.amt, 0);
-    I.push({ key: 'g:' + g.c.h, ic: '🤝', t: `Remboursement : reçu ${eur(c2e(g.c.amt))} pour ${eur(c2e(tot))} payés`, s: g.diff > 0 ? eur(c2e(g.diff)) + ' reçus en trop' + (g.D.length > 1 ? ' (' + g.D.map(b => eur(c2e(-b.amt))).join(' + ') + ')' : '') : g.diff < 0 ? 'il manque ' + eur(c2e(-g.diff)) : 'montant exact', imp: g.c.amt + g.free.reduce((t, b) => t + b.amt, 0),
-      body: bkLine(g.c) + g.D.map(b => bkLine(b, g.free.includes(b) ? '' : '<span class="note" style="font-size:12px">notée dans l\'app</span>')).join(''),
-      acts: `<button class="btn sm p" data-gnet="${i}">Compter en net${g.diff ? ' (' + sg(g.diff) + ')' : ''}</button><button class="btn sm" data-gdet="${i}">Tout détailler</button><button class="btn sm" data-gno="${i}">Pas lié</button>`,
+    I.push({ key: 'g:' + g.c.h, ic: '🤝', t: `Remboursement : reçu ${eur(c2e(g.c.amt))} pour ${eur(c2e(tot))} payés`, s: g.diff > 0 ? eur(c2e(g.diff)) + ' reçus en trop' + (g.D.length > 1 ? ' (' + g.D.map(b => eur(c2e(-b.amt))).join(' + ') + ')' : '') : g.diff < 0 ? 'il manque ' + eur(c2e(-g.diff)) : 'montant exact', imp: g.c.amt + g.free.reduce((t, b) => t + b.amt, 0) - (g.netA && g.netA.paid ? g.netA.amt : 0),
+      body: bkLine(g.c) + g.D.map(b => bkLine(b, g.free.includes(b) ? '' : '<span class="note" style="font-size:12px">notée dans l\'app</span>')).join('') + (g.netA ? `<p class="note" style="font-size:12px;margin:4px 0 0">Différence déjà notée dans l'app : « ${esc(g.netA.label)} » ${sg(g.netA.amt)}</p>` : ''),
+      acts: `<button class="btn sm p" data-gnet="${i}">Compter en net${g.netA ? ' (déjà noté)' : g.diff ? ' (' + sg(g.diff) + ')' : ''}</button><button class="btn sm" data-gdet="${i}">Tout détailler</button><button class="btn sm" data-gno="${i}">Pas lié</button>`,
       why: 'Compter en net : l\'app garde seulement la différence, sans gonfler tes dépenses et recettes.' }); });
   R.near.forEach(p => I.push({ key: 'n:' + p.b.h, ic: '⚠️', t: 'Montant différent : ' + p.a.label, s: `app ${eur(c2e(Math.abs(p.a.amt)))} · banque ${eur(c2e(Math.abs(p.b.amt)))} (${sg(p.b.amt - p.a.amt)})${p.a.x.fx ? ' · paiement en ' + p.a.x.fx.cur + ' : taux et frais de la banque' : ''}`, imp: p.a.paid ? p.b.amt - p.a.amt : p.b.amt,
     body: bkLine(p.b), acts: `<button class="btn sm p" data-fix="${p.a.x.id}" data-t="${p.a.t}" data-v="${Math.abs(p.b.amt)}"${p.a.paid ? '' : ' data-pay="1"'}>Corriger à ${eur(c2e(Math.abs(p.b.amt)))}</button>` }));
@@ -4013,7 +4018,7 @@ function bkItems(R, V, rest) {
     const body = R.prevm.map(p => `<div class="row bkl"><span class="bkd">${d2(p.b)}</span><span class="rt"><span class="rn">${esc(p.a.label)}</span><span class="rs">noté le ${p.a.day || '?'} ${mn} · passé le ${d2(p.b)} : ${esc(bkShow(p.b.label))}</span></span><b class="num ${p.b.amt > 0 ? 'pos' : ''}">${p.b.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt))}</b></div>`).join('')
       + R.prevc.map(b => bkLine(b, `<span class="note" style="font-size:12px">achat de ${pmn}</span>`)).join('');
     const sub = [R.prevm.length ? R.prevm.length + ' ligne(s) notée(s) début ' + mn + ', passée(s) fin ' + pmn : '', R.prevc.length ? R.prevc.length + ' achat(s) de ' + pmn + ' débité(s) en ' + mn : ''].filter(Boolean).join(' · ');
-    if (!rest) I.push({ key: 's1:' + R.k + ':' + V.init, ic: '🗓', ok: 1, t: 'Solde au 1er cohérent avec le relevé', s: sub || 'Rien de particulier', imp: 0, body });
+    if (!rest) I.push({ key: 's1:' + R.k + ':' + V.init, ic: '🗓', ok: 1, auto: 1, t: 'Solde au 1er cohérent avec le relevé', s: sub || 'Rien de particulier', imp: 0, body });
     else I.push({ key: 's1:' + R.k + ':' + V.init, ic: '🗓', t: 'Solde au 1er : ' + eur(c2e(V.init)) + ' dans l\'app, ' + eur(c2e(V.init + rest)) + ' d\'après le relevé', s: 'Calculé avec les opérations de fin ' + pmn + (sub ? ' (' + sub + ')' : ''), imp: rest, body,
       acts: `<button class="btn sm p" data-recal="${rest}" data-nc="1">Corriger à ${eur(c2e(V.init + rest))}</button>`,
       why: 'Le solde au 1er doit être le solde de ta banque au 30, moins ce que tu as noté début ' + mn + ' alors que c\'est passé avant, plus les achats de ' + pmn + ' débités en ' + mn + '.' });
@@ -4030,13 +4035,13 @@ function bkView() {
   let E = bkExplain(R, V.after), expl = E.reduce((s, e) => s + e[1], 0);
   const gap = V.bank != null ? V.bank - V.app : null;
   if (gap != null && !R.prevInfo) { bkStart(R, V.after, gap - expl); if (R.start.length) { E = bkExplain(R, V.after); expl = E.reduce((s, e) => s + e[1], 0); } }
-  const rest = gap != null ? gap - expl : null, m0 = month(BK.k), val = new Set(m0.rec?.val || []);
-  const I = bkItems(R, V, rest), TODO = I.filter(i => !val.has(i.key)), DONE = I.filter(i => val.has(i.key)), normal = TODO.filter(i => i.ok);
+  const rest = gap != null ? gap - expl : null, m0 = month(BK.k), val = new Set((m0.rec?.val || []).map(hkey));
+  const I = bkItems(R, V, rest), TODO = I.filter(i => !val.has(i.key) && !i.auto), DONE = I.filter(i => val.has(i.key) || i.auto), normal = TODO.filter(i => i.ok);
   const restH = R.prevInfo ? 0 : rest;                                  // avec le mois précédent dans le relevé, le solde au 1er devient une carte
   const done = gap != null && !TODO.length && !restH;
   const card = (i, v) => `<div class="bki${v ? ' val' : ''}${i.ok ? ' okc' : ''}"><div class="bkih"><span class="bkic">${i.ic}</span><span class="rt"><span class="rn">${esc(i.t)}</span><span class="rs">${esc(i.s)}</span></span>${i.imp ? `<b class="num bkimp">${i.imp > 0 ? '+' : '−'}${eur(c2e(Math.abs(i.imp)))}</b>` : ''}</div>
     ${v ? '' : `<details class="bkdet"><summary>Détail</summary>${i.body}${i.why ? `<p class="note" style="font-size:12px;margin:4px 0 0">${i.why}</p>` : ''}</details>`}
-    <div class="chips">${v ? `<span class="note" style="font-size:12px">✓ validé</span><button class="lnk" data-unval="${esc(i.key)}">Annuler</button>` : (i.acts || '') + `<button class="btn sm${i.ok ? ' p' : ''}" data-val="${esc(i.key)}">C'est normal ✓</button>`}</div></div>`;
+    <div class="chips">${v ? `<span class="note" style="font-size:12px">✓ ${i.auto ? 'vérifié automatiquement' : 'validé'}</span>${i.auto ? '' : `<button class="lnk" data-unval="${esc(i.key)}">Annuler</button>`}` : (i.acts || '') + `<button class="btn sm${i.ok ? ' p' : ''}" data-val="${esc(i.key)}">C'est normal ✓</button>`}</div></div>`;
   const d = $('dlg'); d.onclick = null; d.oninput = null; d.onchange = null;
   d.innerHTML = `<div class="dw bkw"><div class="dh"><h2>🏦 Pointage · ${esc(accName())}</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
     ${BK.months.length > 1 ? `<label class="fl" style="margin:0">Mois<select class="in" id="bk-k">${BK.months.map(k => `<option value="${k}" ${k === BK.k ? 'selected' : ''}>${esc(mlab(k))} · ${BK.lines.filter(l => l.date.startsWith(k)).length} op.</option>`).join('')}</select></label>` : `<span class="note">${esc(mlab(BK.k))} · ${R.B.length} opérations du relevé</span>`}
@@ -4057,7 +4062,7 @@ function bkView() {
       ${R.ign.map(b => bkLine(b, `<button class="lnk" data-unign="${esc(b.h)}">Annuler</button>`)).join('')}</div></details>` : ''}
     <details class="bks"><summary><b>Pointées automatiquement</b><span class="bkn">${R.ok.length + R.half.filter(h => h.r).length}</span></summary><div class="bkb">${R.ok.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${aLbl(p.a)}</span><span class="rs">${esc(bkShow(p.b.label))}</span></span><b class="num ${p.b.amt > 0 ? 'pos' : ''}">${p.b.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt))}</b></div>`).join('') + R.half.filter(h => h.r).map(h => bkLine(h.r, '<span class="note" style="font-size:12px">½ remboursé</span>')).join('')}</div></details>
     ${V.after.length ? `<p class="note" style="font-size:12px">${V.after.length} ligne(s) notée(s) après le ${V.lastDay} : pas encore dans ce relevé, non comptée(s).</p>` : ''}
-    <div class="dact"><button class="btn" data-again>Autre fichier</button><button class="btn p" data-x>${done ? 'Terminé' : 'Fermer'}</button></div></div>`;
+    <div class="dact"><button class="btn" data-again>Déposer un relevé</button><button class="btn p" data-x>${done ? 'Terminé' : 'Fermer'}</button></div></div>`;
   // Mémorise le résultat (affiché dans Mouvements)
   const rec = m0.rec || {}, todo = gap == null ? I.length : TODO.length + (restH ? 1 : 0);
   if (rec.gap !== gap || rec.todo !== todo || rec.done !== done || !rec.at || Date.now() - rec.at > 60000) mutate(() => { const mm = month(BK.k); mm.rec = Object.assign({}, mm.rec, { at: Date.now(), gap, todo, done, n: R.B.length }); }, false);
@@ -4065,27 +4070,28 @@ function bkView() {
   d.onchange = e => { if (e.target.id === 'bk-k') { BK.k = e.target.value; UI.bkBal = null; re(); } if (e.target.id === 'bk-bal') { const v = e.target.value.trim(); UI.bkBal = v ? Math.round(parseAmt(v) * 100) : null; if (UI.bkBal != null) mutate(() => { month(BK.k).rec = Object.assign({}, month(BK.k).rec, { bank: { k: BK.k, amt: UI.bkBal } }); }, false); re(); } };
   d.onclick = e => {
     const b = e.target.closest('button,[data-x]'); if (!b) return; const k = BK.k;
-    if (b.dataset.x !== undefined) { d.close(); BK = null; UI.bkBal = null; return render(); }
+    if (b.dataset.x !== undefined) { d.close(); BK = null; UI.bkBal = null; if (STM[active]) STM[active].at = 0; return render(); }
     if (b.dataset.again !== undefined) return $('bkfile').click();
     if (b.dataset.val) return setVal(v => [...new Set([...v, b.dataset.val])]);
-    if (b.dataset.unval) return setVal(v => v.filter(z => z !== b.dataset.unval));
+    if (b.dataset.unval) return setVal(v => v.filter(z => hkey(z) !== b.dataset.unval));
     if (b.dataset.valall !== undefined) return setVal(v => [...new Set([...v, ...normal.map(i => i.key)])]);
     if (b.dataset.add) return bkAdd([R.B.find(x => x.i === +b.dataset.add)]), re();
     if (b.dataset.addall !== undefined) return bkAdd(R.bOnly), re();
     if (b.dataset.gnet) { const g = R.approx[+b.dataset.gnet], A_ = g.apps;
       if (A_.length && !confirm('Compter en net : ' + A_.map(a => '« ' + a.label + ' » ' + eur(c2e(Math.abs(a.amt)))).join(', ') + ' (payé pour l\'autre personne) sera retiré de l\'app' + (g.diff ? ', remplacé par une ligne de ' + (g.diff > 0 ? '+' : '−') + eur(c2e(Math.abs(g.diff))) : '') + '. Continuer ?')) return;
-      const nid = g.diff ? uid() : null, nm = 'Écart remboursement ' + bkName(g.D[0].label);
+      const nid = g.netA ? g.netA.x.id : g.diff ? uid() : null, nm = 'Écart remboursement ' + bkName(g.D[0].label);
       mutate(() => { const mm = month(k);
         A_.forEach(a => { mm[a.t] = mm[a.t].filter(x => x.id !== a.x.id); });
-        if (g.diff > 0) mm.incomes.unshift({ id: nid, name: nm, amount: c2e(g.diff), date: String(g.c.day), status: 'Reçu', isFixed: false, bk: 1 });
-        if (g.diff < 0) mm.expenses.unshift({ id: nid, name: nm, amount: c2e(-g.diff), date: String(g.c.day), status: 'Payé', cat: 'Autre', isFixed: false, isDivided: false, bk: 1 });
-        mm.rec = Object.assign({}, mm.rec); mm.rec.grp = (mm.rec.grp || []).concat([{ h: [g.c.h, ...g.D.map(x => x.h)], id: nid, rm: A_.map(a => ({ t: a.t, x: JSON.parse(JSON.stringify(a.x)) })) }]); }, 'Compté en net');
+        if (g.netA) { const x = mm[g.netA.t].find(y => y.id === g.netA.x.id); if (x) x.status = g.netA.t === 'incomes' ? 'Reçu' : 'Payé'; }
+        else if (g.diff > 0) mm.incomes.unshift({ id: nid, name: nm, amount: c2e(g.diff), date: String(g.c.day), status: 'Reçu', isFixed: false, bk: 1 });
+        else if (g.diff < 0) mm.expenses.unshift({ id: nid, name: nm, amount: c2e(-g.diff), date: String(g.c.day), status: 'Payé', cat: 'Autre', isFixed: false, isDivided: false, bk: 1 });
+        mm.rec = Object.assign({}, mm.rec); mm.rec.grp = (mm.rec.grp || []).concat([{ h: [g.c.h, ...g.D.map(x => x.h)], id: nid, own: !!g.netA, rm: A_.map(a => ({ t: a.t, x: JSON.parse(JSON.stringify(a.x)) })) }]); }, 'Compté en net');
       return re(); }
     if (b.dataset.gdet) { const g = R.approx[+b.dataset.gdet]; bkAdd([g.c, ...g.free]); return re(); }
     if (b.dataset.gno) { const g = R.approx[+b.dataset.gno]; mutate(() => { const mm = month(k); mm.rec = Object.assign({}, mm.rec); mm.rec.nogrp = [...new Set([...(mm.rec.nogrp || []), g.c.h])]; }, false); return re(); }
-    if (b.dataset.gundo) { const z = R.grp.find(x => x.g.h[0] === b.dataset.gundo); if (!z) return; mutate(() => { const mm = month(k); mm.rec.grp = (mm.rec.grp || []).filter(x => x !== mm.rec.grp.find(y => y.h[0] === z.g.h[0])); if (z.g.id) { mm.incomes = mm.incomes.filter(x => x.id !== z.g.id); mm.expenses = mm.expenses.filter(x => x.id !== z.g.id); } (z.g.rm || []).forEach(r => { if (!mm[r.t].some(x => x.id === r.x.id)) mm[r.t].unshift(r.x); }); }, 'Regroupement annulé'); return re(); }
+    if (b.dataset.gundo) { const z = R.grp.find(x => x.g.h[0] === b.dataset.gundo); if (!z) return; mutate(() => { const mm = month(k); mm.rec.grp = (mm.rec.grp || []).filter(x => x !== mm.rec.grp.find(y => y.h[0] === z.g.h[0])); if (z.g.id && !z.g.own) { mm.incomes = mm.incomes.filter(x => x.id !== z.g.id); mm.expenses = mm.expenses.filter(x => x.id !== z.g.id); } (z.g.rm || []).forEach(r => { if (!mm[r.t].some(x => x.id === r.x.id)) mm[r.t].unshift(r.x); }); }, 'Regroupement annulé'); return re(); }
     if (b.dataset.ign) { mutate(() => { const mm = month(k); mm.rec = Object.assign({}, mm.rec); mm.rec.ign = [...new Set([...(mm.rec.ign || []), b.dataset.ign])]; }, false); return re(); }
-    if (b.dataset.unign) { mutate(() => { const mm = month(k); mm.rec.ign = (mm.rec.ign || []).filter(h => h !== b.dataset.unign); }, false); return re(); }
+    if (b.dataset.unign) { mutate(() => { const mm = month(k); mm.rec.ign = (mm.rec.ign || []).filter(h => hkey(h) !== hkey(b.dataset.unign)); }, false); return re(); }
     const item = () => month(k)[b.dataset.t].find(x => x.id === (b.dataset.fix || b.dataset.paid || b.dataset.unpaid || b.dataset.open));
     if (b.dataset.fix) { mutate(() => { const x = item(); if (x) { x.amount = c2e(+b.dataset.v); if (b.dataset.pay) x.status = b.dataset.t === 'incomes' ? 'Reçu' : 'Payé'; } }, 'Montant corrigé'); return re(); }
     if (b.dataset.paid) { mutate(() => { const x = item(); if (x) x.status = b.dataset.t === 'incomes' ? 'Reçu' : 'Payé'; }, false); return re(); }
@@ -4116,7 +4122,108 @@ function bkShow(s) {
 // Petit rappel dans Mouvements
 function bkNoteHTML() {
   const r = month(ck()).rec;
-  return `<button class="btn bkbtn" data-a="bank-check">🏦 Pointer avec le relevé${r?.at ? `<small>${r.done || (r.gap === 0 && !r.todo) ? '✓ pointé le ' + fmtD(r.at) + (r.gap ? ' · écart ' + eur(c2e(r.gap)) + ' validé' : '') : (r.todo || '?') + ' point(s) à vérifier · ' + fmtD(r.at)}</small>` : '<small>Excel, CSV, OFX ou QIF de ta banque</small>'}</button>`;
+  return `<button class="btn bkbtn" data-a="bank-check">🏦 Relevés & pointage${r?.at ? `<small>${r.done || (r.gap === 0 && !r.todo) ? '✓ pointé le ' + fmtD(r.at) + (r.gap ? ' · écart ' + eur(c2e(r.gap)) + ' validé' : '') : (r.todo || '?') + ' point(s) à vérifier · ' + fmtD(r.at)}</small>` : '<small>Excel, CSV, OFX ou QIF de ta banque</small>'}</button>`;
+}
+
+
+/* ============================== RELEVÉS BANCAIRES (historique) ==============================
+   Chaque relevé déposé est gardé dans accounts/{compte}/statements/{du}_{au} (membres du compte seulement),
+   avec ses opérations (JSON). Les relevés qui se chevauchent sont fusionnés sans doublon : le pointage d'un mois
+   utilise toutes les opérations connues. Un même relevé redéposé (même période) remplace l'ancien.            */
+let STM = {};                                     // compte → { at, L:[relevés] }
+const stmCol = (acc = active) => accDoc(acc).collection('statements');
+async function stmLoad(acc = active, force) {
+  const c = STM[acc];
+  if (c && !force && Date.now() - c.at < 60000) return c.L;
+  const q = await stmCol(acc).get();
+  const L = q.docs.map(d => { const x = d.data(); let lines = []; try { lines = JSON.parse(x.lines || '[]'); } catch (e) {} return Object.assign({ id: d.id }, x, { L: lines }); })
+    .sort((a, b) => b.to.localeCompare(a.to) || b.at - a.at);
+  STM[acc] = { at: Date.now(), L }; return L;
+}
+async function stmSave(r, name) {
+  const L = r.lines.map(l => Object.assign({ d: l.date, a: l.amt, l: String(l.label || '').slice(0, 160) }, l.bal != null ? { b: l.bal } : {}));
+  const ds = L.map(l => l.d).sort(), from = ds[0], to = ds[ds.length - 1], id = from + '_' + to;
+  const doc = { name: String(name || '').slice(0, 80), src: r.src || '', from, to, n: L.length, at: Date.now(), by: currentUser.uid, byEmail: currentUser.email || '', lines: JSON.stringify(L) };
+  if (r.bal?.running) doc.running = true; else if (r.bal?.amt != null && r.bal.date) doc.bal = { date: r.bal.date, amt: r.bal.amt };
+  await stmCol().doc(id).set(doc);
+  if (STM[active]) STM[active].at = 0;
+  return { id, from, to };
+}
+// Toutes les opérations connues, sans doublon (chaque opération gardée autant de fois que dans le relevé qui en a le plus)
+function stmMerged(list) {
+  const keep = new Map();
+  list.slice().reverse().forEach(s => { const c = new Map();
+    s.L.forEach(l => { const x = { date: l.d, amt: l.a, label: l.l, bal: l.b ?? null }, h = bkHash(x); (c.get(h) || c.set(h, []).get(h)).push(x); });
+    c.forEach((arr, h) => { if (!keep.has(h) || keep.get(h).length < arr.length) keep.set(h, arr); }); });
+  return [...keep.values()].flat().sort((a, b) => a.date.localeCompare(b.date));
+}
+// Ouvre le pointage d'un mois avec tous les relevés du compte
+async function stmOpen(k) {
+  let L; try { L = await stmLoad(active); } catch (e) { return toast('⚠ Relevés indisponibles (' + (e.code || e.message) + ')'); }
+  const lines = stmMerged(L); if (!lines.some(l => l.date.startsWith(k))) return toast('Aucun relevé ne couvre ' + mlab(k).toLowerCase());
+  const bals = L.filter(s => s.bal?.date?.startsWith(k)).sort((a, b) => b.bal.date.localeCompare(a.bal.date) || b.at - a.at);
+  bkLoad({ lines, bal: bals[0] ? bals[0].bal : L.some(s => s.running) ? { running: true } : null, src: 'relevés' }, k);
+}
+const trackedMonths = () => Object.keys(S.months).filter(k => S.months[k].expenses.length || S.months[k].incomes.length).sort();
+const dmy = d => d.slice(8, 10) + '/' + d.slice(5, 7);
+
+/* ---------- Écran « Relevés bancaires » ---------- */
+function vReleves() {
+  const V = $('v-releves'), acc = active, c = STM[acc];
+  if (!c || Date.now() - c.at > 60000) {
+    if (!c) V.innerHTML = '<p class="empty">Chargement des relevés…</p>';
+    stmLoad(acc, true).then(() => { if (UI.view === 'releves' && active === acc) vReleves(); }).catch(e => { V.innerHTML = `<p class="empty">⚠ Relevés indisponibles (${esc(e.code || e.message)})</p>`; });
+    if (!c) return;
+  }
+  const L = STM[acc].L, lines = stmMerged(L), me = currentUser.uid;
+  const months = [...new Set([...trackedMonths(), ...(trackedMonths().length ? [] : lines.map(l => l.date.slice(0, 7)))])].sort().reverse();
+  const row = k => {
+    const ml = lines.filter(l => l.date.startsWith(k)), r = S.months[k]?.rec, past = k < nowK();
+    const last = ml.length ? ml[ml.length - 1].date : null, first = ml.length ? ml[0].date : null;
+    const full = ml.length && (!past || +last.slice(8, 10) >= dim(k) - 3);
+    const st = !ml.length ? [past ? '📄 Relevé à déposer' : 'Pas encore de relevé', past ? 'var(--warn)' : 'var(--mute)']
+      : r?.done ? ['✓ Pointé' + (r.gap ? ' · écart ' + eur(c2e(r.gap)) + ' validé' : ''), 'var(--ok)']
+      : r?.at ? [(r.todo || 0) + ' point' + (r.todo > 1 ? 's' : '') + ' à vérifier', 'var(--warn)'] : ['Pas encore pointé', 'var(--ink)'];
+    return `<div class="row stmm"><span class="rt"><span class="rn">${esc(mlab(k))}</span><span class="rs" style="color:${st[1]}">${st[0]}</span>
+      ${ml.length ? `<span class="rs">${ml.length} opération${ml.length > 1 ? 's' : ''} · du ${dmy(first)} au ${dmy(last)}${past && !full ? ' · <b style="color:var(--warn)">relevé incomplet</b>' : ''}${r?.at ? (r.done ? ' · pointé le ' : ' · vérifié le ') + fmtD(r.at) : ''}</span>` : ''}</span>
+      ${ml.length ? `<button class="btn sm${r?.done ? '' : ' p'}" data-a="stm-open" data-k="${k}">${r?.done ? 'Revoir' : 'Pointer'}</button>` : ''}</div>`;
+  };
+  V.innerHTML = `<div class="grid2">
+  <section class="card" style="flex:1 1 320px;display:flex;flex-direction:column;gap:12px">
+    <div class="ch"><h2>🏦 Relevés · ${esc(accName())}</h2></div>
+    <p class="note">Chaque mois, dépose le relevé téléchargé depuis ta banque : l'app le garde, compare chaque opération avec ce que tu as noté et t'aide à pointer le mois.</p>
+    <button class="btn p big" data-a="stm-add">${svg('up', 18)} Déposer un relevé</button>
+    <details class="note" style="font-size:13px"><summary>Où trouver ce fichier ?</summary><p style="margin:6px 0 0">• <b>Crédit Agricole</b> : site web › Mes comptes › le compte › « Télécharger » (Excel ou CSV).<br>• <b>Boursorama</b> : site web › le compte › Mouvements › « Exporter » (CSV).<br>• <b>Revolut</b> : appli › le compte › ⋯ › Relevé › Excel ou CSV.<br>Prends la période depuis la fin du relevé précédent : les opérations en double sont reconnues.</p></details>
+  </section>
+  <section class="card" style="flex:1 1 320px;display:flex;flex-direction:column;gap:4px">
+    <div class="ch"><h2>Pointage par mois</h2></div>
+    ${months.map(row).join('') || '<p class="empty">Aucun mois suivi pour l\'instant.</p>'}
+  </section></div>
+  <section class="card" style="display:flex;flex-direction:column;gap:4px">
+    <div class="ch"><h2>Relevés déposés</h2><span class="note">${L.length}</span></div>
+    ${L.map(s => `<div class="row stmm"><span class="ico" style="--c:#0EA5E9">${svg('list', 18)}</span><span class="rt"><span class="rn">Du ${dmy(s.from)} au ${dmy(s.to)}/${s.to.slice(0, 4)} · ${s.n} opération${s.n > 1 ? 's' : ''}</span>
+      <span class="rs">${s.bal ? 'Solde ' + eur(c2e(s.bal.amt)) + ' au ' + dmy(s.bal.date) + ' · ' : ''}déposé le ${fmtD(s.at)}${s.by !== me ? ' par ' + esc(shortName(s.byEmail)) : ''}${s.name ? ' · ' + esc(s.name) : ''}</span></span>
+      <button class="ib sm" data-a="stm-dl" data-id="${esc(s.id)}" aria-label="Télécharger ce relevé (CSV)" title="Télécharger (CSV)">${svg('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', 16)}</button><button class="x" data-a="stm-del" data-id="${esc(s.id)}" aria-label="Supprimer ce relevé">${svg('trash', 15)}</button></div>`).join('') || '<p class="empty">Aucun relevé déposé. Touche « Déposer un relevé ».</p>'}
+  </section>`;
+}
+async function stmDelete(id) {
+  const s = STM[active]?.L.find(x => x.id === id); if (!s) return;
+  if (!confirm('Supprimer le relevé du ' + dmy(s.from) + ' au ' + dmy(s.to) + ' (' + s.n + ' opérations) ? Tes pointages déjà faits sont gardés.')) return;
+  try { await stmCol().doc(id).delete(); STM[active].L = STM[active].L.filter(x => x.id !== id); toast('Relevé supprimé'); render(); }
+  catch (e) { toast('⚠ ' + (e.code || e.message)); }
+}
+function stmDownload(id) {
+  const s = STM[active]?.L.find(x => x.id === id); if (!s) return;
+  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const csv = '﻿Date;Libellé;Montant\n' + s.L.map(l => [l.d.split('-').reverse().join('/'), q(l.l), (l.a / 100).toFixed(2).replace('.', ',')].join(';')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'releve_' + accName().replace(/[^\w-]+/g, '_') + '_' + s.from + '_' + s.to + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+// Rappel en début de mois : relevé du mois dernier pas encore pointé
+function stmAlerts() {
+  const pk = kAdd(nowK(), -1), m = S.months[pk];
+  if (today() > 12 || !m || !(m.expenses.length || m.incomes.length) || m.rec?.done) return [];
+  return [{ id: 'stm_' + pk, lvl: 'warn', text: `🏦 Dépose ton relevé de ${mlab(pk).split(' ')[0].toLowerCase()} pour pointer le mois`, go: 'releves' }];
 }
 
 
@@ -4328,6 +4435,10 @@ document.addEventListener('click', ev => {
     case 'debt-hist': UI.debtHist = !UI.debtHist; return render();
     case 'debt-new': return debtDialog(null);
     case 'bank-check': return bankCheck();
+    case 'stm-add': return $('bkfile').click();
+    case 'stm-open': return stmOpen(b.dataset.k);
+    case 'stm-del': return stmDelete(id);
+    case 'stm-dl': return stmDownload(id);
     case 'split-new': return splitDialog();
     case 'grp-open': return groupView(id);
     case 'inv-split': return inviteDialog(id);
