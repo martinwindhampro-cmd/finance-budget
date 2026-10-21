@@ -551,7 +551,7 @@ html.simple .row .rn{font-size:15px}
 <div id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="file" accept=".json,application/json" hidden>
 <input type="file" id="imgfile" accept="image/*" hidden>
-<input type="file" id="bkfile" accept=".csv,.ofx,.qfx,.qif,.txt,text/csv,text/plain,application/x-ofx" hidden>
+<input type="file" id="bkfile" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,.csv,.ofx,.qfx,.qif,.txt,text/csv,text/plain,application/x-ofx" hidden>
 
 <script>
 'use strict';
@@ -2614,7 +2614,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '21 oct. · v23';
+const APP_VERSION = '21 oct. · v24';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3808,10 +3808,20 @@ async function bankImport(file) {
   $('bkfile').value = '';
   if (!file) return;
   const buf = await file.arrayBuffer();
+  if (/\.xlsx?$/i.test(file.name) || new Uint8Array(buf.slice(0, 2)).join() === '80,75') {     // Excel (.xlsx commence par « PK »)
+    try {
+      if (!window.XLSX) { toast('Lecture du fichier Excel…'); await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc); }); }
+      const wb = XLSX.read(new Uint8Array(buf), { type: 'array' }), ws = wb.Sheets[wb.SheetNames[0]];
+      const csv = XLSX.utils.sheet_to_csv(ws, { FS: ';', blankrows: false });
+      const r = bkParse(csv, file.name);
+      if (r.need || !r.lines.length) return r.rows && r.rows.length > 1 ? bkMapDialog(r.rows, file.name) : toast('Fichier Excel non reconnu');
+      return bkLoad(r);
+    } catch (e) { return toast('⚠ Fichier Excel illisible (connexion ?) : essaie l\'export CSV'); }
+  }
   let txt = new TextDecoder('utf-8').decode(buf);
   if (txt.includes('�')) try { txt = new TextDecoder('windows-1252').decode(buf); } catch (e) {}   // vieux exports en ISO-8859-1
   const r = bkParse(txt.replace(/^﻿/, ''), file.name);
-  if (r.need || !r.lines.length) return r.rows && r.rows.length > 1 ? bkMapDialog(r.rows, file.name) : toast('Fichier non reconnu : exporte le relevé en CSV, OFX ou QIF');
+  if (r.need || !r.lines.length) return r.rows && r.rows.length > 1 ? bkMapDialog(r.rows, file.name) : toast('Fichier non reconnu : exporte le relevé en CSV, Excel, OFX ou QIF');
   bkLoad(r);
 }
 // Colonnes à choisir à la main si le format n'est pas reconnu
@@ -3967,11 +3977,11 @@ function bankCheck() {
   const d = $('dlg'); d.onclick = null; d.oninput = null; d.onchange = null;
   const r = month(ck()).rec;
   d.innerHTML = `<div class="dw"><div class="dh"><h2>🏦 Pointer avec le relevé</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
-    <p class="note">Télécharge les opérations depuis l'appli ou le site de ta banque, au format <b>CSV</b>, <b>OFX</b> ou <b>QIF</b> (Crédit Agricole, Boursorama, Revolut et la plupart des banques sont reconnus). L'app compare chaque opération avec « ${esc(accName())} » et t'explique les écarts au centime près.</p>
+    <p class="note">Télécharge les opérations depuis l'appli ou le site de ta banque, au format <b>Excel</b>, <b>CSV</b>, <b>OFX</b> ou <b>QIF</b> (Crédit Agricole, Boursorama, Revolut et la plupart des banques sont reconnus). L'app compare chaque opération avec « ${esc(accName())} » et t'explique les écarts au centime près.</p>
     <p class="note" style="font-size:13px">Les opérations qui s'annulent (ex. −22 € payés pour quelqu'un puis +22 € remboursés) sont reconnues : pas besoin de les saisir. Le fichier reste sur ton appareil, il n'est envoyé nulle part.</p>
     ${r?.at ? `<p class="note" style="font-size:13px">Dernière vérification de ${esc(mlab(ck()).toLowerCase())} : ${fmtD(r.at)}${r.gap === 0 ? ' · ✓ aucun écart' : r.gap != null ? ' · écart ' + eur(c2e(r.gap)) : ''}.</p>` : ''}
     <button class="btn p big" data-pick>${svg('up', 18)} Choisir le fichier du relevé</button>
-    <details class="note" style="font-size:13px"><summary>Où trouver ce fichier ?</summary><p style="margin:6px 0 0">• <b>Crédit Agricole</b> : site web › Mes comptes › le compte › « Télécharger » (CSV ou OFX).<br>• <b>Boursorama</b> : site web › le compte › Mouvements › « Exporter » (CSV).<br>• <b>Revolut</b> : appli › le compte › ⋯ › Relevé › format Excel/CSV, sur la période voulue.</p></details></div>`;
+    <details class="note" style="font-size:13px"><summary>Où trouver ce fichier ?</summary><p style="margin:6px 0 0">• <b>Crédit Agricole</b> : site web › Mes comptes › le compte › « Télécharger » (Excel ou CSV).<br>• <b>Boursorama</b> : site web › le compte › Mouvements › « Exporter » (CSV).<br>• <b>Revolut</b> : appli › le compte › ⋯ › Relevé › format Excel/CSV, sur la période voulue.</p></details></div>`;
   d.onclick = e => { if (e.target.closest('[data-x]')) return d.close(); if (e.target.closest('[data-pick]')) $('bkfile').click(); };
   if (!d.open) d.showModal();
 }
@@ -4106,7 +4116,7 @@ function bkShow(s) {
 // Petit rappel dans Mouvements
 function bkNoteHTML() {
   const r = month(ck()).rec;
-  return `<button class="btn bkbtn" data-a="bank-check">🏦 Pointer avec le relevé${r?.at ? `<small>${r.done || (r.gap === 0 && !r.todo) ? '✓ pointé le ' + fmtD(r.at) + (r.gap ? ' · écart ' + eur(c2e(r.gap)) + ' validé' : '') : (r.todo || '?') + ' point(s) à vérifier · ' + fmtD(r.at)}</small>` : '<small>CSV, OFX ou QIF de ta banque</small>'}</button>`;
+  return `<button class="btn bkbtn" data-a="bank-check">🏦 Pointer avec le relevé${r?.at ? `<small>${r.done || (r.gap === 0 && !r.todo) ? '✓ pointé le ' + fmtD(r.at) + (r.gap ? ' · écart ' + eur(c2e(r.gap)) + ' validé' : '') : (r.todo || '?') + ' point(s) à vérifier · ' + fmtD(r.at)}</small>` : '<small>Excel, CSV, OFX ou QIF de ta banque</small>'}</button>`;
 }
 
 
