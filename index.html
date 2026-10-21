@@ -2608,7 +2608,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '21 oct. · v18';
+const APP_VERSION = '21 oct. · v20';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3832,12 +3832,16 @@ function bkLoad(r) {
 /* ---------- Rapprochement ---------- */
 function bkMatch(k) {
   const m = month(k), ign = new Set(m.rec?.ign || []);
-  const B = BK.lines.filter(l => l.date.startsWith(k)).map(l => Object.assign({}, l, { day: +l.date.slice(8, 10) }));
+  const pk = kAdd(k, -1);
+  const B = BK.lines.filter(l => l.date.startsWith(k)).map(l => { const b = Object.assign({}, l, { day: +l.date.slice(8, 10) });
+    const cd = l.label.match(/\b(\d{2})\/(\d{2})\b(?!\/\d)/);                       // date de l'achat par carte (« 30/09 ») : débité 1 à 3 jours après
+    if (cd && +cd[1] >= 1 && +cd[1] <= 31) { const mm = cd[2]; if (mm === k.slice(5) && +cd[1] <= b.day) b.op = +cd[1]; else if (mm === pk.slice(5) && b.day <= 5) b.prev = true; }
+    return b; });
   const A = [...m.expenses.map(x => ({ x, t: 'expenses', amt: -cents(x.amount) })), ...m.incomes.map(x => ({ x, t: 'incomes', amt: cents(x.amount) }))]
     .filter(a => a.amt).map(a => Object.assign(a, { day: parseInt(a.x.date) || null, paid: isPaid(a.x, a.t), label: a.x.name || a.x.cat || '' }));
   const R = { k, B, A, ok: [], near: [], net: [], half: [], pairs: [], bOnly: [], ign: [], aOnly: [] };
   const usedB = new Set(), usedA = new Set();
-  const dd = (a, b) => a.day == null ? 12 : Math.abs(a.day - b.day);
+  const dd = (a, b) => a.day == null ? 12 : Math.min(Math.abs(a.day - b.day), b.op ? Math.abs(a.day - b.op) : 99);
   const take = (list, fn) => list.sort((p, q) => p.s - q.s).forEach(p => { if (usedA.has(p.a) || usedB.has(p.b)) return; usedA.add(p.a); usedB.add(p.b); fn(p); });
   // 1. même montant au centime (date la plus proche, libellé ressemblant)
   const P1 = []; A.forEach(a => B.forEach(b => { if (a.amt === b.amt) P1.push({ a, b, s: dd(a, b) - lsim(a.label, b.label) * 3 }); }));
@@ -3845,8 +3849,10 @@ function bkMatch(k) {
   // 2. « je n'ai noté que le net » : 1 ligne de l'app = 2 opérations de la banque (ex. −40 payé, +20 remboursé → −20)
   A.filter(a => !usedA.has(a)).forEach(a => {
     let best = null; const fb = B.filter(b => !usedB.has(b));
-    fb.forEach(b1 => fb.forEach(b2 => { if (b1 === b2 || Math.sign(b1.amt) === Math.sign(b2.amt) || b1.amt + b2.amt !== a.amt) return;
-      const s = Math.abs(b1.day - b2.day) + dd(a, b1) / 2; if (!best || s < best.s) best = { a, b: b1, b2, s }; }));
+    fb.forEach(b1 => fb.forEach(b2 => { if (b1.i >= b2.i && Math.sign(b1.amt) === Math.sign(b2.amt) || b1 === b2 || b1.amt + b2.amt !== a.amt) return;
+      const same = Math.sign(b1.amt) === Math.sign(b2.amt);
+      if (same && (dd(a, b1) > 3 || dd(a, b2) > 3)) return;                     // payé en 2 fois : le même jour ou presque
+      const s = Math.abs(b1.day - b2.day) + dd(a, b1) / 2; if (!best || s < best.s) best = { a, b: b1, b2, s, same }; }));
     if (best && best.s < 40) { usedA.add(a); usedB.add(best.b); usedB.add(best.b2); R.net.push(best); }
   });
   // 3. « ½ Partagé » : la banque a l'opération entière ; le remboursement de la moitié l'explique
@@ -3867,7 +3873,24 @@ function bkMatch(k) {
   R.aOnly = A.filter(a => !usedA.has(a));
   R.unpaid = R.ok.filter(p => !p.a.paid).concat(R.near.filter(p => !p.a.paid), R.net.filter(p => !p.a.paid));
   R.last = B.reduce((x, b) => b.day > x ? b.day : x, 0);
+  R.start = [];
+  R.pend = R.aOnly.filter(a => a.paid && a.t === 'expenses' && a.day && R.last && a.day >= R.last - 2);   // notés à l'avance : carte pas encore débitée
   return R;
+}
+// Début de mois : des lignes de l'app du début du mois déjà passées en banque avant le 1er (donc dans le solde de départ),
+// et des achats par carte du mois précédent débités le 1er. Si elles expliquent exactement l'écart de départ, ce n'est pas une erreur.
+function bkStart(R, after, rest) {
+  if (!rest) return;
+  const ca = R.aOnly.filter(a => a.paid && !after.includes(a) && !R.pend.includes(a) && (!a.day || a.day <= 7)).map(a => [a, a.t === 'expenses' ? cents(eff(a.x)) : -a.amt]);
+  const cb = R.bOnly.filter(b => b.prev || b.day <= 3).map(b => [b, b.amt]);
+  const C = ca.concat(cb).slice(0, 18); let best = null;
+  for (let mask = 1; mask < 1 << C.length; mask++) {
+    let t = 0, n = 0; for (let i = 0; i < C.length; i++) if (mask & 1 << i) { t += C[i][1]; n++; }
+    if (t === -rest && (!best || n > best.n)) best = { mask, n };
+  }
+  if (!best) return;
+  const T = C.filter((_, i) => best.mask & 1 << i).map(c => c[0]);
+  R.start = T; R.aOnly = R.aOnly.filter(a => !T.includes(a)); R.bOnly = R.bOnly.filter(b => !T.includes(b));
 }
 // Solde de la banque en fin de relevé (fichier ou saisi) et solde de l'app à la même date
 function bkBalances(R) {
@@ -3891,7 +3914,8 @@ function bkExplain(R, after) {
   add('Opérations ignorées', R.ign.reduce((s, b) => s + b.amt, 0));
   add('Montants différents', R.near.filter(p => p.a.paid).reduce((s, p) => s + p.b.amt - p.a.amt, 0));
   add('Passées en banque mais « à payer » dans l\'app', R.unpaid.reduce((s, p) => s + p.b.amt + (p.b2 ? p.b2.amt : 0), 0));
-  add('Notées payées dans l\'app, pas dans le relevé', -R.aOnly.filter(a => a.paid && !after.includes(a)).reduce((s, a) => s + (a.t === 'expenses' ? -cents(eff(a.x)) : a.amt), 0));
+  add('Paiements carte pas encore débités', R.pend.filter(a => !after.includes(a)).reduce((s, a) => s + cents(eff(a.x)), 0));
+  add('Notées payées dans l\'app, pas dans le relevé', -R.aOnly.filter(a => a.paid && !after.includes(a) && !R.pend.includes(a)).reduce((s, a) => s + (a.t === 'expenses' ? -cents(eff(a.x)) : a.amt), 0));
   add('« ½ Partagé » : la banque a le montant entier', -R.half.filter(h => !h.r && h.p.a.paid).reduce((s, h) => s + h.gap, 0));
   add('« ½ Partagé » : arrondi au centime', R.half.filter(h => h.r && h.p.a.paid).reduce((s, h) => s + (Math.abs(h.p.a.amt) - h.r.amt) - cents(eff(h.p.a.x)), 0) * -1);
   return E;
@@ -3911,15 +3935,18 @@ function bankCheck() {
   if (!d.open) d.showModal();
 }
 function bkLine(b, acts = '') {
-  return `<div class="row bkl"><span class="bkd">${b.date.slice(8, 10)}/${b.date.slice(5, 7)}</span><span class="rt"><span class="rn" title="${esc(b.label)}">${esc(b.label)}</span></span><b class="num ${b.amt > 0 ? 'pos' : ''}">${b.amt > 0 ? '+' : ''}${eur(c2e(b.amt))}</b>${acts ? `<span class="chips">${acts}</span>` : ''}</div>`;
+  return `<div class="row bkl"><span class="bkd">${b.date.slice(8, 10)}/${b.date.slice(5, 7)}</span><span class="rt"><span class="rn" title="${esc(b.label)}">${esc(bkShow(b.label))}</span></span><b class="num ${b.amt > 0 ? 'pos' : ''}">${b.amt > 0 ? '+' : ''}${eur(c2e(b.amt))}</b>${acts ? `<span class="chips">${acts}</span>` : ''}</div>`;
 }
 const aLbl = a => `${esc(a.label)}${a.day ? ' · le ' + a.day : ''}`;
 function bkView() {
   if (!BK) return;
   if (BK.acc !== active) { BK = null; return toast('Compte changé : relance la vérification'); }
-  const R = bkMatch(BK.k), V = bkBalances(R), E = bkExplain(R, V.after), expl = E.reduce((s, e) => s + e[1], 0);
-  const gap = V.bank != null ? V.bank - V.app : null, rest = gap != null ? gap - expl : null;
-  const todo = R.bOnly.length + R.near.length + R.unpaid.length + R.aOnly.filter(a => a.paid && !V.after.includes(a)).length + R.half.filter(h => !h.r).length;
+  const R = bkMatch(BK.k), V = bkBalances(R);
+  let E = bkExplain(R, V.after), expl = E.reduce((s, e) => s + e[1], 0);
+  const gap = V.bank != null ? V.bank - V.app : null;
+  if (gap != null) { bkStart(R, V.after, gap - expl); if (R.start.length) { E = bkExplain(R, V.after); expl = E.reduce((s, e) => s + e[1], 0); } }
+  const rest = gap != null ? gap - expl : null;
+  const todo = R.bOnly.length + R.near.length + R.unpaid.length + R.aOnly.filter(a => a.paid && !V.after.includes(a) && !R.pend.includes(a)).length + R.half.filter(h => !h.r).length;
   const sec = (title, n, body, open, cls = '') => n ? `<details class="bks ${cls}" ${open ? 'open' : ''}><summary><b>${title}</b><span class="bkn">${n}</span></summary><div class="bkb">${body}</div></details>` : '';
   const d = $('dlg'); d.onclick = null; d.oninput = null; d.onchange = null;
   d.innerHTML = `<div class="dw bkw"><div class="dh"><h2>🏦 Relevé · ${esc(accName())}</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
@@ -3935,15 +3962,17 @@ function bkView() {
           ${E.length ? `<ul>${E.map(e => `<li><span>${esc(e[0])}</span><b class="num">${e[1] > 0 ? '+' : ''}${eur(c2e(e[1]))}</b></li>`).join('')}</ul>` : ''}
           ${rest ? `<p>${rest === gap ? 'Aucune opération du mois ne l\'explique' : 'Reste ' + eur(c2e(rest)) + ' non expliqué'} : il vient sûrement d'<b>avant ce mois</b> (solde au 1er). <button class="lnk" data-recal="${rest}">Corriger le solde au 1er de ${rest > 0 ? '+' : ''}${eur(c2e(rest))}</button></p>` : '<p>✓ Tout l\'écart est expliqué par les lignes ci-dessous.</p>'}</div>`}
     </div>
-    ${sec('⚠ Montants différents', R.near.length, R.near.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${esc(p.b.label)}</span><span class="rs">App : ${aLbl(p.a)} · ${eur(c2e(Math.abs(p.a.amt)))} → banque ${eur(c2e(Math.abs(p.b.amt)))} (${p.b.amt - p.a.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt - p.a.amt))})${p.a.x.fx ? ' · paiement en ' + esc(p.a.x.fx.cur) + ' : taux et frais de la banque' : ''}</span></span><span class="chips"><button class="btn sm p" data-fix="${p.a.x.id}" data-t="${p.a.t}" data-v="${Math.abs(p.b.amt)}"${p.a.paid ? '' : ' data-pay="1"'}>Corriger</button></span></div>`).join(''), true, 'warn')}
+    ${sec('⚠ Montants différents', R.near.length, R.near.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${esc(bkShow(p.b.label))}</span><span class="rs">App : ${aLbl(p.a)} · ${eur(c2e(Math.abs(p.a.amt)))} → banque ${eur(c2e(Math.abs(p.b.amt)))} (${p.b.amt - p.a.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt - p.a.amt))})${p.a.x.fx ? ' · paiement en ' + esc(p.a.x.fx.cur) + ' : taux et frais de la banque' : ''}</span></span><span class="chips"><button class="btn sm p" data-fix="${p.a.x.id}" data-t="${p.a.t}" data-v="${Math.abs(p.b.amt)}"${p.a.paid ? '' : ' data-pay="1"'}>Corriger</button></span></div>`).join(''), true, 'warn')}
     ${sec('🏦 Seulement à la banque', R.bOnly.length, R.bOnly.map(b => bkLine(b, `<button class="btn sm p" data-add="${b.i}">Ajouter</button><button class="btn sm" data-ign="${esc(b.h)}">Ignorer</button>`)).join('') + (R.bOnly.length > 1 ? `<button class="lnk" data-addall style="align-self:flex-start">Tout ajouter (${R.bOnly.length})</button>` : ''), true)}
-    ${sec('⏳ Passées en banque, encore « à payer » dans l\'app', R.unpaid.length, R.unpaid.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${aLbl(p.a)}</span><span class="rs">${esc(p.b.label)}</span></span><b class="num">${eur(c2e(Math.abs(p.b.amt)))}</b><span class="chips"><button class="btn sm p" data-paid="${p.a.x.id}" data-t="${p.a.t}">${p.a.t === 'incomes' ? 'Reçu' : 'Payé'}</button></span></div>`).join('') + (R.unpaid.length > 1 ? `<button class="lnk" data-paidall style="align-self:flex-start">Tout marquer passé (${R.unpaid.length})</button>` : ''), true)}
-    ${sec('📱 Notées payées, pas dans le relevé', R.aOnly.filter(a => a.paid && !V.after.includes(a)).length, R.aOnly.filter(a => a.paid && !V.after.includes(a)).map(a => `<div class="row bkl"><span class="bkd">${a.day ? String(a.day).padStart(2, '0') : '—'}</span><span class="rt"><span class="rn">${esc(a.label)}</span><span class="rs">Oubli, doublon, ou pas encore passé ?</span></span><b class="num">${eur(c2e(Math.abs(a.amt)))}</b><span class="chips"><button class="btn sm" data-open="${a.x.id}" data-t="${a.t}">Voir</button><button class="btn sm" data-unpaid="${a.x.id}" data-t="${a.t}">Pas encore passé</button></span></div>`).join(''), true)}
+    ${sec('⏳ Passées en banque, encore « à payer » dans l\'app', R.unpaid.length, R.unpaid.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${aLbl(p.a)}</span><span class="rs">${esc(bkShow(p.b.label))}</span></span><b class="num">${eur(c2e(Math.abs(p.b.amt)))}</b><span class="chips"><button class="btn sm p" data-paid="${p.a.x.id}" data-t="${p.a.t}">${p.a.t === 'incomes' ? 'Reçu' : 'Payé'}</button></span></div>`).join('') + (R.unpaid.length > 1 ? `<button class="lnk" data-paidall style="align-self:flex-start">Tout marquer passé (${R.unpaid.length})</button>` : ''), true)}
+    ${sec('⏳ En cours à la banque (notées à l\'avance)', R.pend.filter(a => !V.after.includes(a)).length, `<p class="note" style="font-size:13px">Paiements par carte récents déjà notés dans l'app : la banque les débite 1 à 3 jours après. Rien à faire, ils seront pointés au prochain relevé.</p>` + R.pend.filter(a => !V.after.includes(a)).map(a => `<div class="row bkl"><span class="bkd">${String(a.day).padStart(2, '0')}</span><span class="rt"><span class="rn">${esc(a.label)}</span></span><b class="num">${eur(eff(a.x))}</b></div>`).join(''))}
+    ${sec('📱 Notées payées, pas dans le relevé', R.aOnly.filter(a => a.paid && !V.after.includes(a) && !R.pend.includes(a)).length, R.aOnly.filter(a => a.paid && !V.after.includes(a) && !R.pend.includes(a)).map(a => `<div class="row bkl"><span class="bkd">${a.day ? String(a.day).padStart(2, '0') : '—'}</span><span class="rt"><span class="rn">${esc(a.label)}</span><span class="rs">${a.day && R.last && a.day >= R.last - 2 ? 'Sûrement pas encore débité (carte : 1 à 3 jours)' : 'Oubli, doublon, ou pas encore passé ?'}</span></span><b class="num">${eur(c2e(Math.abs(a.amt)))}</b><span class="chips"><button class="btn sm" data-open="${a.x.id}" data-t="${a.t}">Voir</button><button class="btn sm" data-unpaid="${a.x.id}" data-t="${a.t}">Pas encore passé</button></span></div>`).join(''), true)}
     ${sec('½ Partagé sans remboursement dans le relevé', R.half.filter(h => !h.r).length, `<p class="note" style="font-size:13px">L'app ne compte que ta moitié, mais la banque a débité le montant entier. Si l'autre personne ne te rembourse pas sur ce compte, enlève « ½ Partagé ».</p>` + R.half.filter(h => !h.r).map(h => `<div class="row bkl"><span class="bkd">${h.p.b.date.slice(8, 10)}/${h.p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${aLbl(h.p.a)}</span><span class="rs">−${eur(c2e(Math.abs(h.p.a.amt)))} à la banque · ${eur(eff(h.p.a.x))} dans l'app</span></span><span class="chips"><button class="btn sm" data-unhalf="${h.p.a.x.id}">Enlever ½</button></span></div>`).join(''), true)}
     ${sec('↔ S\'annulent entre elles (pas besoin de les saisir)', R.pairs.length, `<p class="note" style="font-size:13px">Même montant dans les deux sens : effet nul sur ton solde.</p>` + R.pairs.map(p => bkLine(p.b) + bkLine(p.b2) + '<hr class="bkhr">').join(''))}
-    ${sec('➗ Notées en net dans l\'app', R.net.length, `<p class="note" style="font-size:13px">Une ligne de l'app = une dépense et son remboursement à la banque.</p>` + R.net.map(p => `<div class="note" style="font-size:13px;padding:4px 6px">App : ${aLbl(p.a)} · <b>${eur(c2e(p.a.amt))}</b></div>` + bkLine(p.b) + bkLine(p.b2) + '<hr class="bkhr">').join(''))}
+    ${sec('🗓 Début de mois : déjà dans le solde de départ', R.start.length, `<p class="note" style="font-size:13px">Ces lignes expliquent exactement la différence de solde au 1er : notées début ${esc(mlab(BK.k).split(' ')[0].toLowerCase())} dans l'app mais passées en banque avant le 1er, ou achats de fin de mois précédent débités le 1er. Rien à corriger.</p>` + R.start.map(z => z.x ? `<div class="row bkl"><span class="bkd">${z.day ? String(z.day).padStart(2, '0') : '—'}</span><span class="rt"><span class="rn">${esc(z.label)}</span><span class="rs">dans l'app</span></span><b class="num ${z.amt > 0 ? 'pos' : ''}">${z.amt > 0 ? '+' : ''}${eur(z.t === 'expenses' ? -eff(z.x) : c2e(z.amt))}</b></div>` : bkLine(z)).join(''))}
+    ${sec('➗ Une ligne de l\'app = 2 opérations', R.net.length, `<p class="note" style="font-size:13px">Payé en 2 fois, ou une dépense et son remboursement notés en net.</p>` + R.net.map(p => `<div class="note" style="font-size:13px;padding:4px 6px">App : ${aLbl(p.a)} · <b>${eur(c2e(p.a.amt))}</b></div>` + bkLine(p.b) + bkLine(p.b2) + '<hr class="bkhr">').join(''))}
     ${sec('🚫 Ignorées', R.ign.length, R.ign.map(b => bkLine(b, `<button class="btn sm" data-unign="${esc(b.h)}">Rétablir</button>`)).join(''))}
-    ${sec('✓ Pointées', R.ok.length + R.half.filter(h => h.r).length, R.ok.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${aLbl(p.a)}</span><span class="rs">${esc(p.b.label)}</span></span><b class="num ${p.b.amt > 0 ? 'pos' : ''}">${p.b.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt))}</b></div>`).join('') + R.half.filter(h => h.r).map(h => bkLine(h.r, '<span class="note" style="font-size:12px">½ remboursé</span>')).join(''))}
+    ${sec('✓ Pointées', R.ok.length + R.half.filter(h => h.r).length, R.ok.map(p => `<div class="row bkl"><span class="bkd">${p.b.date.slice(8, 10)}/${p.b.date.slice(5, 7)}</span><span class="rt"><span class="rn">${aLbl(p.a)}</span><span class="rs">${esc(bkShow(p.b.label))}</span></span><b class="num ${p.b.amt > 0 ? 'pos' : ''}">${p.b.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt))}</b></div>`).join('') + R.half.filter(h => h.r).map(h => bkLine(h.r, '<span class="note" style="font-size:12px">½ remboursé</span>')).join(''))}
     ${V.after.length ? `<p class="note" style="font-size:12px">${V.after.length} ligne(s) notée(s) payée(s) après le ${V.lastDay} : pas encore dans ce relevé, non comptées.</p>` : ''}
     <div class="dact"><button class="btn" data-again>Autre fichier</button><button class="btn p" data-x>${todo ? 'Fermer' : 'Terminé'}</button></div></div>`;
   // Mémorise le résultat (affiché dans Mouvements)
@@ -3972,12 +4001,19 @@ function bkView() {
   if (!d.open) d.showModal();
 }
 // Ajoute dans l'app des opérations vues seulement à la banque
-const bkName = s => { let t = String(s).replace(/^(paiement par carte|carte|cb|achat cb|prlv sepa|prelevement|prélèvement|vir(ement)?( sepa)?( inst(antane)?)?( re[çc]u| emis| émis)?( de| vers| en faveur de)?)\s+/i, '').replace(/\b\d{2}[\/.]\d{2}([\/.]\d{2,4})?\b/g, '').replace(/\s{2,}/g, ' ').trim();
+const bkName = s => { let t = bkShow(s).split(' · ')[0].replace(/^(paiement par carte|carte|cb|achat cb|prlv sepa|prelevement|prélèvement|vir(ement)?( sepa)?( inst(antane)?)?( re[çc]u| emis| émis)?( de| vers| en faveur de)?)\s+/i, '').replace(/\b\d{2}[\/.]\d{2}([\/.]\d{2,4})?\b/g, '').replace(/\s{2,}/g, ' ').trim();
   t = t.split(' ').slice(0, 5).join(' '); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : 'Opération'; };
 function bkAdd(L) {
   mutate(() => L.forEach(b => { if (!b) return; const mm = month(b.date.slice(0, 7)), name = bkName(b.label), dd = String(+b.date.slice(8, 10));
     if (b.amt < 0) mm.expenses.unshift({ id: uid(), name, amount: c2e(-b.amt), date: dd, status: 'Payé', cat: autoCat(name) || 'Autre', isFixed: false, isDivided: false, bk: 1 });
     else mm.incomes.unshift({ id: uid(), name, amount: c2e(b.amt), date: dd, status: 'Reçu', isFixed: false, bk: 1 }); }), L.length > 1 ? L.length + ' opérations ajoutées' : 'Ajoutée');
+}
+// Libellé lisible : sans « Paiement par carte X0298 », « Virement en votre faveur VIR INST de »…
+function bkShow(s) {
+  let t = String(s || '').replace(/^(paiement par carte|carte|achat cb|cb|pr[ée]l[èe]vement( sepa)?|prlv( sepa)?|virement (en votre faveur|[ée]mis|re[çc]u)|vir(ement)?( sepa)?( inst(antan[ée])?)?)\s+/i, '')
+    .replace(/^(vir(ement)?\s+)?(inst\s+)?/i, '').replace(/^X\d{4}\s+/i, '').replace(/^[A-Za-z0-9]{12}\s+/, '').replace(/\s{2,}/g, ' ').trim();
+  const brand = t.match(/\d{2}\/\d{2} - (.+)$/); if (brand && brand[1].trim().length > 1) t = t.replace(/\s*\d{2}\/\d{2} - .+$/, '') + ' · ' + brand[1].trim();
+  return t || String(s || '');
 }
 // Petit rappel dans Mouvements
 function bkNoteHTML() {
