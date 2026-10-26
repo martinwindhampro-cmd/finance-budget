@@ -2617,7 +2617,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '21 oct. · v25';
+const APP_VERSION = '26 oct. · v26';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3518,7 +3518,8 @@ let SP = null;
 function splitDialog(preset = {}) {
   const A = allAccs().filter(a => ACC[a].kind !== 'epargne'); if (!A.length) return toast('Ajoute d\'abord un compte courant');
   const ppl = linkedPeople().filter(p => p.uid);
-  SP = { mode: 'eq', me: true, add: !preset.expId, rows: [{ p: ppl[0] ? 'u:' + ppl[0].uid : 'txt', who: '', amt: '' }], ppl, A, preset };
+  const acc0 = preset.acc || (A.includes(active) ? active : A[0]), oth = allAccs().find(a => a !== acc0);
+  SP = { mode: 'eq', me: true, add: !preset.expId, rows: [{ p: ppl[0] ? 'u:' + ppl[0].uid : oth ? 'a:' + oth : 'txt', who: '', amt: '' }], ppl, A, preset };
   const d = $('dlg'); d.onclick = null; d.oninput = null; d.onchange = null;
   d.innerHTML = `<form class="dw" style="max-height:90vh;overflow:auto" novalidate>
     <div class="dh"><h2>👥 Partager une dépense</h2><button type="button" class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
@@ -3526,11 +3527,11 @@ function splitDialog(preset = {}) {
     <label class="fl">Pour quoi ?<input class="in" id="sp-name" value="${esc(preset.name || '')}" placeholder="ex. Restaurant, Airbnb, Cadeau"></label>
     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
       <label class="fl">Total payé<input class="in" id="sp-tot" inputmode="decimal" value="${esc(preset.amount != null ? fmtIn(preset.amount) : '')}" placeholder="ex. 120"></label>
-      <label class="fl">Payé depuis<select class="in" id="sp-acc">${A.map(a => `<option value="${a}" ${a === (preset.acc || (A.includes(active) ? active : A[0])) ? 'selected' : ''}>${esc(ACC[a].name)}</option>`).join('')}</select></label>
+      <label class="fl">Payé depuis<select class="in" id="sp-acc">${A.map(a => `<option value="${a}" ${a === acc0 ? 'selected' : ''}>${esc(ACC[a].name)}</option>`).join('')}</select></label>
     </div>
     ${preset.expId ? '' : `<label class="chk"><input type="checkbox" id="sp-add" checked>Ajouter aussi la dépense dans ce compte</label>`}
     <div class="fl">Répartition<div class="seg" role="group"><button type="button" class="on" data-sp-mode="eq">Parts égales</button><button type="button" data-sp-mode="free">Montants libres</button></div></div>
-    <label class="chk"><input type="checkbox" id="sp-me" checked>Je participe aussi (ma part reste à ma charge)</label>
+    <label class="chk"><input type="checkbox" id="sp-me" checked><span id="sp-me-l">${spMeLabel(acc0)}</span></label>
     <div id="sp-rows" style="display:flex;flex-direction:column;gap:8px"></div>
     <button type="button" class="btn sm" data-sp-add style="align-self:flex-start">${svg('plus', 15)} Ajouter une personne</button>
     <div id="sp-sum" class="spsum"></div>
@@ -3543,7 +3544,9 @@ function splitDialog(preset = {}) {
     const rm = ev.target.closest('[data-sp-rm]'); if (rm) { splitRead(); SP.rows.splice(+rm.dataset.spRm, 1); splitRows(); return splitSum(); }
   };
   d.oninput = () => { splitRead(); splitSum(); };
-  d.onchange = ev => { splitRead(); if (ev.target.matches('.sprow select')) splitRows(); splitSum(); };
+  d.onchange = ev => { splitRead();
+    if (ev.target.id === 'sp-acc') { $('sp-me-l').textContent = spMeLabel(ev.target.value); SP.rows.forEach(r => { if (r.p === 'a:' + ev.target.value) r.p = 'txt'; }); splitRows(); }
+    if (ev.target.matches('.sprow select')) splitRows(); splitSum(); };
   d.querySelector('form').onsubmit = ev => { ev.preventDefault(); splitRead(); splitSave(); };
   d.showModal(); (preset.name ? $('sp-me') : $('sp-name')).focus();
 }
@@ -3556,7 +3559,7 @@ function splitRead() {
 function splitRows() {
   const used = SP.rows.map(r => r.p);
   $('sp-rows').innerHTML = SP.rows.map((r, i) => `<div class="sprow">
-    <select class="in" aria-label="Personne ${i + 1}">${SP.ppl.map(p => `<option value="u:${p.uid}" ${r.p === 'u:' + p.uid ? 'selected' : ''} ${used.includes('u:' + p.uid) && r.p !== 'u:' + p.uid ? 'disabled' : ''}>👤 ${esc(shortName(p.email))}</option>`).join('')}<option value="txt" ${r.p === 'txt' ? 'selected' : ''}>${SPLIT_TXT}</option></select>
+    <select class="in" aria-label="Personne ${i + 1}">${allAccs().map(a => `<option value="a:${a}" ${r.p === 'a:' + a ? 'selected' : ''} ${a === $('sp-acc').value || (used.includes('a:' + a) && r.p !== 'a:' + a) ? 'disabled' : ''}>🏦 ${esc(ACC[a].name)}</option>`).join('')}${SP.ppl.map(p => `<option value="u:${p.uid}" ${r.p === 'u:' + p.uid ? 'selected' : ''} ${used.includes('u:' + p.uid) && r.p !== 'u:' + p.uid ? 'disabled' : ''}>👤 ${esc(shortName(p.email))}</option>`).join('')}<option value="txt" ${r.p === 'txt' ? 'selected' : ''}>${SPLIT_TXT}</option></select>
     ${r.p === 'txt' ? `<input class="in" data-who value="${esc(r.who)}" placeholder="Son nom" aria-label="Son nom">` : ''}
     <input class="in num" data-amt inputmode="decimal" aria-label="Sa part" ${SP.mode === 'eq' ? 'readonly tabindex="-1"' : ''} value="${esc(r.amt)}" placeholder="sa part">
     <button type="button" class="x" data-sp-rm="${i}" aria-label="Retirer" ${SP.rows.length < 2 ? 'disabled' : ''}>${svg('x', 15)}</button></div>`).join('');
@@ -3587,16 +3590,20 @@ async function splitSave() {
   if (!name) return toast('Indique pour quoi');
   if (!(s.T > 0)) return toast('Indique le total payé');
   if (!s.ok) return toast(s.rest > 0 ? 'Il reste ' + eur(s.rest / 100) + ' à répartir' : 'Les parts dépassent le total');
+  // un nom qui est celui d'un de mes comptes → ce compte
+  SP.rows.forEach(r => { if (r.p === 'txt') { const a = allAccs().find(x => ACC[x].name.trim().toLowerCase() === r.who.trim().toLowerCase()); if (a && a !== acc) r.p = 'a:' + a; } });
   if (SP.rows.some(r => r.p === 'txt' && !r.who.trim())) return toast('Indique le nom de chaque personne');
+  if (SP.rows.some(r => r.p === 'a:' + acc)) return toast('Le compte qui a payé ne peut pas se rembourser lui-même');
   if (s.parts.some(x => x <= 0)) return toast('Chaque part doit être supérieure à 0');
   const gid = uid(), P0 = SP.preset, k = P0.k || nowK(), now = Date.now();
-  const who = r => r.p === 'txt' ? r.who.trim() : shortName(SP.ppl.find(p => 'u:' + p.uid === r.p)?.email);
+  const who = r => r.p === 'txt' ? r.who.trim() : r.p.startsWith('a:') ? ACC[r.p.slice(2)]?.name || 'Compte' : shortName(SP.ppl.find(p => 'u:' + p.uid === r.p)?.email);
   const grp = { id: gid, name, total: s.T / 100, mine: s.mine / 100, me: SP.me, by: currentUser.uid, acc, parts: SP.rows.map((r, i) => ({ who: who(r), amount: s.parts[i] / 100 })) };
-  if (SP.me) grp.parts.unshift({ who: shortName(myEmail()), amount: s.mine / 100, payer: true });
+  if (SP.me) grp.parts.unshift({ who: ACC[acc].name, amount: s.mine / 100, payer: true });
   const local = [], shared = [];
   SP.rows.forEach((r, i) => {
     const d = { id: uid(), name, amount: s.parts[i] / 100, emo: '👥', at: now, payments: [], grp };
-    if (r.p === 'txt') local.push(Object.assign(d, { lender: { kind: 'acc', acc, accName: ACC[acc].name }, borrower: { kind: 'text', who: r.who.trim() } }));
+    if (r.p.startsWith('a:')) { const b = r.p.slice(2); local.push(Object.assign(d, { lender: { kind: 'acc', acc, accName: ACC[acc].name }, borrower: { kind: 'acc', acc: b, accName: ACC[b].name } })); }
+    else if (r.p === 'txt') local.push(Object.assign(d, { lender: { kind: 'acc', acc, accName: ACC[acc].name }, borrower: { kind: 'text', who: r.who.trim() } }));
     else { const p = SP.ppl.find(x => 'u:' + x.uid === r.p);
       shared.push(Object.assign(d, { lender: { kind: 'user', uid: currentUser.uid, email: myEmail(), acc, accName: ACC[acc].name }, borrower: { kind: 'user', uid: p.uid, email: p.email },
         invite: { status: 'pending', at: now }, members: [currentUser.uid, p.uid], emails: { [currentUser.uid]: myEmail(), [p.uid]: p.email }, createdBy: currentUser.uid, updatedAt: now })); }
@@ -3624,7 +3631,7 @@ function grpStats(L) {
 function groupRowHTML(gid, L) {
   const g = L[0].d.grp, s = grpStats(L);
   return `<button class="drow" data-a="grp-open" data-id="${esc(gid)}"><span class="gemo">👥</span>
-    <span class="rt"><span class="rn">${esc(g.name)} <span class="note" style="font-weight:500">· ${L.length} personne${L.length > 1 ? 's' : ''}</span></span>
+    <span class="rt"><span class="rn">${esc(g.name)} <span class="note" style="font-weight:500">· ${(n => n + ' personne' + (n > 1 ? 's' : ''))(g.parts ? g.parts.filter(p => !p.payer).length : L.length)}</span></span>
       <span class="rs">Reste <b class="num" style="color:var(--ink)">${eur(s.left)}</b> sur ${eur(s.t)}${s.wait ? ' · ⏳ ' + s.wait : ''}${s.no ? ' · <b style="color:var(--bad)">❌ ' + s.no + ' refus</b>' : ''}</span>
       <span class="bar" style="display:block;margin-top:6px"><i style="width:${s.p}%;--c:#10B981"></i></span></span>
     <b class="num dpct">${Math.round(s.p)} %</b></button>`;
@@ -3646,10 +3653,10 @@ function groupView(gid) {
   const g = L[0].d.grp, s = grpStats(L), dl = $('dlg'); dl.onclick = null; dl.oninput = null; dl.onchange = null;
   dl.innerHTML = `<div class="dw" style="max-height:88vh;overflow:auto"><div class="dh"><h2>👥 ${esc(g.name)}</h2><button class="ib sm" data-x aria-label="Fermer">${svg('x', 16, 2.4)}</button></div>
     <div class="dbig"><span class="note">${s.left > 0 ? 'Reste à récupérer' : 'Tout est récupéré 🎉'}</span><b class="num">${eur(s.left)}</b>
-      <span class="note">Total payé ${eur(g.total)} depuis ${esc(ACC[g.acc]?.name || '')}${g.me ? ' · ma part ' + eur(g.mine) : ''}</span>
+      <span class="note">Total payé ${eur(g.total)} depuis ${esc(ACC[g.acc]?.name || '')}${g.me ? ' · sa part ' + eur(g.mine) : ''}</span>
       <span class="bar" style="display:block;height:10px"><i style="width:${s.p}%;--c:#10B981"></i></span></div>
     <div style="display:flex;flex-direction:column;gap:2px">
-      ${g.me ? `<div class="row rowb" style="padding:8px 4px;cursor:default"><span class="avatar">${initials(myEmail())}</span><span class="rt"><span class="rn">Moi</span><span class="rs">ma part, à ma charge</span></span><b class="num">${eur(g.mine)}</b></div>` : ''}
+      ${g.me ? `<div class="row rowb" style="padding:8px 4px;cursor:default"><span class="avatar">${initials(ACC[g.acc]?.name || myEmail())}</span><span class="rt"><span class="rn">${esc(ACC[g.acc]?.name || 'Moi')}</span><span class="rs">a payé · sa part reste à sa charge</span></span><b class="num">${eur(g.mine)}</b></div>` : ''}
       ${L.map(e => { const d = e.d, st = partState(d), B = borrowerOf(d);
         return `<button class="row rowb" style="padding:8px 4px" data-part="${d.id}"><span class="avatar">${initials(B.email || B.who)}</span><span class="rt"><span class="rn">${esc(sideLabel(B))}${B.kind === 'user' ? ' 🤝' : ''}</span><span class="rs" style="color:${st[1]}">${st[0]}</span></span><b class="num">${eur(num(d.amount))}</b></button>`; }).join('')}
     </div>
@@ -3714,6 +3721,9 @@ function splitNotify() {
   });
   splitSeen = st;
 }
+
+// Libellé de la case « une part reste au compte qui a payé »
+function spMeLabel(acc) { const a = ACC[acc]; return a && isShared(acc) ? 'Le compte « ' + a.name + ' » garde aussi une part (à sa charge)' : 'Je participe aussi (ma part reste à ma charge)'; }
 
 
 /* ============================== VÉRIFICATION AVEC LE RELEVÉ BANCAIRE ==============================
