@@ -427,6 +427,7 @@ dialog::backdrop{background:rgba(13,16,32,.5);backdrop-filter:blur(2px)}
 .bkdet summary{font-size:12.5px;color:var(--mute);cursor:pointer}.bkdet[open] summary{margin-bottom:4px}
 .bkprog{display:block;height:6px;border-radius:9px;background:color-mix(in srgb,var(--warn) 25%,transparent);overflow:hidden;margin-top:4px}.bkprog i{display:block;height:100%;background:var(--ok);border-radius:9px}
 .savint{display:grid;grid-template-columns:1fr 1fr;gap:10px}.savint>span{display:flex;flex-direction:column;gap:4px;background:var(--soft);border-radius:12px;padding:10px 12px}.savint small{font-size:12px;color:var(--mute)}.savint b{font-size:20px}
+.cmbox .seg button{padding-left:6px;padding-right:6px}.cmbox small{line-height:1.4}
 .stmm{padding:8px 4px;gap:10px}.stmm .rt{flex:1;min-width:0}.stmm .rn,.stmm .rs{white-space:normal}
 .bkhr{border:0;border-top:1px dashed var(--line);margin:4px 0;width:100%}
 .sbtns .bkbtn{grid-column:1/-1}
@@ -781,7 +782,7 @@ function calc(m, key) {
     incAll: sum(inc), incIn: sum(inc.filter(i => i.status === 'Reçu')),
     outAll: sum(ex, cash), outPaid: sum(ex.filter(e => e.status === 'Payé'), cash), outPlan: sum(ex.filter(e => e.status !== 'Payé'), cash),
     fixAll: sum(fx, cash), fixPaid: sum(fx.filter(e => e.status === 'Payé'), cash),
-    varAll: sum(vr, cash),
+    varAll: sum(vr, cash), outMine: sum(ex, eff),          // outMine : ce que les dépenses m'ont coûté (stats)
     budAll: sum(m.budgets),
     budLeft: sum(m.budgets, b => Math.max(0, num(b.amount) - vspent(m, b.cat))),
     budEff: sum(m.budgets, b => Math.max(num(b.amount), vspent(m, b.cat))),   // budget, ou dépensé s'il est dépassé
@@ -1519,8 +1520,8 @@ function rowHTML(x, type, k, opt = {}) {
   const inc = type === 'incomes', st = dueState(x, type, k);
   const name = x.name || (inc ? 'Recette' : x.cat);
   const sav = isSavAcc(), by = x.by && isShared() ? 'par ' + esc(x.by === currentUser?.email ? 'moi' : x.by.split('@')[0]) : '';
-  const meta = [x.fx ? '<b>' + esc(fxFmt(x.fx.amt, x.fx.cur)) + '</b>' : '', x.xfer ? (type === 'expenses' && x.cat && x.cat !== 'Virement' ? esc(x.cat) + ' · ' : '') + esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', x.nc ? '<b class="half">↔ déduite d\'une avance</b>' : '', x.share != null ? '<b class="half">payé ' + eur(num(x.amount)) + '</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
-  const amount = inc ? '+' + eur(num(x.amount)) : minus(eff(x));
+  const meta = [x.fx ? '<b>' + esc(fxFmt(x.fx.amt, x.fx.cur)) + '</b>' : '', x.xfer ? (type === 'expenses' && x.cat && x.cat !== 'Virement' ? esc(x.cat) + ' · ' : '') + esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', x.nc ? '<b class="half">↔ déduite d\'une avance</b>' : '', x.share != null ? '<b class="half">↔ ma part ' + eur(num(x.share)) + '</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
+  const amount = inc ? '+' + eur(num(x.amount)) : minus(x.share != null ? num(x.amount) : eff(x));   // dépense commune : le montant réellement payé
   let pill = '';
   if (opt.pill !== false && (st !== 'ok' || x.isFixed)) {
     const [cls, txt] = st === 'ok' ? ['ok', inc ? 'Reçu' : 'Payé'] : st === 'late' || st === 'due' ? ['warn', inc ? 'En attente' : 'À payer'] : ['', inc ? 'En attente' : SIMPLE() ? 'À payer' : 'Prévu'];
@@ -1940,7 +1941,7 @@ function hRows() {
   if (UI.hp > 0) ks = ks.slice(-UI.hp);
   if (UI.hp < 0) ks = ks.filter(k => +k.slice(0, 4) === UI.hy);
   return ks.map(k => { const m = S.months[k], c = calc(m, k);
-    return { k, m, inc: c.incAll, out: c.outAll, sav: c.saving, net: c.incAll - c.outAll, tx: c.incAll > 0 ? (c.incAll - c.outAll) / c.incAll * 100 : null, start: c.init, end: c.est, cur: k === nk }; });
+    return { k, m, inc: c.incAll, out: c.outMine, sav: c.saving, net: c.incAll - c.outMine, tx: c.incAll > 0 ? (c.incAll - c.outMine) / c.incAll * 100 : null, start: c.init, end: c.est, cur: k === nk }; });
 }
 function vHistorique() {
   const V = $('v-historique'), R = hRows();
@@ -1955,7 +1956,7 @@ function vHistorique() {
   if (UI.hp < 0) {
     const last = Math.max(...R.map(r => +r.k.slice(5)));
     const prev = Object.keys(S.months).filter(k => +k.slice(0, 4) === UI.hy - 1 && +k.slice(5) <= last && !isDraft(S.months[k]));
-    if (prev.length) { const pO = sum(prev, k => calc(S.months[k], k).outAll), d = pct(O - pO, pO); cmp = `${d > 0 ? '+' : ''}${Math.round(d)} % vs ${UI.hy - 1} (mêmes mois)`; }
+    if (prev.length) { const pO = sum(prev, k => calc(S.months[k], k).outMine), d = pct(O - pO, pO); cmp = `${d > 0 ? '+' : ''}${Math.round(d)} % vs ${UI.hy - 1} (mêmes mois)`; }
   }
   const ag = {}; R.forEach(r => Object.entries(catTotals(r.m)).forEach(([c, v]) => ag[c] = (ag[c] || 0) + v));
   const T = Object.values(ag).reduce((s, v) => s + v, 0) || 1, cl = Object.entries(ag).sort((a, b) => b[1] - a[1]).slice(0, 8);
@@ -2086,7 +2087,9 @@ function openPanel(type, id, opt = {}) {
   P = { type, id, isNew: !x, repeat: opt.repeat || !!(x && x.isFixed), future: true, addCat: false,
     d: x ? JSON.parse(JSON.stringify(x)) : { name: '', amount: '', cat: opt.cat || S.categories[0] || 'Autre', date: opt.day != null ? String(opt.day) : isCur ? String(today()) : '',
       status: opt.repeat ? (type === 'incomes' ? 'En attente' : 'Prévu') : (type === 'incomes' ? 'Reçu' : 'Payé'), isDivided: false } };
-  P.icon = P.d.img ? 'img' : P.d.site ? 'site' : 'cat';
+  P.icon = P.d.img ? 'img' : P.d.site ? 'site' : 'cat'; P.comp = x?.cpdebt || null; P.cm = cmMode(x);
+  if (x && x.share != null) { const pt = Math.round((num(x.amount) - num(x.share)) * 100) / 100; if (Math.abs(pt - num(x.amount) / 2) > 0.006) P.d.cmPart = fmtIn(pt); }
+  if (x?.newdebt) { const nd = findDebt(x.newdebt) || (PDEBTS.find(z => z.id === x.newdebt) && { d: PDEBTS.find(z => z.id === x.newdebt) }); if (nd) { P.d.cmWho = sideKey(borrowerOf(nd.d)); if (nd.d.borrower?.kind === 'text') P.d.cmName = nd.d.borrower.who; } }
   if (!x && SIMPLE() && type === 'expenses' && S.categories.includes('Autre')) P.d.cat = 'Autre';
   if (!x && isSavAcc() && !opt.keepType) { P.type = type = 'incomes'; P.d.status = opt.repeat ? 'En attente' : 'Reçu'; }
   let lc = 'EUR'; try { lc = localStorage.getItem('lastCur') || 'EUR'; } catch (e) {}
@@ -2114,7 +2117,8 @@ function paintPanel() {
     ${d.xfer ? `<div class="fixinfo" style="background:color-mix(in srgb,#0EA5E9 14%,var(--card));color:var(--ink)"><b>${svg('swap', 16)} ${esc(xferLabel(d, P.type))}</b><span style="font-size:12px">${d.xfer.kind === 'acc' && d.xfer.id ? 'Montant, date et suppression sont répercutés sur l\'autre compte.' : d.xfer.kind === 'person' && P.type === 'expenses' ? (xfStatus(d.xfer.id) === 'received' ? 'Déjà reçu : une modification ne change que ton côté.' : 'Pas encore reçu : tes modifications lui seront transmises.') : d.xfer.kind === 'person' ? 'Reçu de ' + esc(d.xfer.from || '') : ''}</span>${d.xfer.kind === 'person' && P.type === 'incomes' && !P.isNew && accIds.filter(id => id !== active && ACC[id]).length ? `<span style="font-size:12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">Déplacer vers ${accIds.filter(id => id !== active && ACC[id]).map(id => `<button class="chip" data-p="xmove" data-v="${id}">${accBadge(ACC[id], 14)} ${esc(ACC[id].name)}</button>`).join('')}</span>` : ''}</div>` : ''}
     <label class="amt"><input id="pn-a" inputmode="decimal" placeholder="0,00" aria-label="Montant" value="${esc(d.amount)}" data-pf="amount"><span>${P.cur && P.cur !== 'EUR' ? esc(P.cur) : '€'}</span></label>
     ${fxSelectHTML()}
-    ${ex ? `<div style="display:flex;justify-content:center;margin-top:-8px"><button class="tog half${d.isDivided ? ' on' : ''}" data-p="half" aria-pressed="${!!d.isDivided}">½ Partagé${d.isDivided ? ' · ma part ' + eur(parseAmt(d.amount) / 2) : ''}</button>${!P.isNew && !d.xfer ? `<button class="tog" data-p="split" style="margin-left:8px">${d.split && grpParts(d.split).length ? '👥 Partagée · voir' : '👥 Se faire rembourser'}</button>` : ''}</div>` : ''}
+    ${ex && (d.isDivided || (!P.isNew && !d.xfer)) ? `<div style="display:flex;justify-content:center;gap:8px;margin-top:-8px">${d.isDivided ? `<button class="tog half on" data-p="half" aria-pressed="true" title="Ancien réglage : la moitié seulement compte dans le solde">½ Partagé (ancien) · ma part ${eur(parseAmt(d.amount) / 2)}</button>` : ''}${!P.isNew && !d.xfer ? `<button class="tog" data-p="split">${d.split && grpParts(d.split).length ? '👥 Partagée · voir' : '👥 À plusieurs personnes'}</button>` : ''}</div>` : ''}
+    ${ex && !d.xfer ? compPanelHTML() : ''}
     <label class="fl">Libellé<input class="in" id="pn-n" list="pn-dl" autocomplete="off" value="${esc(d.name)}" data-pf="name" placeholder="${ex ? 'ex. Courses' : 'ex. Salaire'}"><datalist id="pn-dl">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
     ${ex ? `<div class="fl">Catégorie<div class="chips">${(d.xfer ? ['Virement', ...S.categories.filter(c => c !== 'Virement')] : S.categories).map(c => `<button class="chip cat${c === d.cat ? ' on' : ''}" style="--c:${catInfo(c).col}" data-p="cat" data-v="${esc(c)}"><i></i>${esc(c)}</button>`).join('')}<button class="chip" data-p="addcat">+ Nouvelle</button></div>
       ${P.addCat ? `<span style="display:flex;gap:8px"><input class="in" id="pn-nc" placeholder="Nom de la catégorie"><button class="btn" data-p="addcat-ok">Ajouter</button></span>` : ''}</div>` : ''}
@@ -2142,7 +2146,9 @@ function panelClick(b) {
   switch (a) {
     case 'close': return closePanel();
     case 'type': if (b.dataset.v === 'xfer') { P.type = 'xfer'; P.xk = P.xk || 'acc'; d.cat = 'Virement'; P.icon = d.site ? 'site' : d.img ? 'img' : 'cat'; break; } P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
-    case 'half': d.isDivided = !d.isDivided; break;
+    case 'half': d.isDivided = !d.isDivided; if (d.isDivided) { P.comp = null; P.cm = 'none'; } break;
+    case 'comp': P.comp = b.dataset.v; d.isDivided = false; break;
+    case 'cm': P.cm = b.dataset.v; if (P.cm === 'debt' && !P.comp) { const C = compCands(); if (C.length === 1) P.comp = C[0].e.d.id; } if (P.cm !== 'none') d.isDivided = false; break;
     case 'split': { const g = d.split && grpParts(d.split).length ? d.split : null, pre = { name: d.name, amount: parseAmt(d.amount), expId: P.id, k: ck(), acc: active }; closePanel(); return setTimeout(() => g ? groupView(g) : splitDialog(pre), 260); }
     case 'cat': d.cat = b.dataset.v; break;
     case 'addcat': P.addCat = !P.addCat; paintPanel(); return $('pn-nc')?.focus();
@@ -2162,7 +2168,8 @@ function panelClick(b) {
     case 'tacc': P.toAcc = b.dataset.v; P.toAccPicked = true; break;
     case 'xmove': return xferMove(b.dataset.v);
     case 'dup': { const t = P.type, src = month()[t].find(e => e.id === P.id); mutate(() => { const c = JSON.parse(JSON.stringify(src)); Object.assign(c, { id: uid(), isFixed: false, status: t === 'incomes' ? 'En attente' : 'Prévu' }); delete c.tmplId; const arr = month()[t]; arr.splice(arr.indexOf(src) + 1, 0, c); }, 'Dupliqué'); return closePanel(); }
-    case 'del': { const t = P.type, id = P.id, xf = month()[t].find(e => e.id === id)?.xfer; mutate(() => { const m = month(); m[t] = m[t].filter(e => e.id !== id); }, 'Supprimé'); xferPropagate(xf, null); if (xf?.kind === 'person' && xf.id) { (U.xfHide = U.xfHide || []).push(xf.id); saveUser(); } return closePanel(); }
+    case 'del': { const t = P.type, id = P.id, xf = month()[t].find(e => e.id === id)?.xfer, x0 = month()[t].find(e => e.id === id), k0 = ck();
+      if (x0?.cpdebt || x0?.newdebt) setTimeout(() => { if (x0.cpdebt) detachComp(id, k0, x0.cpdebt, x0.cpid); if (x0.newdebt) detachNew(id, k0, x0.newdebt); }, 0); mutate(() => { const m = month(); m[t] = m[t].filter(e => e.id !== id); }, 'Supprimé'); xferPropagate(xf, null); if (xf?.kind === 'person' && xf.id) { (U.xfHide = U.xfHide || []).push(xf.id); saveUser(); } return closePanel(); }
     case 'stop': { const t = P.type, id = P.id, x0 = month()[t].find(e => e.id === id), tp0 = x0 && S.templates[t].find(z => z.tmplId === x0.tmplId), cp = tp0 && JSON.parse(JSON.stringify(tp0));
       if (cp?.xfer) setTimeout(() => xferTplSync(t, cp, 'stop'), 0);
       mutate(() => { const x = month()[t].find(e => e.id === id); tplDel(t, x.tmplId, shiftK(ck(), 1)); x.isFixed = false; delete x.tmplId; }, 'Récurrence arrêtée'); return closePanel(); }
@@ -2175,7 +2182,7 @@ function savePanel() {
   const fr = fxRate(cur); if (!fr) return toast('Taux de change indisponible : vérifie ta connexion');
   if (P.isNew && !isSavAcc()) try { localStorage.setItem('lastCur', cur); } catch (e) {}
   const amt = cur === 'EUR' ? raw : Math.round(raw / fr * 100) / 100, fx = cur === 'EUR' ? null : { cur, amt: Math.round(raw * 100) / 100, rate: Math.round(1 / fr * 1e6) / 1e6, date: FX.date };
-  const k = ck(), isNew = P.isNew, id = P.id, repeat = P.repeat, future = P.future, icon = P.icon, xf = d.xfer;
+  const k = ck(), isNew = P.isNew, id = P.id, repeat = P.repeat, future = P.future, icon = P.icon, xf = d.xfer, cmo = t === 'expenses' && !isSavAcc() && !d.xfer ? { mode: P.cm || 'none', comp: P.comp, part: d.cmPart, who: d.cmWho, name: d.cmName } : null; let saved = null;
   if (xf && !isNew) setTimeout(() => xferPropagate(xf, { amount: Math.round(amt * 100) / 100, date: day(d.date), label: d.name.trim(), paid: isPaid(d, t) }), 0);
   const x0 = !isNew && month(k)[t].find(e => e.id === id), tp0 = x0?.isFixed && future && x0.xfer && S.templates[t].find(z => z.tmplId === x0.tmplId), old = tp0 && { name: tp0.name, amount: tp0.amount };
   if (tp0) setTimeout(() => xferTplSync(t, tp0, 'upd', old), 0);
@@ -2195,7 +2202,9 @@ function savePanel() {
       }
     }
     if (!x.isFixed && repeat) { const tp = tplFrom(t, x); x.isFixed = true; x.tmplId = tp.tmplId; tplAdd(t, tp, shiftK(k, 1)); }
+    if (cmo && cmo.mode !== 'none') x.isDivided = false; saved = x;
   }, (isNew ? (isSavAcc() ? (t === 'incomes' ? 'Versement : ' : 'Retrait : ') : t === 'incomes' ? 'Recette ajoutée : ' : 'Dépense ajoutée : ') : 'Modifié : ') + (d.name.trim() || (t === 'incomes' ? 'Recette' : d.cat)) + ' · ' + eur(t === 'expenses' && d.isDivided ? amt / 2 : amt));
+  if (saved && cmo && (cmo.mode !== 'none' || saved.cpdebt || saved.newdebt || saved.share != null)) { const sv = { id: saved.id, prev: { cpdebt: saved.cpdebt, cpid: saved.cpid, newdebt: saved.newdebt } }; setTimeout(() => compPanelSave(sv.id, k, cmo, sv.prev), 0); }
   closePanel();
 }
 // Image perso → redimensionnée en 96 px (stockée avec les données)
@@ -2622,7 +2631,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '4 nov. · v30';
+const APP_VERSION = '4 nov. · v32';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -4405,7 +4414,7 @@ function compAmount(d, side, part, exceptId) {
 }
 async function compAdd(e, o) {
   const p = { id: uid(), comp: 1, label: o.label, tot: o.tot, part: o.part, half: !!o.half, side: o.side, payer: o.payer || '', cat: o.cat || 'Autre', mk: o.mk ?? 'both',
-    date: o.date, k: o.date.slice(0, 7), v: 1, lines: {}, from: '', fromName: '', to: '', toName: '', by: currentUser.uid };
+    date: o.date, k: o.date.slice(0, 7), v: 1, lines: o.lines || {}, from: '', fromName: '', to: '', toName: '', by: currentUser.uid };
   p.amount = compAmount(e.d, o.side, o.part);
   await updateDebt(e, x => { (x.payments = x.payments || []).push(p); compDone(x); });
   await compSync(e.d.id);
@@ -4416,7 +4425,7 @@ const compDone = x => { const i = debtInfo(x); if (i.done) { x.doneAt = x.doneAt
 /* ---------- Lignes de dépense dans les comptes (créées / mises à jour par l'appli qui a accès au compte) ---------- */
 function compLine(p, side, id, debtId) {
   const payer = side === p.side, base = { id, date: String(+p.date.slice(8, 10)), status: 'Payé', cat: p.cat || 'Autre', isFixed: false, isDivided: false, comp: debtId };
-  return payer ? Object.assign(base, { name: p.label || 'Dépense commune', amount: p.tot, share: Math.round((p.tot - p.part) * 100) / 100 })
+  return payer ? Object.assign(base, { name: p.label || 'Dépense commune', amount: p.tot, share: Math.round((p.tot - p.part) * 100) / 100, cpdebt: debtId, cpid: p.id })
     : Object.assign(base, { name: (p.label || 'Dépense commune') + (p.payer ? ' (payé par ' + p.payer + ')' : ''), amount: p.part, nc: 1 });
 }
 // Déplace / met à jour / retire une ligne d'un mois d'un de mes comptes
@@ -4433,9 +4442,11 @@ async function compSync(only) {
   try {
     for (const e of allDebts()) {
       if (only && e.d.id !== only) continue;
+      if ((e.d.payments || []).some(p => p.comp && p.mk === undefined)) await updateDebt(e, x => { (x.payments || []).forEach(compMigrate); });
+      if ((e.d.payments || []).some(p => p.comp && p.mk === undefined)) e.d.payments.forEach(compMigrate);
       for (const p of (e.d.payments || []).filter(p => p.comp && p.mk)) {
         for (const side of ['L', 'B']) {
-          if (p.mk === 'other' && side === p.side) continue;
+          if ((p.mk === 'other' && side === p.side) || p.nol?.[side]) continue;          // nol : ligne détachée à la main
           const acc = side === 'L' ? lenderAcc(e) : borrowerAcc(e); if (!myAcc(acc)) continue;
           const ln = (p.lines || {})[side]; if (ln && ln.v === p.v && ln.acc === acc) continue;
           // on « réserve » la mise à jour dans l'avance (évite les doublons quand deux appareils la voient en même temps)
@@ -4446,7 +4457,7 @@ async function compSync(only) {
             q.lines[side] = { id: c?.id || uid(), acc, k: q.date.slice(0, 7), v: q.v }; job.ln = Object.assign({}, q.lines[side]); });
           if (!job) continue;
           if (job.old && job.old.acc !== acc && myAcc(job.old.acc)) await lineSet(job.old.acc, job.old.k, null, 'expenses', job.old.id);
-          await lineSet(acc, job.old && job.old.acc === acc ? job.old.k : null, job.ln.k, 'expenses', job.ln.id, () => compLine(job.q, side, job.ln.id, e.d.id));
+          await lineSet(acc, job.old && job.old.acc === acc ? job.old.k : null, job.ln.k, 'expenses', job.ln.id, cur => Object.assign(cur || {}, compLine(job.q, side, job.ln.id, e.d.id)));
         }
       }
     }
@@ -4517,6 +4528,100 @@ async function payEdit(e, p, n) {
 function compRowHTML(p, d) {
   const ded = p.amount > 0;
   return `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:${ded ? '#0EA5E9' : '#F59E0B'}">${svg('swap', 17)}</span><span class="rt"><span class="rn">${esc(compLabel(p))}</span><span class="rs">${fmtD(p.date)} · dépense commune${p.payer ? ' payée par ' + esc(p.payer) : ''} · ${ded ? 'déduite' : 'ajoutée'}${p.ed ? ' · modifiée' + (p.ed.by !== currentUser.uid ? ' par ' + esc(shortName(d.emails?.[p.ed.by] || '')) : '') : p.by && p.by !== currentUser.uid ? ' · saisie par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:${ded ? 'var(--ok)' : 'var(--warn)'}">${ded ? '−' : '+'}${eur(Math.abs(p.amount))}</b></button><button class="x" data-del="${p.id}" aria-label="Supprimer">${svg('trash', 15)}</button></div>`;
+}
+
+/* ---------- Fiche d'une dépense : « Dépense commune », tout au même endroit ----------
+   • Partagée : le compte garde le montant payé, mes catégories / graphiques ne comptent que ma part. Rien d'autre.
+   • Déduire : la part de l'autre fait baisser ce que je lui dois (je choisis la dette s'il y en a plusieurs).
+   • Avance : la part de l'autre devient une nouvelle avance qu'il me rembourse, liée à cette dépense.        */
+function compCands() {          // mes dettes en cours (ce compte doit de l'argent) : la part de l'autre vient en déduction
+  return allDebts().filter(compOpen).map(e => { const la = lenderAcc(e), ba = borrowerAcc(e), i = debtInfo(e.d);
+    return ba === active && la !== active && (i.left > 0 || e.d.id === P?.comp) ? { e, who: sideLabel(lenderOf(e.d, e.home.acc)), left: i.left } : null; }).filter(Boolean);
+}
+const cmMode = x => x?.cpdebt ? 'debt' : x?.newdebt ? 'new' : x?.share != null ? 'half' : 'none';
+const cmWhoOpts = () => allAccs().filter(a => a !== active).map(a => ['a:' + a, '🏦 ' + ACC[a].name])
+  .concat(linkedPeople().filter(p => p.uid).map(p => ['u:' + p.uid, '👤 ' + shortName(p.email)]), [['txt', 'Quelqu\'un d\'autre (juste un nom)']]);
+const sideKey = s => s.kind === 'acc' ? 'a:' + s.acc : s.kind === 'user' ? 'u:' + s.uid : 'txt';
+function cmVals() { const d = P.d, a = parseAmt(d.amount), part = parseAmt(d.cmPart) > 0 ? Math.min(a, Math.round(parseAmt(d.cmPart) * 100) / 100) : Math.round(a * 50) / 100; return { a, part, mine: Math.round((a - part) * 100) / 100 }; }
+function cmInfo() {
+  const M = P.cm || 'none', v = cmVals(), d = P.d;
+  if (M === 'half') return `Le compte garde <b>${eur(v.a)}</b> payés. Tes catégories et graphiques ne comptent que ta part : <b>${eur(v.mine)}</b>. Aucune dette.`;
+  if (M === 'debt') { const c = compCands().find(c => c.e.d.id === P.comp); return c ? `Ta part <b>${eur(v.mine)}</b> · ${esc(c.who)} : <b>${eur(v.part)}</b> déduits de ce que tu lui dois (${eur(c.left)} → ${eur(Math.max(0, c.left - v.part))})` : 'Choisis la dette à faire baisser.'; }
+  if (M === 'new') { const u = String(d.cmWho || '').startsWith('u:'); return `Ta part <b>${eur(v.mine)}</b> · une avance de <b>${eur(v.part)}</b> est créée${u ? ', une demande lui est envoyée' : ''}. Elle suit cette dépense si tu la modifies.`; }
+  return '';
+}
+function compPanelHTML() {
+  const d = P.d, M = P.cm || 'none', C = compCands(), W = cmWhoOpts();
+  if (M === 'new' && !d.cmWho) d.cmWho = W[0][0];
+  const modes = [['none', 'Non'], ['half', 'Partagée'], ['debt', 'Déduire'], ['new', 'Avance']];
+  return `<div class="fl cmbox" id="cmbox">Dépense commune <span class="note" style="font-weight:500;font-size:12px">payée par toi pour vous deux</span>
+    <div class="seg" role="group" aria-label="Dépense commune">${modes.map(m => `<button class="${M === m[0] ? 'on' : ''}" data-p="cm" data-v="${m[0]}">${m[1]}</button>`).join('')}</div>
+    ${M === 'debt' ? (C.length ? `<div class="chips">${C.map(c => `<button class="chip${P.comp === c.e.d.id ? ' on' : ''}" data-p="comp" data-v="${esc(c.e.d.id)}">↔ ${esc(c.who)} · ${esc(c.e.d.name)} · tu lui dois ${eur0(c.left)}</button>`).join('')}</div>` : '<small>Aucune dette en cours depuis ce compte. Choisis « Avance » si l\'autre doit te rembourser.</small>') : ''}
+    ${M === 'new' ? `<label class="fl" style="margin:0">Qui te doit sa part ?<select class="in" data-pf="cmWho">${W.map(w => `<option value="${w[0]}" ${d.cmWho === w[0] ? 'selected' : ''}>${esc(w[1])}</option>`).join('')}</select></label>${d.cmWho === 'txt' ? `<input class="in" data-pf="cmName" placeholder="Son nom" value="${esc(d.cmName || '')}">` : ''}` : ''}
+    ${M !== 'none' ? `<label class="fl" style="margin:0">Part de l'autre<input class="in" inputmode="decimal" data-pf="cmPart" placeholder="la moitié" value="${esc(d.cmPart ?? '')}"></label><small id="cminfo">${cmInfo()}</small>` : ''}</div>`;
+}
+const cmInfoPaint = () => { const el = $('cminfo'); if (el && P) el.innerHTML = cmInfo(); };
+// Détacher une dette « déduite » (la ligne de l'autre suit la suppression, avec son accord si l'avance est partagée)
+async function detachComp(xid, k, did, cpid) {
+  const e0 = findDebt(did);
+  if (e0 && cpid) { await updateDebt(e0, d => { const q = (d.payments || []).find(z => z.id === cpid); if (q && q.lines) Object.keys(q.lines).forEach(s => { if (q.lines[s].id === xid) { delete q.lines[s]; q.nol = Object.assign({}, q.nol, { [s]: true }); } }); }); await payDelete(did, cpid); }
+  mutate(() => { const y = month(k).expenses.find(e => e.id === xid); if (y) { delete y.share; delete y.cpdebt; delete y.cpid; delete y.comp; } }, false);
+}
+// Retirer l'avance créée pour cette dépense (seulement si rien n'a encore été remboursé)
+async function detachNew(xid, k, did) {
+  const e = findDebt(did) || (PDEBTS.find(d => d.id === did) && { d: PDEBTS.find(d => d.id === did), home: { shared: did } });
+  mutate(() => { const y = month(k).expenses.find(z => z.id === xid); if (y) { delete y.newdebt; delete y.share; } }, false);
+  if (!e) return;
+  if ((e.d.payments || []).length) return toast('ℹ L\'avance « ' + e.d.name + ' » a déjà des remboursements : elle est gardée');
+  if (e.home.shared) { if (e.d.invite && e.d.invite.status !== 'accepted') return declinedAction(did, 'drop'); return toast('ℹ L\'avance « ' + e.d.name + ' » est déjà acceptée : supprime-la depuis Budgets si besoin'); }
+  if (e.home.acc === active) return mutate(() => { S.debts = debts().filter(x => x.id !== did); }, false);
+  await db.runTransaction(async tx => { const ref = accDoc(e.home.acc), s0 = await tx.get(ref), o = J(s0.data().meta) || {}; o.debts = (o.debts || []).filter(x => x.id !== did); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); });
+}
+async function compPanelSave(xid, k, o, prev) {
+  const get = () => month(k).expenses.find(e => e.id === xid), x = get(); if (!x) return;
+  const tot = num(x.amount), half = !(parseAmt(o.part) > 0), part = half ? Math.round(tot * 50) / 100 : Math.min(tot, Math.round(parseAmt(o.part) * 100) / 100), mine = Math.round((tot - part) * 100) / 100;
+  const date = k + '-' + String(parseInt(x.date) || today()).padStart(2, '0'), setX = f => mutate(() => { const y = get(); if (y) f(y); }, false);
+  // ce qui ne s'applique plus est détaché
+  if (prev.cpdebt && (o.mode !== 'debt' || o.comp !== prev.cpdebt)) await detachComp(xid, k, prev.cpdebt, prev.cpid);
+  const pe = prev.newdebt && (findDebt(prev.newdebt) || (PDEBTS.find(d => d.id === prev.newdebt) && { d: PDEBTS.find(d => d.id === prev.newdebt), home: { shared: prev.newdebt } }));
+  if (prev.newdebt && (o.mode !== 'new' || !pe || sideKey(borrowerOf(pe.d)) !== o.who)) await detachNew(xid, k, prev.newdebt);
+  if (o.mode === 'none') { setX(y => { delete y.share; }); return render(); }
+  if (o.mode === 'half') { setX(y => { y.share = mine; y.isDivided = false; }); return render(); }
+  if (o.mode === 'debt') {
+    const e = o.comp && findDebt(o.comp); if (!e) { setX(y => { y.share = mine; }); return toast('Choisis la dette à faire baisser'); }
+    if (prev.cpdebt === o.comp && prev.cpid) {
+      await updateDebt(e, d => { const q = (d.payments || []).find(z => z.id === prev.cpid); if (!q) return;
+        Object.assign(q, { label: x.name, tot, part, half, cat: x.cat, date, k, v: (q.v || 1) + 1, ed: { by: currentUser.uid, at: Date.now() } }); q.amount = compAmount(d, q.side, part, prev.cpid);
+        if (q.lines?.[q.side]?.id === xid) Object.assign(q.lines[q.side], { v: q.v, k, acc: active }); compDone(d); });
+      setX(y => { y.share = mine; y.isDivided = false; }); await compSync(o.comp); return render();
+    }
+    if (part > debtInfo(e.d).left + 0.001) toast('ℹ La part (' + eur(part) + ') dépasse ce que tu dois : la dette est soldée');
+    const p = await compAdd(e, { label: x.name, tot, part, half, side: 'B', payer: accName(), cat: x.cat, date, mk: 'both', lines: { B: { id: xid, acc: active, k, v: 1 } } });
+    setX(y => Object.assign(y, { share: mine, cpdebt: o.comp, cpid: p.id, comp: o.comp, isDivided: false }));
+    const n = findDebt(o.comp); toast('↔ ' + eur(Math.min(part, num(p.amount) || part)) + ' déduits · ' + e.d.name + ' : reste ' + eur(n ? debtInfo(n.d).left : 0)); return render();
+  }
+  if (o.mode === 'new') {
+    if (pe && prev.newdebt && sideKey(borrowerOf(pe.d)) === o.who) {                // déjà créée : elle suit le montant et le libellé
+      await updateDebt(pe, d => { d.amount = part; d.name = x.name; }); setX(y => { y.share = mine; }); return render();
+    }
+    const did = uid(), now = Date.now(), d = { id: did, name: x.name, amount: part, emo: '🧾', at: now, payments: [], src: { acc: active, k, id: xid } }, w = o.who || 'txt';
+    if (w.startsWith('u:')) { const pp = linkedPeople().find(z => 'u:' + z.uid === w); if (!pp) return toast('Personne introuvable');
+      Object.assign(d, { lender: { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: active, accName: accName() }, borrower: { kind: 'user', uid: pp.uid, email: pp.email },
+        invite: { status: 'pending', at: now }, members: [currentUser.uid, pp.uid], emails: { [currentUser.uid]: myEmail(), [pp.uid]: pp.email }, createdBy: currentUser.uid, updatedAt: now });
+      await db.collection('pdebts').doc(did).set(d); }
+    else { Object.assign(d, { lender: { kind: 'acc', acc: active, accName: accName() }, borrower: w.startsWith('a:') ? { kind: 'acc', acc: w.slice(2), accName: ACC[w.slice(2)]?.name || '' } : { kind: 'text', who: (o.name || '').trim() || 'Quelqu\'un' } });
+      mutate(() => debts().push(d), false); }
+    setX(y => Object.assign(y, { share: mine, newdebt: did, isDivided: false }));
+    toast('🧾 Avance de ' + eur(part) + ' créée · ' + sideLabel(d.borrower) + (w.startsWith('u:') ? ' (demande envoyée)' : '')); return render();
+  }
+}
+// Dépenses communes saisies avec la v29 (sans lignes de dépense) : on les complète
+function compMigrate(p) {
+  if (!p.comp || p.mk !== undefined) return false;
+  const m = String(p.label || '').match(/^(.*) \(([\d\s\u00a0\u202f.,]+)\s?€\)$/);
+  p.tot = m ? parseAmt(m[2].replace(/[\s\u00a0\u202f]/g, '')) : Math.abs(num(p.amount)) * 2; if (m) p.label = m[1];
+  p.part = Math.abs(num(p.amount)); p.half = Math.abs(p.tot / 2 - p.part) < 0.01; p.side = num(p.amount) > 0 ? 'B' : 'L'; p.mk = 'both'; p.v = 1; p.lines = p.lines || {}; p.cat = p.cat || 'Autre';
+  return true;
 }
 
 
@@ -4806,6 +4911,7 @@ document.addEventListener('input', ev => {
     if (el.dataset.pf === 'name' && (P.type === 'expenses' || P.type === 'xfer')) { const c = autoCat(el.value); if (c && c !== P.d.cat) { P.d.cat = c; $$('#panel [data-p=cat]').forEach(b => b.classList.toggle('on', b.dataset.v === c)); } }
     if (el.dataset.pf === 'email') xfLookupSoon();
     if (el.dataset.pf === 'amount') fxPaint();
+    if (el.dataset.pf === 'amount' || el.dataset.pf === 'cmPart') cmInfoPaint();
     if (el.dataset.pf === 'amount' && P.d.isDivided) { const h = $$('#panel [data-p=half]')[0]; if (h) h.textContent = '½ Partagé · ma part ' + eur(parseAmt(el.value) / 2); }
     return;
   }
@@ -4821,6 +4927,7 @@ document.addEventListener('change', ev => {
   if (el.id === 'imgfile') return readImage(el.files[0]);
   if (el.id === 'bkfile') return bankImport(el.files[0]);
   if (el.id === 'pn-site' && P) return paintPanel();
+  if (el.dataset.pf === 'cmWho' && P) { P.d.cmWho = el.value; return paintPanel(); }
   if (el.dataset.pcur && P) { P.cur = el.value; paintPanel(); if (P.cur !== 'EUR') fxLoad().then(fxPaint); return; }
   if (el.dataset.sv) return saveUser();
   if (el.dataset.recv) { U.recvAcc = el.value; U.recvHide = (U.recvHide || []).filter(x => x !== el.value); saveUser(); render(); return toast('Compte par défaut : « ' + (ACC[el.value]?.name || '') + ' »'); }
