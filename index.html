@@ -594,7 +594,10 @@ const eur = v => num(v).toLocaleString('fr-FR', { style: 'currency', currency: '
 const eur0 = v => num(v).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + eur(Math.abs(v));
 const minus = v => '−' + eur(Math.abs(v));
-const eff = e => e.isDivided ? Math.round(num(e.amount) * 50) / 100 : num(e.amount);   // au centime (10,99 → 5,50)       // part personnelle (½)
+// eff  = ce que la dépense me coûte (budgets, catégories) : ma part si dépense commune, ½ si « ½ Partagé »
+// cash = ce qui sort vraiment du compte (solde) : rien pour une part « compensée » (déduite d'une avance), tout ce que j'ai payé sinon
+const eff = e => e.share != null ? num(e.share) : e.isDivided ? Math.round(num(e.amount) * 50) / 100 : num(e.amount);   // au centime (10,99 → 5,50)
+const cash = e => e.nc ? 0 : e.share != null ? num(e.amount) : eff(e);
 const sum = (a, f = x => num(x.amount)) => a.reduce((s, x) => s + f(x), 0);
 const day = v => { const n = parseInt(v); return n >= 1 && n <= 31 ? String(n) : ''; };
 const parseAmt = v => { const n = parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')); return isFinite(n) ? n : 0; };
@@ -735,8 +738,8 @@ const vspent = (m, c) => sum(m.expenses.filter(e => !e.isFixed && e.cat === c), 
 // Variation du compte sur un mois : réelle pour les mois passés, projetée pour le mois en cours et les suivants
 function monthFlow(m, key) {
   if (key < nowK())
-    return sum(m.incomes.filter(i => i.status === 'Reçu')) - sum(m.expenses.filter(e => e.status === 'Payé'), eff) - num(m.savingGoal);
-  return sum(m.incomes) - sum(m.expenses, eff) - num(m.savingGoal) - varRest(m, key).v;
+    return sum(m.incomes.filter(i => i.status === 'Reçu')) - sum(m.expenses.filter(e => e.status === 'Payé'), cash) - num(m.savingGoal);
+  return sum(m.incomes) - sum(m.expenses, cash) - num(m.savingGoal) - varRest(m, key).v;
 }
 // Dépenses du quotidien (hors charges fixes et virements entre mes comptes)
 const isDaily = e => !e.isFixed && !xferPlain(e);
@@ -744,10 +747,10 @@ const isDaily = e => !e.isFixed && !xferPlain(e);
 let histCache = { sig: '', r: {} };
 function histVar(from) {
   const ks = Object.keys(S.months).filter(x => x < nowK() && !isDraft(S.months[x]) && S.months[x].expenses.some(isDaily)).sort().slice(-6);
-  const sig = ks.map(x => x + ':' + S.months[x].expenses.length + ':' + sum(S.months[x].expenses, eff)).join('|');
+  const sig = ks.map(x => x + ':' + S.months[x].expenses.length + ':' + sum(S.months[x].expenses, cash)).join('|');
   if (histCache.sig !== sig) histCache = { sig, r: {} };
   if (histCache.r[from]) return histCache.r[from];
-  const vals = ks.map(x => { const D = dim(x); return sum(S.months[x].expenses.filter(isDaily), e => { const d = parseInt(e.date); return eff(e) * (d ? (d > from ? 1 : 0) : Math.max(0, (D - from) / D)); }); });
+  const vals = ks.map(x => { const D = dim(x); return sum(S.months[x].expenses.filter(isDaily), e => { const d = parseInt(e.date); return cash(e) * (d ? (d > from ? 1 : 0) : Math.max(0, (D - from) / D)); }); });
   const n = vals.length, mean = n ? vals.reduce((s, v) => s + v, 0) / n : 0;
   const sd = n > 1 ? Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1)) : mean * .3;
   return histCache.r[from] = { mean, sd, n };
@@ -756,7 +759,7 @@ function histVar(from) {
 function varRest(m, key) {
   const cur = key === nowK(), from = cur ? today() : 0, h = histVar(from);
   if (!h.n) return { v: 0, sd: 0, n: 0, h, from };
-  const ahead = sum(m.expenses.filter(e => isDaily(e) && (!cur || (e.status !== 'Payé' && parseInt(e.date) > from))), eff);
+  const ahead = sum(m.expenses.filter(e => isDaily(e) && (!cur || (e.status !== 'Payé' && parseInt(e.date) > from))), cash);
   return { v: Math.max(0, h.mean - ahead), sd: h.sd, n: h.n, h, from, ahead };
 }
 // Solde au 1er du mois : dernier solde réel saisi (ce mois-ci ou avant) + variations des mois intermédiaires
@@ -776,9 +779,9 @@ function calc(m, key) {
   const bcats = new Set(m.budgets.map(b => b.cat));
   const r = {
     incAll: sum(inc), incIn: sum(inc.filter(i => i.status === 'Reçu')),
-    outAll: sum(ex, eff), outPaid: sum(ex.filter(e => e.status === 'Payé'), eff), outPlan: sum(ex.filter(e => e.status !== 'Payé'), eff),
-    fixAll: sum(fx, eff), fixPaid: sum(fx.filter(e => e.status === 'Payé'), eff),
-    varAll: sum(vr, eff),
+    outAll: sum(ex, cash), outPaid: sum(ex.filter(e => e.status === 'Payé'), cash), outPlan: sum(ex.filter(e => e.status !== 'Payé'), cash),
+    fixAll: sum(fx, cash), fixPaid: sum(fx.filter(e => e.status === 'Payé'), cash),
+    varAll: sum(vr, cash),
     budAll: sum(m.budgets),
     budLeft: sum(m.budgets, b => Math.max(0, num(b.amount) - vspent(m, b.cat))),
     budEff: sum(m.budgets, b => Math.max(num(b.amount), vspent(m, b.cat))),   // budget, ou dépensé s'il est dépassé
@@ -1516,7 +1519,7 @@ function rowHTML(x, type, k, opt = {}) {
   const inc = type === 'incomes', st = dueState(x, type, k);
   const name = x.name || (inc ? 'Recette' : x.cat);
   const sav = isSavAcc(), by = x.by && isShared() ? 'par ' + esc(x.by === currentUser?.email ? 'moi' : x.by.split('@')[0]) : '';
-  const meta = [x.fx ? '<b>' + esc(fxFmt(x.fx.amt, x.fx.cur)) + '</b>' : '', x.xfer ? (type === 'expenses' && x.cat && x.cat !== 'Virement' ? esc(x.cat) + ' · ' : '') + esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
+  const meta = [x.fx ? '<b>' + esc(fxFmt(x.fx.amt, x.fx.cur)) + '</b>' : '', x.xfer ? (type === 'expenses' && x.cat && x.cat !== 'Virement' ? esc(x.cat) + ' · ' : '') + esc(xferLabel(x, type)) : sav ? (inc ? 'Versement' : 'Retrait') : inc ? 'Recette' : esc(x.cat), x.isFixed ? (sav ? 'chaque mois' : 'fixe') : '', x.isDivided ? '<b class="half">½ ma part</b>' : '', x.nc ? '<b class="half">↔ déduite d\'une avance</b>' : '', x.share != null ? '<b class="half">payé ' + eur(num(x.amount)) + '</b>' : '', by, opt.sub || ''].filter(Boolean).join(' · ');
   const amount = inc ? '+' + eur(num(x.amount)) : minus(eff(x));
   let pill = '';
   if (opt.pill !== false && (st !== 'ok' || x.isFixed)) {
@@ -1563,7 +1566,7 @@ function renderChrome() {
   $('bell').classList.toggle('on', UI.view === 'messages');
   $$('.accsw-slot').forEach(s => s.innerHTML = accSwitcherHTML());
   $$('[data-a=new]')[0].innerHTML = svg('plus', 18, 2.4) + '<span>Ajouter</span>';
-  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500);
+  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500); compSyncSoon();
   $('todayd').innerHTML = `<span class="tdl">${todayLabel()}</span><span class="tds">${todayLabel({ weekday: 'short', day: 'numeric', month: 'short' })}</span>`;
 }
 
@@ -2332,7 +2335,7 @@ function notifyAlerts() {
 /* ---------- ACCUEIL D'UN COMPTE ÉPARGNE ---------- */
 function vSavAccueil() {
   const k = ck(), m = month(k), c = calc(m, k), V = $('v-accueil'), a = ACC[active] || {}, G = S.goal || {};
-  const inMo = sum(m.incomes.filter(i => i.status === 'Reçu')), outMo = sum(m.expenses.filter(e => e.status === 'Payé'), eff);
+  const inMo = sum(m.incomes.filter(i => i.status === 'Reçu')), outMo = sum(m.expenses.filter(e => e.status === 'Payé'), cash);
   // Variation moyenne sur les derniers mois écoulés (pour estimer la date de l'objectif)
   const past = Object.keys(S.months).sort().filter(x => x < nowK() && !isDraft(S.months[x])).slice(-6);
   const avg = past.length ? sum(past, x => calc(S.months[x], x).flow) / past.length : c.flow;
@@ -2449,7 +2452,7 @@ function txMonth(accId, k, fn, metaFn) {
     const aS = await tx.get(aRef), mS = await tx.get(mRef);
     if (!aS.exists) throw new Error('Compte introuvable');
     const m = mS.exists ? JSON.parse(mS.data().data) : monthFromMeta(aS.data().meta);
-    const flow = x => sum((x.incomes || []).filter(i => i.status === 'Reçu')) - sum((x.expenses || []).filter(e => e.status === 'Payé'), eff), all = x => sum(x.incomes || []) - sum(x.expenses || [], eff);
+    const flow = x => sum((x.incomes || []).filter(i => i.status === 'Reçu')) - sum((x.expenses || []).filter(e => e.status === 'Payé'), cash), all = x => sum(x.incomes || []) - sum(x.expenses || [], eff);
     const before = flow(m), beforeAll = all(m);
     fn(m);
     tx.set(mRef, { data: canon(m), updatedAt: Date.now(), updatedBy: currentUser.uid });
@@ -2619,7 +2622,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '4 nov. · v29';
+const APP_VERSION = '4 nov. · v30';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3014,7 +3017,7 @@ function debtInfo(d) {
 function pdebtListen() {
   return db.collection('pdebts').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
     PDEBTS = q.docs.map(d => ({ id: d.id, ...d.data() }));
-    processDebtReqs(); splitNotify();
+    processDebtReqs(); splitNotify(); setTimeout(() => compSync(), 600);
     if (loaded) { renderChrome(); if (['budgets', 'accueil', 'messages'].includes(UI.view)) render(); }
   }, e => console.warn('Remboursements partagés', e.code));
 }
@@ -3171,7 +3174,7 @@ async function createDebt(d, fromGoal) {
   } catch (er) { toast('⚠ Avance non enregistrée (' + (er.code || er.message) + ')'); }
 }
 // ---- Suppression : choix de garder ou non les mouvements, accord des deux pour une avance partagée
-const payHasMov = p => !!(p.inc || p.exp || p.xid);
+const payHasMov = p => !!(p.inc || p.exp || p.xid || (p.lines && Object.keys(p.lines).length));
 function askDeleteMode(what, hasMov, shared, purge) {
   return new Promise(res => {
     const d = $('dlg'); d.onclick = null; let done = false; const end = v => { if (done) return; done = true; d.close(); res(v); };
@@ -3196,6 +3199,7 @@ async function cleanMovs(p) {
     const m = JSON.parse(s.data().data); if ([...m.incomes, ...m.expenses].some(hit)) await txMonth(a, p.k, drop);
   });
   if (p.toUser && p.xid && xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).delete());
+  Object.values(p.lines || {}).forEach(ln => { if (myAcc(ln.acc)) jobs.push(lineSet(ln.acc, ln.k, null, 'expenses', ln.id)); });   // lignes d'une dépense commune
   await Promise.allSettled(jobs);
 }
 // Prévenir les autres membres d'un compte partagé (messagerie)
@@ -3304,7 +3308,7 @@ function debtView(id) {
       <button class="dopt" data-remind>${d.remind ? `🔔 <span><b>Rappel</b><small>${esc(remindText(d.remind))}</small></span>` : '🔔 <span><b>Rappel</b><small>choisis quand être prévenu</small></span>'}</button>
     </div>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
-      ${P_.map(p => p.comp ? compRowHTML(p, d) : `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
+      ${P_.map(p => p.comp ? compRowHTML(p, d) : `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}${p.ed ? ' · modifié' : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b></button>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
   dl.onclick = ev => {
     if (ev.target.closest('[data-x]')) return dl.close();
@@ -3313,6 +3317,7 @@ function debtView(id) {
     if (ev.target.closest('[data-auto]')) { dl.close(); return autoDialog(id); }
     if (ev.target.closest('[data-remind]')) { dl.close(); return remindDialog(id); }
     if (ev.target.closest('[data-comp]')) { dl.close(); return compDialog(id); }
+    const pe = ev.target.closest('[data-pedit]'); if (pe) { dl.close(); return payEditDialog(id, pe.dataset.pedit); }
     if (ev.target.closest('[data-grp]')) { if ((mine(d.grp.by) || myAcc(lenderAcc(e))) && d.grp.id) { dl.close(); return setTimeout(() => groupView(d.grp.id), 50); } return; }
     const dec = ev.target.closest('[data-dec]'); if (dec) { dl.close(); return declinedAction(id, dec.dataset.dec); }
     if (ev.target.closest('[data-reopen]')) { updateDebt(e, x => { delete x.arch; }).then(() => { toast('Avance rouverte'); render(); setTimeout(() => debtView(id), 300); }); return; }
@@ -3636,13 +3641,14 @@ async function splitSave() {
   });
   $('dlg').close(); const add = SP.add, SP0 = SP; SP = null;
   const jobs = shared.map(d => db.collection('pdebts').doc(d.id).set(d)), made = local.length + shared.length;
-  comps.forEach(z => jobs.push(compAdd(z.m.e, z.c, name + ' (' + eur(s.T / 100) + ')', todayISO(), ACC[acc].name)));
+  const cat = autoCat(name) || 'Autre';
+  comps.forEach(z => jobs.push(compAdd(z.m.e, { label: name, tot: s.T / 100, part: full[z.i] / 100, half: SP0.mode === 'eq' && SP0.rows.length === 1 && SP0.me, side: 'B', payer: ACC[acc].name, cat, date: todayISO(), mk: 'other' })));
   if (local.length) {
     if (acc === active) mutate(() => { debts().push(...local); }, false);
     else jobs.push(db.runTransaction(async tx => { const ref = accDoc(acc), sn = await tx.get(ref), o = J(sn.data().meta) || {}; o.debts = (o.debts || []).concat(local); tx.update(ref, { meta: canon(o), updatedAt: Date.now(), updatedBy: currentUser.uid }); }));
   }
-  if (add) jobs.push(onAcc(acc, k, m => m.expenses.unshift(Object.assign({ id: uid(), name, amount: s.T / 100, date: String(today()), status: 'Payé', cat: autoCat(name) || 'Autre', isFixed: false, isDivided: false }, made ? { split: gid } : {}))));
-  else if (P0.expId && made) jobs.push(onAcc(acc, k, m => { const x = m.expenses.find(e => e.id === P0.expId); if (x) x.split = gid; }));
+  if (add) jobs.push(onAcc(acc, k, m => m.expenses.unshift(Object.assign({ id: uid(), name, amount: s.T / 100, share: s.mine / 100, date: String(today()), status: 'Payé', cat, isFixed: false, isDivided: false }, made ? { split: gid } : {}))));
+  else if (P0.expId) jobs.push(onAcc(acc, k, m => { const x = m.expenses.find(e => e.id === P0.expId); if (x) { if (made) x.split = gid; x.share = s.mine / 100; } }));
   const res = await Promise.allSettled(jobs), bad = res.filter(r => r.status === 'rejected');
   if (bad.length) console.warn('Partage', bad.map(b => b.reason));
   const cm = comps.map(z => (z.c > 0 ? '−' : '+') + eur(Math.abs(z.c) / 100) + ' ' + (z.c > 0 ? 'déduits' : 'ajoutés') + ' (' + spWho(SP0.rows[z.i]) + ')').join(', ');
@@ -3910,7 +3916,7 @@ function bkMatch(k) {
     const cd = l.label.match(/\b(\d{2})\/(\d{2})\b(?!\/\d)/);                       // date de l'achat par carte (« 30/09 ») : débité 1 à 3 jours après
     if (cd && +cd[1] >= 1 && +cd[1] <= 31) { const mm = cd[2]; if (mm === k.slice(5) && +cd[1] <= b.day) b.op = +cd[1]; else if (mm === pk.slice(5) && b.day <= 5) b.prev = true; }
     return b; });
-  const A = [...m.expenses.map(x => ({ x, t: 'expenses', amt: -cents(x.amount) })), ...m.incomes.map(x => ({ x, t: 'incomes', amt: cents(x.amount) }))]
+  const A = [...m.expenses.filter(x => !x.nc).map(x => ({ x, t: 'expenses', amt: -cents(x.amount) })), ...m.incomes.map(x => ({ x, t: 'incomes', amt: cents(x.amount) }))]
     .filter(a => a.amt).map(a => Object.assign(a, { day: parseInt(a.x.date) || null, paid: isPaid(a.x, a.t), label: a.x.name || a.x.cat || '' }));
   const R = { k, B, A, ok: [], near: [], net: [], half: [], pairs: [], bOnly: [], ign: [], aOnly: [] };
   const usedB = new Set(), usedA = new Set();
@@ -3929,7 +3935,7 @@ function bkMatch(k) {
   R.prevInfo = !appPrev && BK.lines.some(l => l.date.startsWith(pk)); R.prevm = []; R.prevc = [];
   if (R.prevInfo) {
     const P = BK.lines.filter(l => l.date.startsWith(pk)).map(l => Object.assign({}, l, { day: +l.date.slice(8, 10) })), used = new Set(), PP = [];
-    A.filter(a => !usedA.has(a) && (!a.day || a.day <= 7)).forEach(a => P.forEach(b => { if (a.amt === b.amt || (a.x.isDivided && a.t === 'expenses' && b.amt === -cents(eff(a.x)))) PP.push({ a, b, s: -b.day - lsim(a.label, b.label) * 3 }); }));
+    A.filter(a => !usedA.has(a) && (!a.day || a.day <= 7)).forEach(a => P.forEach(b => { if (a.amt === b.amt || (a.x.isDivided && a.t === 'expenses' && b.amt === -cents(cash(a.x)))) PP.push({ a, b, s: -b.day - lsim(a.label, b.label) * 3 }); }));
     PP.sort((p, q) => p.s - q.s).forEach(p => { if (usedA.has(p.a) || used.has(p.b)) return; usedA.add(p.a); used.add(p.b); R.prevm.push(p); });
   }
   // 2. « je n'ai noté que le net » : 1 ligne de l'app = 2 opérations de la banque (ex. −40 payé, +20 remboursé → −20)
@@ -3944,7 +3950,7 @@ function bkMatch(k) {
   // 3. « ½ Partagé » : la banque a l'opération entière ; le remboursement de la moitié l'explique
   R.ok.filter(p => p.a.x.isDivided && p.a.t === 'expenses' && p.a.paid).forEach(p => {
     const h = Math.abs(p.a.amt) / 2, r = B.find(b => !usedB.has(b) && b.amt > 0 && Math.abs(b.amt - h) <= 1 && b.day >= p.b.day - 3);
-    if (r) { usedB.add(r); R.half.push({ p, r }); } else R.half.push({ p, r: null, gap: Math.abs(p.a.amt) - cents(eff(p.a.x)) });
+    if (r) { usedB.add(r); R.half.push({ p, r }); } else R.half.push({ p, r: null, gap: Math.abs(p.a.amt) - cents(cash(p.a.x)) });
   });
   // 4. montant presque identique (quelques centimes / frais / taux de change)
   const P4 = []; A.filter(a => !usedA.has(a)).forEach(a => B.filter(b => !usedB.has(b)).forEach(b => {
@@ -3991,7 +3997,7 @@ function bkMatch(k) {
 // et des achats par carte du mois précédent débités le 1er. Si elles expliquent exactement l'écart de départ, ce n'est pas une erreur.
 function bkStart(R, after, rest) {
   if (!rest) return;
-  const ca = R.aOnly.filter(a => a.paid && !after.includes(a) && !R.pend.includes(a) && (!a.day || a.day <= 7)).map(a => [a, a.t === 'expenses' ? cents(eff(a.x)) : -a.amt]);
+  const ca = R.aOnly.filter(a => a.paid && !after.includes(a) && !R.pend.includes(a) && (!a.day || a.day <= 7)).map(a => [a, a.t === 'expenses' ? cents(cash(a.x)) : -a.amt]);
   const cb = R.bOnly.filter(b => b.prev || b.day <= 3).map(b => [b, b.amt]);
   const C = ca.concat(cb).slice(0, 18); let best = null;
   for (let mask = 1; mask < 1 << C.length; mask++) {
@@ -4013,7 +4019,7 @@ function bkBalances(R) {
   const lastDay = date ? +date.slice(8, 10) : R.last;
   // l'app au jour du relevé : sans ce qui est noté payé après cette date
   const after = R.A.filter(a => a.paid && a.day && a.day > lastDay && !R.ok.some(p => p.a === a) && !R.net.some(p => p.a === a) && !R.near.some(p => p.a === a));
-  const app = cents(c.current) - after.reduce((s, a) => s + (a.t === 'expenses' ? -cents(eff(a.x)) : a.amt), 0);
+  const app = cents(c.current) - after.reduce((s, a) => s + (a.t === 'expenses' ? -cents(cash(a.x)) : a.amt), 0);
   return { bank, app, after, lastDay, init: cents(c.init) };
 }
 // Ce qui explique l'écart, en centimes (banque − app)
@@ -4025,10 +4031,10 @@ function bkExplain(R, after) {
   add('Opérations ignorées', R.ign.reduce((s, b) => s + b.amt, 0));
   add('Montants différents', R.near.filter(p => p.a.paid).reduce((s, p) => s + p.b.amt - p.a.amt, 0));
   add('Passées en banque mais « à payer » dans l\'app', R.unpaid.reduce((s, p) => s + p.b.amt + (p.b2 ? p.b2.amt : 0), 0));
-  add('Paiements carte pas encore débités', R.pend.filter(a => !after.includes(a)).reduce((s, a) => s + cents(eff(a.x)), 0));
-  add('Notées payées dans l\'app, pas dans le relevé', -R.aOnly.filter(a => a.paid && !after.includes(a) && !R.pend.includes(a)).reduce((s, a) => s + (a.t === 'expenses' ? -cents(eff(a.x)) : a.amt), 0));
+  add('Paiements carte pas encore débités', R.pend.filter(a => !after.includes(a)).reduce((s, a) => s + cents(cash(a.x)), 0));
+  add('Notées payées dans l\'app, pas dans le relevé', -R.aOnly.filter(a => a.paid && !after.includes(a) && !R.pend.includes(a)).reduce((s, a) => s + (a.t === 'expenses' ? -cents(cash(a.x)) : a.amt), 0));
   add('« ½ Partagé » : la banque a le montant entier', -R.half.filter(h => !h.r && h.p.a.paid).reduce((s, h) => s + h.gap, 0));
-  add('« ½ Partagé » : arrondi au centime', R.half.filter(h => h.r && h.p.a.paid).reduce((s, h) => s + (Math.abs(h.p.a.amt) - h.r.amt) - cents(eff(h.p.a.x)), 0) * -1);
+  add('« ½ Partagé » : arrondi au centime', R.half.filter(h => h.r && h.p.a.paid).reduce((s, h) => s + (Math.abs(h.p.a.amt) - h.r.amt) - cents(cash(h.p.a.x)), 0) * -1);
   return E;
 }
 
@@ -4051,12 +4057,12 @@ function bkItems(R, V, rest) {
     body: bkLine(p.b), acts: `<button class="btn sm p" data-fix="${p.a.x.id}" data-t="${p.a.t}" data-v="${Math.abs(p.b.amt)}"${p.a.paid ? '' : ' data-pay="1"'}>Corriger à ${eur(c2e(Math.abs(p.b.amt)))}</button>` }));
   R.bOnly.forEach(b => I.push({ key: 'b:' + b.h, ic: '🏦', t: 'Pas noté dans l\'app', s: bkShow(b.label), imp: b.amt, body: bkLine(b), acts: `<button class="btn sm p" data-add="${b.i}">Ajouter</button>` }));
   R.unpaid.forEach(p => I.push({ key: 'u:' + p.b.h, ic: '⏳', t: 'Passé en banque, « à payer » dans l\'app', s: p.a.label, imp: p.b.amt + (p.b2 ? p.b2.amt : 0), body: bkLine(p.b), acts: `<button class="btn sm p" data-paid="${p.a.x.id}" data-t="${p.a.t}">Marquer ${p.a.t === 'incomes' ? 'reçu' : 'payé'}</button>` }));
-  R.aOnly.filter(a => a.paid && !V.after.includes(a) && !R.pend.includes(a)).forEach(a => I.push({ key: 'a:' + a.x.id, ic: '📱', t: 'Pas dans le relevé : ' + a.label, s: 'Oubli, doublon, ou pas encore passé ?', imp: a.t === 'expenses' ? cents(eff(a.x)) : -a.amt, body: appRow(a),
+  R.aOnly.filter(a => a.paid && !V.after.includes(a) && !R.pend.includes(a)).forEach(a => I.push({ key: 'a:' + a.x.id, ic: '📱', t: 'Pas dans le relevé : ' + a.label, s: 'Oubli, doublon, ou pas encore passé ?', imp: a.t === 'expenses' ? cents(cash(a.x)) : -a.amt, body: appRow(a),
     acts: `<button class="btn sm" data-unpaid="${a.x.id}" data-t="${a.t}">Pas encore passé</button><button class="btn sm" data-open="${a.x.id}" data-t="${a.t}">Voir</button>` }));
   R.half.filter(h => !h.r).forEach(h => I.push({ key: 'h:' + h.p.a.x.id, ic: '½', t: '« ½ Partagé » sans remboursement : ' + h.p.a.label, s: `−${eur(c2e(Math.abs(h.p.a.amt)))} à la banque, ${eur(eff(h.p.a.x))} dans l'app`, imp: -h.gap, body: bkLine(h.p.b), acts: `<button class="btn sm p" data-unhalf="${h.p.a.x.id}">Enlever ½</button>` }));
   // cas reconnus comme normaux : un clic pour valider
   const pend = R.pend.filter(a => !V.after.includes(a));
-  if (pend.length) I.push({ key: 'p:' + pend.map(a => a.x.id).sort().join(','), ic: '⏳', ok: 1, t: `Paiements carte pas encore débités (${pend.length})`, s: 'Notés à l\'avance : la banque les débite 1 à 3 jours après', imp: pend.reduce((s, a) => s + cents(eff(a.x)), 0), body: pend.map(appRow).join('') });
+  if (pend.length) I.push({ key: 'p:' + pend.map(a => a.x.id).sort().join(','), ic: '⏳', ok: 1, t: `Paiements carte pas encore débités (${pend.length})`, s: 'Notés à l\'avance : la banque les débite 1 à 3 jours après', imp: pend.reduce((s, a) => s + cents(cash(a.x)), 0), body: pend.map(appRow).join('') });
   if (R.prevInfo && rest != null) {
     const pmn = mlab(kAdd(R.k, -1)).split(' ')[0].toLowerCase(), mn = mlab(R.k).split(' ')[0].toLowerCase();
     const body = R.prevm.map(p => `<div class="row bkl"><span class="bkd">${d2(p.b)}</span><span class="rt"><span class="rn">${esc(p.a.label)}</span><span class="rs">noté le ${p.a.day || '?'} ${mn} · passé le ${d2(p.b)} : ${esc(bkShow(p.b.label))}</span></span><b class="num ${p.b.amt > 0 ? 'pos' : ''}">${p.b.amt > 0 ? '+' : ''}${eur(c2e(p.b.amt))}</b></div>`).join('')
@@ -4308,7 +4314,7 @@ function savDialog() {
 // Mouvements d'un mois (jour, montant signé), pour reconstituer le solde au fil des jours
 function savMoves(k) {
   const m = S.months[k]; if (!m) return [];
-  return [...m.incomes.filter(i => i.status === 'Reçu').map(i => [parseInt(i.date) || 1, num(i.amount)]), ...m.expenses.filter(e => e.status === 'Payé').map(e => [parseInt(e.date) || 1, -eff(e)])];
+  return [...m.incomes.filter(i => i.status === 'Reçu').map(i => [parseInt(i.date) || 1, num(i.amount)]), ...m.expenses.filter(e => e.status === 'Payé').map(e => [parseInt(e.date) || 1, -cash(e)])];
 }
 // Intérêts bruts d'un mois donné (taux r en %)
 function savMonthInt(k, r, calc) {
@@ -4371,7 +4377,11 @@ function savIntAdd() {
 /* ============================== DÉPENSES COMMUNES EN COMPENSATION (façon Tricount) ==============================
    A doit 46 € à B. A paie 10 € de courses communes : la part de B (5 €) est déduite → A ne doit plus que 41 €.
    Si c'est B (celui qui a avancé) qui paie, la part de A s'ajoute → A doit 51 €.
-   Aucun argent ne bouge : c'est une ligne « Dépense commune » dans l'avance (montant + = déduit, − = ajouté).      */
+   Chaque dépense commune crée une ligne de dépense dans les DEUX comptes, directement :
+   • chez celui qui a payé : le montant payé (sort du compte), sa part seulement compte dans ses budgets ;
+   • chez l'autre : sa part, « déduite d'une avance » (rien ne sort de son compte, mais elle compte dans ses budgets).
+   La ligne de compensation (dans l'avance) : amount = + déduit / − ajouté ; tot, part, side ('L' a avancé, 'B' rembourse),
+   v (version), lines { L|B : { id, acc, k, v } } → chaque appli tient à jour la ligne de SON compte.                 */
 const compOpen = e => !e.d.arch && !e.d.closed && !(e.d.invite && e.d.invite.status !== 'accepted') && debtInfo(e.d).t > 0;
 // L'avance en cours entre le compte qui paie et un participant du partage (ligne 'a:compte', 'u:uid' ou un nom)
 function compFind(payAcc, rp, who) {
@@ -4380,41 +4390,133 @@ function compFind(payAcc, rp, who) {
     : s.kind === 'text' && who && String(s.who || '').trim().toLowerCase() === String(who).trim().toLowerCase();
   const L = allDebts().filter(compOpen).map(e => {
     const L_ = lenderOf(e.d, e.home.acc), B_ = borrowerOf(e.d);
-    if (borrowerAcc(e) === payAcc && other(L_)) return { e, dir: 1 };          // celui qui paie doit de l'argent à l'autre → on déduit
-    if (lenderAcc(e) === payAcc && other(B_)) return { e, dir: -1 };           // l'autre doit déjà à celui qui paie → on ajoute
+    if (borrowerAcc(e) === payAcc && other(L_)) return { e, dir: 1, side: 'B' };   // celui qui paie doit de l'argent à l'autre → on déduit
+    if (lenderAcc(e) === payAcc && other(B_)) return { e, dir: -1, side: 'L' };    // l'autre doit déjà à celui qui paie → on ajoute
     return null;
   }).filter(Boolean).filter(x => x.dir === -1 || debtInfo(x.e.d).left > 0);
   return L.sort((a, b) => (b.e.d.at || 0) - (a.e.d.at || 0))[0] || null;
 }
-// Ajoute la ligne de compensation à l'avance (signe : + déduit de ce qui est dû, − ajouté)
-async function compAdd(e, cents, label, date, payer) {
-  const p = { id: uid(), amount: Math.round(cents) / 100, date, label, comp: 1, payer: payer || '', k: date.slice(0, 7), from: '', fromName: '', to: '', toName: '', by: currentUser.uid };
-  await updateDebt(e, x => { (x.payments = x.payments || []).push(p); const i = debtInfo(x); if (i.done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } else delete x.doneAt; });
+const compLabel = p => (p.label || 'Dépense commune') + (p.tot ? ' (' + eur(p.tot) + ')' : '');
+// Montant inscrit dans l'avance : la part de l'autre, déduite (plafonnée à ce qui reste dû) ou ajoutée
+function compAmount(d, side, part, exceptId) {
+  if (side === 'L') return -part;
+  const left = debtInfo(Object.assign({}, d, { payments: (d.payments || []).filter(p => p.id !== exceptId) })).left;
+  return Math.min(part, Math.round(left * 100) / 100);
+}
+async function compAdd(e, o) {
+  const p = { id: uid(), comp: 1, label: o.label, tot: o.tot, part: o.part, half: !!o.half, side: o.side, payer: o.payer || '', cat: o.cat || 'Autre', mk: o.mk ?? 'both',
+    date: o.date, k: o.date.slice(0, 7), v: 1, lines: {}, from: '', fromName: '', to: '', toName: '', by: currentUser.uid };
+  p.amount = compAmount(e.d, o.side, o.part);
+  await updateDebt(e, x => { (x.payments = x.payments || []).push(p); compDone(x); });
+  await compSync(e.d.id);
   return p;
 }
-// Depuis la fiche d'une avance : « ↔ Dépense commune »
-function compDialog(id) {
-  const e = findDebt(id); if (!e) return; const d = e.d, i = debtInfo(d), Ln = sideLabel(lenderOf(d, e.home.acc)) || 'celui qui a avancé', Bn = sideLabel(borrowerOf(d)) || 'celui qui rembourse';
-  const O = [Bn + ' (doit l\'argent)', Ln + ' (a avancé)'];
-  formDialog({ title: '↔ Dépense commune · ' + esc(d.name), intro: `Reste ${eur(i.left)} à rembourser. Une dépense payée pour vous deux vient en déduction, sans virement : si ${esc(Bn)} paie, sa dette baisse ; si ${esc(Ln)} paie, elle augmente.`,
-    fields: [{ id: 'label', label: 'C\'était quoi ?', value: '', ph: 'ex. Courses, Essence' }, { id: 'tot', label: 'Montant total payé', type: 'num', value: '', ph: 'ex. 10' },
-      { id: 'who', label: 'Qui a payé ?', type: 'select', options: O, value: O[0] }, { id: 'part', label: 'Part de l\'autre (vide = la moitié)', type: 'num', value: '', ph: 'ex. 5' },
-      { id: 'date', label: 'Date', value: todayISO() }],
+const compDone = x => { const i = debtInfo(x); if (i.done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } else delete x.doneAt; };
+
+/* ---------- Lignes de dépense dans les comptes (créées / mises à jour par l'appli qui a accès au compte) ---------- */
+function compLine(p, side, id, debtId) {
+  const payer = side === p.side, base = { id, date: String(+p.date.slice(8, 10)), status: 'Payé', cat: p.cat || 'Autre', isFixed: false, isDivided: false, comp: debtId };
+  return payer ? Object.assign(base, { name: p.label || 'Dépense commune', amount: p.tot, share: Math.round((p.tot - p.part) * 100) / 100 })
+    : Object.assign(base, { name: (p.label || 'Dépense commune') + (p.payer ? ' (payé par ' + p.payer + ')' : ''), amount: p.part, nc: 1 });
+}
+// Déplace / met à jour / retire une ligne d'un mois d'un de mes comptes
+async function lineSet(acc, oldK, newK, type, id, make) {
+  let cur = null;                                                   // la ligne retirée de l'ancien mois (pour la recréer dans le nouveau)
+  if (oldK && oldK !== newK) await onAcc(acc, oldK, m => { const i = m[type].findIndex(x => x.id === id); if (i >= 0) cur = m[type].splice(i, 1)[0]; });
+  if (!newK) return;
+  await onAcc(acc, newK, m => { const i = m[type].findIndex(x => x.id === id), x = make(i >= 0 ? m[type][i] : cur); if (!x) return; if (i >= 0) m[type][i] = x; else m[type].unshift(x); });
+}
+let compBusy = false, compLast = 0, compAgain = false;
+async function compSync(only) {
+  if (!loaded || !currentUser) return;
+  if (compBusy) { compAgain = true; return; } compBusy = true;
+  try {
+    for (const e of allDebts()) {
+      if (only && e.d.id !== only) continue;
+      for (const p of (e.d.payments || []).filter(p => p.comp && p.mk)) {
+        for (const side of ['L', 'B']) {
+          if (p.mk === 'other' && side === p.side) continue;
+          const acc = side === 'L' ? lenderAcc(e) : borrowerAcc(e); if (!myAcc(acc)) continue;
+          const ln = (p.lines || {})[side]; if (ln && ln.v === p.v && ln.acc === acc) continue;
+          // on « réserve » la mise à jour dans l'avance (évite les doublons quand deux appareils la voient en même temps)
+          let job = null;
+          await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; q.lines = q.lines || {}; const c = q.lines[side];
+            if (c && c.v === q.v && c.acc === acc) return;
+            job = { old: c ? Object.assign({}, c) : null, q: JSON.parse(JSON.stringify(q)) };
+            q.lines[side] = { id: c?.id || uid(), acc, k: q.date.slice(0, 7), v: q.v }; job.ln = Object.assign({}, q.lines[side]); });
+          if (!job) continue;
+          if (job.old && job.old.acc !== acc && myAcc(job.old.acc)) await lineSet(job.old.acc, job.old.k, null, 'expenses', job.old.id);
+          await lineSet(acc, job.old && job.old.acc === acc ? job.old.k : null, job.ln.k, 'expenses', job.ln.id, () => compLine(job.q, side, job.ln.id, e.d.id));
+        }
+      }
+    }
+  } catch (er) { console.warn('Dépenses communes', er); }
+  finally { compBusy = false; compLast = Date.now(); if (compAgain) { compAgain = false; setTimeout(() => compSync(), 50); } }
+}
+function compSyncSoon() { if (Date.now() - compLast > 8000) setTimeout(() => compSync(), 1800); }
+
+/* ---------- Saisie depuis la fiche d'une avance ---------- */
+function compDialog(id, pid) {
+  const e = findDebt(id); if (!e) return; const d = e.d, p0 = pid ? (d.payments || []).find(p => p.id === pid) : null;
+  const i = debtInfo(Object.assign({}, d, { payments: (d.payments || []).filter(p => p.id !== pid) }));
+  const Ln = sideLabel(lenderOf(d, e.home.acc)) || 'celui qui a avancé', Bn = sideLabel(borrowerOf(d)) || 'celui qui rembourse';
+  const O = [Bn + ' (doit l\'argent)', Ln + ' (a avancé)'], MK = ['Oui, dans les deux comptes', 'Seulement chez l\'autre (j\'ai déjà noté la mienne)', 'Non'];
+  formDialog({ title: '↔ ' + (p0 ? 'Modifier la dépense commune' : 'Dépense commune · ' + esc(d.name)),
+    intro: p0 ? 'La modification s\'applique tout de suite, des deux côtés (les lignes de dépense suivent).' : `Reste ${eur(i.left)} à rembourser. Une dépense payée pour vous deux vient en déduction, sans virement : si ${esc(Bn)} paie, sa dette baisse ; si ${esc(Ln)} paie, elle augmente.`,
+    fields: [{ id: 'label', label: 'C\'était quoi ?', value: p0?.label || '', ph: 'ex. Courses, Essence' }, { id: 'tot', label: 'Montant total payé', type: 'num', value: p0?.tot ?? '', ph: 'ex. 10' },
+      { id: 'who', label: 'Qui a payé ?', type: 'select', options: O, value: p0?.side === 'L' ? O[1] : O[0] }, { id: 'part', label: 'Part de l\'autre (vide = la moitié)', type: 'num', value: p0 && !p0.half ? p0.part : '', ph: 'ex. 5' },
+      { id: 'date', label: 'Date', value: p0?.date || todayISO() },
+      { id: 'cat', label: 'Catégorie', type: 'select', options: S.categories, value: p0?.cat || (S.categories.includes('Alimentation') ? 'Alimentation' : S.categories[0]) },
+      ...(p0 ? [] : [{ id: 'mk', label: 'Ajouter la dépense dans les comptes ?', type: 'select', options: MK, value: MK[0] }])],
+    onDelete: p0 ? () => payDelete(id, pid).then(() => setTimeout(() => findDebt(id) && debtView(id), 400)) : null,
     onSave: v => {
-      const tot = Math.round(num(v.tot) * 100); if (!(tot > 0)) { toast('Indique le montant payé'); return false; }
-      const part = v.part > 0 ? Math.round(v.part * 100) : Math.round(tot / 2); if (part > tot) { toast('La part ne peut pas dépasser le montant'); return false; }
-      const byB = v.who === O[0], label = (v.label || 'Dépense commune') + ' (' + eur(tot / 100) + ')';
-      if (byB && part > Math.round(i.left * 100) && !confirm(`La part (${eur(part / 100)}) dépasse ce qui reste dû (${eur(i.left)}). L'avance sera soldée. Continuer ?`)) return false;
-      compAdd(e, byB ? Math.min(part, Math.round(i.left * 100)) : -part, label, /^\d{4}-\d{2}-\d{2}$/.test(v.date) ? v.date : todayISO(), byB ? Bn : Ln)
-        .then(() => { const n = findDebt(id); toast((byB ? '−' : '+') + eur(part / 100) + ' · reste ' + eur(n ? debtInfo(n.d).left : 0)); render(); setTimeout(() => debtView(id), 300); })
+      const tot = Math.round(num(v.tot) * 100) / 100; if (!(tot > 0)) { toast('Indique le montant payé'); return false; }
+      const half = !(v.part > 0), part = half ? Math.round(tot * 50) / 100 : Math.round(v.part * 100) / 100; if (part > tot) { toast('La part ne peut pas dépasser le montant'); return false; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date)) { toast('Choisis une date'); return false; }
+      const side = v.who === O[0] ? 'B' : 'L', payer = side === 'B' ? Bn : Ln, label = v.label || 'Dépense commune';
+      if (side === 'B' && part > i.left + 0.001 && !confirm(`La part (${eur(part)}) dépasse ce qui reste dû (${eur(i.left)}). L'avance sera soldée. Continuer ?`)) return false;
+      const end = () => { const n = findDebt(id); toast((side === 'B' ? '−' : '+') + eur(part) + ' · reste ' + eur(n ? debtInfo(n.d).left : 0)); render(); setTimeout(() => findDebt(id) && debtView(id), 300); };
+      if (p0) return void updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (!q) return;
+          Object.assign(q, { label, tot, part, half, side, payer, cat: v.cat, date: v.date, k: v.date.slice(0, 7), v: (q.v || 1) + 1, ed: { by: currentUser.uid, at: Date.now() } }); q.amount = compAmount(x, side, part, pid); compDone(x); })
+        .then(() => compSync(id)).then(() => { warnMembers(e, 'Dépense commune modifiée : ' + compLabel({ label, tot }) + ' · « ' + d.name + ' »'); end(); }).catch(er => toast('⚠ ' + (er.code || er.message)));
+      compAdd(e, { label, tot, part, half, side, payer, cat: v.cat, date: v.date, mk: v.mk === MK[0] ? 'both' : v.mk === MK[1] ? 'other' : false }).then(end).catch(er => toast('⚠ ' + (er.code || er.message)));
+    } });
+  $('f_date').type = 'date';
+}
+
+/* ---------- Modifier un remboursement (montant, date, libellé) sans attendre l'autre ---------- */
+function payEditDialog(id, pid) {
+  const e = findDebt(id); if (!e) return; const p = (e.d.payments || []).find(x => x.id === pid); if (!p) return;
+  if (p.comp) return compDialog(id, pid);
+  if (p.by && p.by !== currentUser.uid) return toast('Saisi par ' + shortName(e.d.emails?.[p.by] || '') + ' : c\'est à cette personne de le modifier (ses comptes ont les mouvements)');
+  formDialog({ title: 'Modifier le remboursement', intro: 'S\'applique tout de suite, sans attendre l\'accord de l\'autre. Les mouvements des comptes suivent.',
+    fields: [{ id: 'amt', label: 'Montant', type: 'num', value: p.amount }, { id: 'date', label: 'Date', value: p.date }, { id: 'label', label: 'Libellé', value: p.label || '' }],
+    onDelete: () => payDelete(id, pid).then(() => setTimeout(() => findDebt(id) && debtView(id), 400)),
+    onSave: v => {
+      const amt = Math.round(num(v.amt) * 100) / 100; if (!(amt > 0)) { toast('Indique un montant'); return false; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v.date)) { toast('Choisis une date'); return false; }
+      payEdit(e, p, { amount: amt, date: v.date, label: v.label.trim() || p.label || 'Remboursement' }).then(() => { toast('Remboursement modifié'); render(); setTimeout(() => debtView(id), 300); })
         .catch(er => toast('⚠ ' + (er.code || er.message)));
     } });
   $('f_date').type = 'date';
 }
+async function payEdit(e, p, n) {
+  const k = n.date.slice(0, 7), dd = String(+n.date.slice(8, 10)), fix = x => Object.assign(x, { amount: n.amount, date: dd, name: n.label });
+  const jobs = [];
+  if (p.inc && myAcc(p.to)) jobs.push(lineSet(p.to, p.k, k, 'incomes', p.inc, x => x ? fix(x) : null));
+  if (p.exp && myAcc(p.from)) jobs.push(lineSet(p.from, p.k, k, 'expenses', p.exp, x => x ? fix(x) : null));
+  let note = '';
+  if (p.xid && p.toUser) { if (xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).update({ amount: n.amount, date: dd, label: n.label })); else note = ' (déjà reçu chez l\'autre : seul ton côté change)'; }
+  await Promise.all(jobs.map(j => j.catch(er => console.warn(er))));
+  await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); compDone(x); });
+  warnMembers(e, 'Remboursement modifié : ' + eur(n.amount) + ' · « ' + e.d.name + ' »' + note);
+  if (note) toast('ℹ' + note);
+}
+
 // Ligne d'une compensation dans la fiche de l'avance
 function compRowHTML(p, d) {
   const ded = p.amount > 0;
-  return `<div class="row prow" style="padding:8px 4px"><span class="ico sm" style="--c:${ded ? '#0EA5E9' : '#F59E0B'}">${svg('swap', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Dépense commune')}</span><span class="rs">${fmtD(p.date)} · dépense commune${p.payer ? ' payée par ' + esc(p.payer) : ''} · ${ded ? 'déduite' : 'ajoutée'}${p.by && p.by !== currentUser.uid ? ' · saisie par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:${ded ? 'var(--ok)' : 'var(--warn)'}">${ded ? '−' : '+'}${eur(Math.abs(p.amount))}</b>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer">${svg('trash', 15)}</button>` : ''}</div>`;
+  return `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:${ded ? '#0EA5E9' : '#F59E0B'}">${svg('swap', 17)}</span><span class="rt"><span class="rn">${esc(compLabel(p))}</span><span class="rs">${fmtD(p.date)} · dépense commune${p.payer ? ' payée par ' + esc(p.payer) : ''} · ${ded ? 'déduite' : 'ajoutée'}${p.ed ? ' · modifiée' + (p.ed.by !== currentUser.uid ? ' par ' + esc(shortName(d.emails?.[p.ed.by] || '')) : '') : p.by && p.by !== currentUser.uid ? ' · saisie par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}</span></span><b class="num" style="color:${ded ? 'var(--ok)' : 'var(--warn)'}">${ded ? '−' : '+'}${eur(Math.abs(p.amount))}</b></button><button class="x" data-del="${p.id}" aria-label="Supprimer">${svg('trash', 15)}</button></div>`;
 }
 
 
