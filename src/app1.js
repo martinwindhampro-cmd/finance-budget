@@ -674,7 +674,7 @@ function syncActivity() {
 function unreadCount() {
   const seen = USER?.seen || {}, me = currentUser?.uid;
   const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
-  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + invitesForMe().length + declinedForMe().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
+  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + invitesForMe().length + declinedForMe().length + validCount() + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
 }
 function markSeen() {
   const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
@@ -743,7 +743,7 @@ auth.onAuthStateChanged(user => {
     if (loaded) { renderChrome(); if (UI.view === 'messages') render(); }
   }, err => console.warn('Invitations', err.code));
   subs.push(inv('to', myEmail(), 'in'), inv('from', user.uid, 'out'));
-  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'), linkListen(), pdebtListen());
+  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'), linkListen(), pdebtListen(), shfixListen());
 });
 
 /* ============================== 6. CONNEXION & COMPTE ============================== */

@@ -184,7 +184,7 @@ function renderChrome() {
   $('bell').classList.toggle('on', UI.view === 'messages');
   $$('.accsw-slot').forEach(s => s.innerHTML = accSwitcherHTML());
   $$('[data-a=new]')[0].innerHTML = svg('plus', 18, 2.4) + '<span>Ajouter</span>';
-  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500); compSyncSoon();
+  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500); compSyncSoon(); appBadge();
   $('todayd').innerHTML = `<span class="tdl">${todayLabel()}</span><span class="tds">${todayLabel({ weekday: 'short', day: 'numeric', month: 'short' })}</span>`;
 }
 
@@ -259,7 +259,7 @@ function vAccueil() {
       <div class="chips"><button class="btn" data-a="ob-inc">1. Ajouter mon salaire</button><button class="btn" data-a="ob-fix">2. Ajouter une charge fixe</button><button class="btn" data-a="bank">3. Saisir mon solde bancaire</button></div>
       <p class="note">Salaire et charges fixes sont recopiés automatiquement chaque mois. Tu pourras tout modifier ensuite.</p></section>` : '';
 
-  V.innerHTML = `${onboard}
+  V.innerHTML = `${onboard}${payConfMsgHTML()}
   <div class="grid2">
     <section class="hero" aria-label="Reste à vivre" style="background:color-mix(in srgb,${ACC[active]?.color || '#4338CA'} 42%,#0B0A24)">
       <div class="deco"><i style="right:-60px;top:-80px;width:260px;height:260px;background:var(--hero-2);opacity:.55"></i><i style="right:70px;top:90px;width:120px;height:120px;background:var(--hero-3);opacity:.35"></i></div>

@@ -45,6 +45,12 @@ document.addEventListener('click', ev => {
     case 'split-new': return splitDialog();
     case 'grp-open': return groupView(id);
     case 'inv-split': return inviteDialog(id);
+    case 'pc-ok': return payConfirmDialog(id, b.dataset.v);
+    case 'pc-no': return payConfirm(id, b.dataset.v, false);
+    case 'pr-act': return payRejAction(id, b.dataset.v, b.dataset.w);
+    case 'shfix-yes': return shfixAnswerDialog(id);
+    case 'shfix-no': return shfixAnswer(id, false);
+    case 'tshare': return shfixDialog(b.closest('[data-tpl]').dataset.id);
     case 'inv-split-no': return inviteAnswer(id, false);
     case 'split-dec': return declinedAction(id, b.dataset.v);
     case 'debt-open': return debtView(id);

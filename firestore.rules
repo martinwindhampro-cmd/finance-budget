@@ -96,6 +96,19 @@ service cloud.firestore {
       allow create: if signedIn() && me() in request.resource.data.members && request.resource.data.members.size() == 2;
     }
 
+    // Charges fixes partagées : proposition d'une charge fixe à une personne connectée (elle accepte ou refuse)
+    match /shfix/{id} {
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn() && request.resource.data.from == me()
+        && me() in request.resource.data.members && request.resource.data.members.size() == 2
+        && request.resource.data.status == 'pending';
+      allow update: if signedIn() && me() in resource.data.members
+        && request.resource.data.members == resource.data.members
+        && request.resource.data.from == resource.data.from
+        && (resource.data.from == me() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'answeredAt', 'toAcc', 'toAccName']));
+      allow delete: if signedIn() && me() in resource.data.members;
+    }
+
     // Virements vers une autre personne (sa « boîte de réception »)
     match /transfers/{id} {
       allow create: if signedIn()

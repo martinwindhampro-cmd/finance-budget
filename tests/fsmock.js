@@ -16,6 +16,7 @@ module.exports = function install(win, shared, user) {
     if (p.startsWith('links/')) return !d || (d.emails || []).includes(u.email.toLowerCase());
     if (p.startsWith('pdebts/')) return !d || (d.members || []).includes(u.uid);
     if (p.startsWith('transfers/')) return !d || d.from === u.uid || d.to === u.email.toLowerCase();
+    if (p.startsWith('shfix/')) return !d || (d.members || []).includes(u.uid);
     const a = accOf(p); if (a) { const ad = S.store.get('accounts/' + a); return !!ad && (ad.members || []).includes(u.uid); }
     return false;
   }
@@ -32,6 +33,13 @@ module.exports = function install(win, shared, user) {
     if (p.startsWith('pdebts/')) { if (!before) return (after.members || []).includes(u.uid) && after.members.length === 2;
       if (!after) return before.members.includes(u.uid) && before.closed === true;
       return before.members.includes(u.uid) && JSON.stringify(before.members) === JSON.stringify(after.members); }
+    if (p.startsWith('shfix/')) {
+      if (!before) return after.from === u.uid && (after.members || []).includes(u.uid) && after.members.length === 2 && after.status === 'pending';
+      if (!after) return before.members.includes(u.uid);
+      if (!before.members.includes(u.uid) || JSON.stringify(before.members) !== JSON.stringify(after.members) || before.from !== after.from) return false;
+      const ch = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+      return before.from === u.uid || ch.every(k => ['status', 'answeredAt', 'toAcc', 'toAccName'].includes(k));
+    }
     if (p.startsWith('transfers/')) {
       const em = u.email.toLowerCase();
       if (!before) return after.from === u.uid && after.status === 'sent';

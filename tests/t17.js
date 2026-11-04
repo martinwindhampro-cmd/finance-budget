@@ -13,6 +13,7 @@ function client(name){
   const w=dom.window;w.name_=name;return w;
 }
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const conf=async W=>{await W.eval("Promise.all(payConfirmsForMe().map(({d,p})=>payConfirm(d.id,p.id,true,ACC[p.toAcc]?p.toAcc:recvAccount())))");await wait(1500);};
 let fails=0;const ok=(n,c)=>{console.log((c?'✅':'❌')+' '+n);if(!c)fails++;};
 const ev=(w,js)=>w.eval(js);
 const click=(w,sel)=>{const el=typeof sel==='string'?w.document.querySelector(sel):sel;if(!el)throw new Error(w.name_+' introuvable: '+sel);el.dispatchEvent(new w.MouseEvent('click',{bubbles:true}));};
@@ -56,8 +57,8 @@ const mk=async(w,name,amt,lend,borr)=>{click(w,'[data-a=debt-new]');w.document.g
   await A.eval("linkRequest('marie@test.fr')"); await wait(200); await B.eval("linkAnswer(linkPending()[0].id,true)"); await wait(300);
   const r=await mk(A,'Resto',40,'marie@test.fr','Compte principal');
   ev(A,`debtView('${r}')`); A.document.querySelector('#dlg [data-auto]').click(); await wait(150);
-  A.document.getElementById('f_amt').value='15'; A.document.getElementById('f_day').value='1'; A.document.getElementById('f_start').value=nk; sub(A); await wait(4500); close(A);
-  ok('Échéance du mois : 15 € envoyés et reçus chez Marie',PM(perso,nk).expenses.some(x=>x.name==='Remboursement Resto'&&x.amount===15)&&[bperso,joint].some(a=>PM(a,nk).incomes.some(x=>x.name==='Remboursement Resto')));
+  A.document.getElementById('f_amt').value='15'; A.document.getElementById('f_day').value='1'; A.document.getElementById('f_start').value=nk; sub(A); await wait(4500); close(A); await conf(B);
+  ok('Échéance du mois : 15 € envoyés et reçus chez Marie (après sa confirmation)',PM(perso,nk).expenses.some(x=>x.name==='Remboursement Resto'&&x.amount===15)&&[bperso,joint].some(a=>PM(a,nk).incomes.some(x=>x.name==='Remboursement Resto')));
   ok('Marie voit « réglé par Robin » et le prochain mois',(ev(B,`debtView('${r}')`),/réglé par Robin/.test(B.document.getElementById('dlg').textContent)&&/prochain/.test(B.document.getElementById('dlg').textContent))); close(B);
   ok('Marie n\'exécute pas l\'automatique de Robin',(await B.eval('autoRun(true)'),await wait(500),ev(B,`findDebt('${r}').d.payments.length`))===1);
   console.log('— 4. Rappels (critère choisi)');

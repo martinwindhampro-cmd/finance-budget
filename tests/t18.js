@@ -13,6 +13,7 @@ function client(name){
   const w=dom.window;w.name_=name;return w;
 }
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const conf=async W=>{await W.eval("Promise.all(payConfirmsForMe().map(({d,p})=>payConfirm(d.id,p.id,true,ACC[p.toAcc]?p.toAcc:recvAccount())))");await wait(1500);};
 let fails=0;const ok=(n,c)=>{console.log((c?'✅':'❌')+' '+n);if(!c)fails++;};
 const click=(w,sel)=>{const el=typeof sel==='string'?w.document.querySelector(sel):sel;if(!el)throw new Error(w.name_+' introuvable: '+sel);el.dispatchEvent(new w.MouseEvent('click',{bubbles:true}));};
 const nk=(()=>{const x=new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')})();
@@ -75,7 +76,8 @@ async function split(w,{name,tot,me=true,mode='eq',parts,acc}){
   console.log('— 4. Remboursement de Marie → le partage suit');
   await B.eval(`payDialog('${mid}')`); await wait(50); sub(B); await wait(1500); close(B); ev(A,'render()');
   ok('Reste 60 € sur 90 €, 33 %',/Reste 60,00\s€ sur 90,00/.test(V(A)));
-  await wait(800);ok('Virement de Marie reçu sur le compte de Robin',[...shared.store.entries()].some(([k,t])=>k.startsWith('transfers/')&&t.to==='robin@test.fr'&&t.amount===30&&t.status==='received')&&PM(perso,nk).incomes.some(i=>/Restaurant/.test(i.name)&&i.amount===30));
+  await wait(800);ok('Robin doit confirmer : rien sur son compte avant',ev(A,'payConfirmsForMe().length')===1&&!PM(perso,nk).incomes.some(i=>/Restaurant/.test(i.name)));
+  await conf(A); ok('Robin confirme : 30 € reçus sur son compte',PM(perso,nk).incomes.some(i=>/Restaurant/.test(i.name)&&i.amount===30));
   console.log('— 5. Montants libres, sans moi');
   await split(A,{name:'Airbnb',tot:100,me:false,mode:'free',parts:[['u:uB',0,70],['txt','Léa',20]]});
   ok('Reste 10 € à répartir → refusé',/Reste 10,00\s€ à répartir/.test(A.document.getElementById('sp-sum').textContent)&&(sub(A),await wait(100),D(A).open));

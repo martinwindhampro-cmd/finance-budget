@@ -1234,7 +1234,7 @@ function syncActivity() {
 function unreadCount() {
   const seen = USER?.seen || {}, me = currentUser?.uid;
   const act = Object.entries(ACT).reduce((s, [id, l]) => s + l.filter(a => a.by !== me && a.at > (seen[id] || 0)).length, 0);
-  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + invitesForMe().length + declinedForMe().length + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
+  return act + INV.in.filter(i => i.status === 'pending').length + linkPending().length + pendingForMe().length + invitesForMe().length + declinedForMe().length + validCount() + XF.in.filter(t => t.status === 'received' && (t.receivedAt || 0) > (seen.xfer || 0) && !(U.xfHide || []).includes(t.id)).length;
 }
 function markSeen() {
   const upd = {}; Object.keys(ACT).forEach(id => { if ((ACT[id][0]?.at || 0) > (USER?.seen?.[id] || 0)) upd['seen.' + id] = Date.now(); });
@@ -1303,7 +1303,7 @@ auth.onAuthStateChanged(user => {
     if (loaded) { renderChrome(); if (UI.view === 'messages') render(); }
   }, err => console.warn('Invitations', err.code));
   subs.push(inv('to', myEmail(), 'in'), inv('from', user.uid, 'out'));
-  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'), linkListen(), pdebtListen());
+  subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'), linkListen(), pdebtListen(), shfixListen());
 });
 
 /* ============================== 6. CONNEXION & COMPTE ============================== */
@@ -1572,7 +1572,7 @@ function renderChrome() {
   $('bell').classList.toggle('on', UI.view === 'messages');
   $$('.accsw-slot').forEach(s => s.innerHTML = accSwitcherHTML());
   $$('[data-a=new]')[0].innerHTML = svg('plus', 18, 2.4) + '<span>Ajouter</span>';
-  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500); compSyncSoon();
+  setTimeout(notifyAlerts, 0); setTimeout(autoRun, 1500); compSyncSoon(); appBadge();
   $('todayd').innerHTML = `<span class="tdl">${todayLabel()}</span><span class="tds">${todayLabel({ weekday: 'short', day: 'numeric', month: 'short' })}</span>`;
 }
 
@@ -1647,7 +1647,7 @@ function vAccueil() {
       <div class="chips"><button class="btn" data-a="ob-inc">1. Ajouter mon salaire</button><button class="btn" data-a="ob-fix">2. Ajouter une charge fixe</button><button class="btn" data-a="bank">3. Saisir mon solde bancaire</button></div>
       <p class="note">Salaire et charges fixes sont recopiés automatiquement chaque mois. Tu pourras tout modifier ensuite.</p></section>` : '';
 
-  V.innerHTML = `${onboard}
+  V.innerHTML = `${onboard}${payConfMsgHTML()}
   <div class="grid2">
     <section class="hero" aria-label="Reste à vivre" style="background:color-mix(in srgb,${ACC[active]?.color || '#4338CA'} 42%,#0B0A24)">
       <div class="deco"><i style="right:-60px;top:-80px;width:260px;height:260px;background:var(--hero-2);opacity:.55"></i><i style="right:70px;top:90px;width:120px;height:120px;background:var(--hero-3);opacity:.35"></i></div>
@@ -2023,8 +2023,8 @@ function vParametres() {
     ${T.incomes.map(t => `<tr data-tpl="incomes" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé">${t.xfer?.kind === 'acc' ? `<span class="xtag">${svg('swap', 12)} Virement auto ${(ACC[t.xfer.acc]?.name || t.xfer.accName) ? (T.incomes.includes(t) ? 'depuis' : 'vers') + ' « ' + esc(ACC[t.xfer.acc]?.name || t.xfer.accName) + ' »' : ''}</span>` : ''}</td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Aucune recette fixe (salaire, aides…).</td></tr>'}
     </tbody></table></div></section>
   <section class="card"><div class="ch"><h2>Charges fixes</h2><button class="btn sm" data-a="tadd" data-t="expenses">${svg('plus', 16)} Charge fixe</button></div>
-    <div class="tw"><table class="tpl" style="min-width:760px"><thead><tr><th>Jour</th><th></th><th>Libellé</th><th>Catégorie</th><th>Montant</th><th>½</th><th>Site web (logo)</th><th></th></tr></thead><tbody>
-    ${T.expenses.map(t => `<tr data-tpl="expenses" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td>${ico(t, 'expenses', 'sm')}</td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé">${t.xfer?.kind === 'acc' ? `<span class="xtag">${svg('swap', 12)} Virement auto ${(ACC[t.xfer.acc]?.name || t.xfer.accName) ? (T.incomes.includes(t) ? 'depuis' : 'vers') + ' « ' + esc(ACC[t.xfer.acc]?.name || t.xfer.accName) + ' »' : ''}</span>` : ''}</td><td><select data-f="cat" aria-label="Catégorie">${catSel(t.cat)}</select></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td><button class="half ${t.isDivided ? 'on' : ''}" data-a="thalf" title="Ne compter que ma moitié" aria-pressed="${!!t.isDivided}">½</button></td><td><input data-f="site" value="${esc(t.site || '')}" placeholder="ex. monfournisseur.fr" aria-label="Site web pour le logo"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Aucune charge fixe.</td></tr>'}
+    <div class="tw"><table class="tpl" style="min-width:760px"><thead><tr><th>Jour</th><th></th><th>Libellé</th><th>Catégorie</th><th>Montant</th><th>Partage</th><th>Site web (logo)</th><th></th></tr></thead><tbody>
+    ${T.expenses.map(t => `<tr data-tpl="expenses" data-id="${t.tmplId}"><td><input class="d" data-f="date" inputmode="numeric" placeholder="JJ" value="${esc(t.date)}" aria-label="Jour"></td><td>${ico(t, 'expenses', 'sm')}</td><td><input data-f="name" value="${esc(t.name)}" aria-label="Libellé">${t.xfer?.kind === 'acc' ? `<span class="xtag">${svg('swap', 12)} Virement auto ${(ACC[t.xfer.acc]?.name || t.xfer.accName) ? (T.incomes.includes(t) ? 'depuis' : 'vers') + ' « ' + esc(ACC[t.xfer.acc]?.name || t.xfer.accName) + ' »' : ''}</span>` : ''}${shfixTag(t.tmplId)}</td><td><select data-f="cat" aria-label="Catégorie">${catSel(t.cat)}</select></td><td><input type="number" step="0.01" min="0" data-f="amount" value="${num(t.amount)}" aria-label="Montant"></td><td><button class="half ${t.isDivided ? 'on' : ''}" data-a="thalf" title="Ne compter que ma moitié" aria-pressed="${!!t.isDivided}">½</button>${isSavAcc() ? '' : `<button class="half" data-a="tshare" title="Partager avec une personne connectée" aria-label="Partager ${esc(t.name)} avec une personne">👥</button>`}</td><td><input data-f="site" value="${esc(t.site || '')}" placeholder="ex. monfournisseur.fr" aria-label="Site web pour le logo"></td><td>${del}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Aucune charge fixe.</td></tr>'}
     </tbody></table></div></section>
   <section class="card"><div class="ch"><h2>Budgets mensuels</h2><button class="btn sm" data-a="tadd" data-t="budgets">${svg('plus', 16)} Budget</button></div>
     <div class="tw"><table class="tpl"><thead><tr><th>Catégorie</th><th>Montant</th><th></th></tr></thead><tbody>
@@ -2139,7 +2139,7 @@ function paintPanel() {
     </div>
     ${fixed ? `<div class="fixinfo"><b>Élément récurrent (chaque mois)</b>
         <label class="chk" style="min-height:0;color:inherit"><input type="checkbox" data-p="future" ${P.future ? 'checked' : ''}>Appliquer aussi aux mois suivants</label>
-        <button class="lnk" data-p="stop" style="align-self:flex-start;color:inherit;text-decoration:underline">Arrêter la récurrence à partir du mois prochain</button></div>`
+        <button class="lnk" data-p="stop" style="align-self:flex-start;color:inherit;text-decoration:underline">Arrêter la récurrence à partir du mois prochain</button>${ex && !isSavAcc() && d.tmplId && S.templates.expenses.some(t => t.tmplId === d.tmplId) ? `<button class="lnk" data-p="shfix" style="align-self:flex-start;color:inherit;text-decoration:underline">👥 Partager cette charge fixe avec une personne${shfixOf(active, d.tmplId).length ? ' (' + shfixOf(active, d.tmplId).map(s => shortName(s.toEmail) + (s.status === 'accepted' ? ' ✓' : ' ⏳')).join(', ') + ')' : ''}</button>` : ''}</div>`
       : `<label class="chk"><input type="checkbox" data-p="repeat" ${P.repeat ? 'checked' : ''}>Répéter chaque mois (${sav ? (P.type === 'incomes' ? 'versement automatique' : 'retrait automatique') : ex ? 'charge fixe' : 'recette fixe'})</label>`}
   </div>
   <div class="pfoot">
@@ -2151,6 +2151,7 @@ function panelClick(b) {
   const a = b.dataset.p, d = P.d;
   switch (a) {
     case 'close': return closePanel();
+    case 'shfix': { const tid = d.tmplId; closePanel(); return shfixDialog(tid); }
     case 'type': if (b.dataset.v === 'xfer') { P.type = 'xfer'; P.xk = P.xk || 'acc'; d.cat = 'Virement'; P.icon = d.site ? 'site' : d.img ? 'img' : 'cat'; break; } P.type = b.dataset.v; d.status = P.type === 'incomes' ? (d.status === 'Payé' ? 'Reçu' : 'En attente') : (d.status === 'Reçu' ? 'Payé' : 'Prévu'); break;
     case 'half': d.isDivided = !d.isDivided; if (d.isDivided) { P.comp = null; P.cm = 'none'; } break;
     case 'comp': P.cmT = true; P.comp = b.dataset.v; d.isDivided = false; break;
@@ -2639,7 +2640,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '4 nov. · v33';
+const APP_VERSION = '4 nov. · v34';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3028,13 +3029,13 @@ let PDEBTS = [];
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 function debtInfo(d) {
   // dépenses communes « ajoutées » (montant négatif) : augmentent ce qui est dû
-  const P = d.payments || [], t = Math.round((num(d.amount) + sum(P.filter(p => num(p.amount) < 0), p => -num(p.amount))) * 100) / 100, r = sum(P.filter(p => num(p.amount) > 0), p => num(p.amount)), left = Math.max(0, Math.round((t - r) * 100) / 100);
+  const P = (d.payments || []).filter(p => !p.rej), t = Math.round((num(d.amount) + sum(P.filter(p => num(p.amount) < 0), p => -num(p.amount))) * 100) / 100, r = sum(P.filter(p => num(p.amount) > 0), p => num(p.amount)), left = Math.max(0, Math.round((t - r) * 100) / 100);
   return { t, r, left, p: t > 0 ? Math.min(100, r / t * 100) : 0, done: t > 0 && left <= 0 };
 }
 function pdebtListen() {
   return db.collection('pdebts').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
     PDEBTS = q.docs.map(d => ({ id: d.id, ...d.data() }));
-    processDebtReqs(); splitNotify(); setTimeout(() => compSync(), 600);
+    processDebtReqs(); splitNotify(); payNotify(); setTimeout(() => compSync(), 600);
     if (loaded) { renderChrome(); if (['budgets', 'accueil', 'messages'].includes(UI.view)) render(); }
   }, e => console.warn('Remboursements partagés', e.code));
 }
@@ -3315,17 +3316,19 @@ function debtView(id) {
     ${(d.reqs || []).filter(q => q.status === 'pending').map(q => mine(q.by) ? `<div class="alert"><span>⏳ En attente de l'accord de ${esc(shortName(d.emails?.[d.members.find(u => !mine(u))]))} pour ${esc(reqText(d, q))}.</span><button class="lnk" data-rq-cancel="${q.id}">Annuler</button></div>`
       : `<div class="alert bad" style="flex-wrap:wrap"><span>${esc(shortName(d.emails?.[q.by]))} veut ${esc(reqText(d, q))}.</span><span class="chips"><button class="btn sm p" data-rq-yes="${q.id}">Accepter</button><button class="btn sm" data-rq-no="${q.id}">Refuser</button></span></div>`).join('')}
     ${d.grp ? `<button class="dopt" data-grp style="width:100%">👥 <span><b>Partage « ${esc(d.grp.name)} » · ${eur(d.grp.total)}</b><small>${esc(d.grp.parts.map(p => p.who + ' ' + eur(p.amount)).join(' · '))}${mine(d.grp.by) || myAcc(lenderAcc(e)) ? ' · voir tout' : ''}</small></span></button>` : ''}
+    ${(d.payments || []).filter(p => p.pend && !p.rej && !mine(p.by) && e.home.shared).map(p => `<div class="alert" style="flex-wrap:wrap"><span>💸 ${esc(shortName(d.emails?.[p.by]))} dit t'avoir remboursé <b>${eur(p.amount)}</b> le ${fmtD(p.date)}.</span><span class="chips"><button class="btn sm p" data-pc-ok="${p.id}">Confirmer</button><button class="btn sm" data-pc-no="${p.id}">Pas reçu</button></span></div>`).join('')}
+    ${(d.payments || []).filter(p => p.rej && mine(p.by)).map(p => `<div class="alert bad" style="flex-wrap:wrap"><span>❌ ${esc(shortName(d.emails?.[p.rej.by]))} n'a pas reçu ton remboursement de <b>${eur(p.amount)}</b> du ${fmtD(p.date)}.</span><span class="chips"><button class="btn sm" data-pr="resend" data-v="${p.id}">Renvoyer</button><button class="btn sm" data-pr="drop" data-v="${p.id}">Supprimer</button></span></div>`).join('')}
     ${invPending(d) ? `<div class="alert"><span>⏳ Demande envoyée à ${esc(sideLabel(B))} : en attente de son accord.</span></div>` : ''}
     ${invDeclined(d) ? `<div class="alert bad" style="flex-wrap:wrap"><span>❌ ${esc(sideLabel(B))} a refusé cette part.</span><span class="chips"><button class="btn sm" data-dec="keep">Garder en suivi perso</button><button class="btn sm" data-dec="resend">Renvoyer</button><button class="btn sm" data-dec="drop">Retirer</button></span></div>` : ''}
     ${d.arch ? `<div class="alert"><span>🗂️ Clôturée le ${fmtD(d.arch.at)}${d.arch.left > 0 ? ' : ' + eur(d.arch.left) + ' abandonnés' : ''}. Elle est dans l'historique.</span><button class="lnk" data-reopen>Rouvrir</button></div>` : ''}
-    ${i.done || d.arch || invDeclined(d) ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>
+    ${i.done || d.arch || invDeclined(d) ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} ${!lenderIsMine(L) && B.kind === 'user' && mine(B.uid) ? 'J\'ai remboursé' : 'Enregistrer un remboursement'}</button>
     <div class="dopts">
       <button class="dopt" data-auto>${d.auto ? `🔁 <span><b>${eur(d.auto.amount)} le ${d.auto.day} de chaque mois</b><small>prochain : ${fmtD(d.auto.next + '-' + String(Math.min(d.auto.day, dim(d.auto.next))).padStart(2, '0'))} · fin prévue ${mlab(autoEnd(d)).toLowerCase()}${d.auto.by !== currentUser.uid ? ' · réglé par ' + esc(shortName(d.emails?.[d.auto.by] || '')) : ''}</small></span>` : '🔁 <span><b>Remboursement automatique</b><small>ex. 20 € le 5 de chaque mois, jusqu\'au bout</small></span>'}</button>
       <button class="dopt" data-comp>↔ <span><b>Dépense commune</b><small>payée par l'un de vous : déduite ou ajoutée, sans virement</small></span></button>
       <button class="dopt" data-remind>${d.remind ? `🔔 <span><b>Rappel</b><small>${esc(remindText(d.remind))}</small></span>` : '🔔 <span><b>Rappel</b><small>choisis quand être prévenu</small></span>'}</button>
     </div>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
-      ${P_.map(p => p.comp ? compRowHTML(p, d) : `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}${p.ed ? ' · modifié' : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b></button>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
+      ${P_.map(p => p.comp ? compRowHTML(p, d) : `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}${p.ed ? ' · modifié' : ''}${p.rej ? ' · <b style="color:var(--bad)">❌ pas reçu</b>' : p.pend ? ' · <b style="color:var(--warn)">⏳ à confirmer</b>' : p.okAt ? ' · ✓ confirmé' : ''}</span></span><b class="num" style="color:${p.rej ? 'var(--mute)' : 'var(--ok)'}">+${eur(p.amount)}</b></button>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
   dl.onclick = ev => {
     if (ev.target.closest('[data-x]')) return dl.close();
@@ -3338,6 +3341,8 @@ function debtView(id) {
     if (ev.target.closest('[data-grp]')) { if ((mine(d.grp.by) || myAcc(lenderAcc(e))) && d.grp.id) { dl.close(); return setTimeout(() => groupView(d.grp.id), 50); } return; }
     const dec = ev.target.closest('[data-dec]'); if (dec) { dl.close(); return declinedAction(id, dec.dataset.dec); }
     if (ev.target.closest('[data-reopen]')) { updateDebt(e, x => { delete x.arch; }).then(() => { toast('Avance rouverte'); render(); setTimeout(() => debtView(id), 300); }); return; }
+    const pc = ev.target.closest('[data-pc-ok],[data-pc-no]'); if (pc) { dl.close(); if (pc.dataset.pcOk) return payConfirmDialog(id, pc.dataset.pcOk); return payConfirm(id, pc.dataset.pcNo, false); }
+    const pr = ev.target.closest('[data-pr]'); if (pr) { dl.close(); return payRejAction(id, pr.dataset.v, pr.dataset.pr); }
     const del = ev.target.closest('[data-del]'); if (del) { dl.close(); return payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 400)); }
     const ry = ev.target.closest('[data-rq-yes],[data-rq-no]'); if (ry) { const rid = ry.dataset.rqYes || ry.dataset.rqNo; debtAnswer(id, rid, !!ry.dataset.rqYes).then(() => setTimeout(() => { dl.close(); if (findDebt(id)) debtView(id); }, 400)); return; }
     const rc = ev.target.closest('[data-rq-cancel]'); if (rc) { updateDebt(findDebt(id), x => { x.reqs = (x.reqs || []).filter(q => q.id !== rc.dataset.rqCancel); }).then(() => setTimeout(() => debtView(id), 300)); return; }
@@ -3387,7 +3392,7 @@ async function payDialog(id) {
     fields: [{ id: 'amt', label: 'Montant', type: 'num', value: i.left, ph: '0,00' },
       { id: 'date', label: 'Date', value: todayISO() },
       { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: fromSel ? nm(fromSel) : ((B.kind === 'user' && !mine(B.uid)) || B.kind === 'text' ? OTHER : A.find(x => x !== toDef) ? nm(A.find(x => x !== toDef)) : OTHER) },
-      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: TO.map(t => t[0]), value: toLab, hint: lenderIsOther ? 'Le virement lui arrive en direct sur ce compte.' : 'Les deux comptes sont mis à jour tout de suite.' },
+      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: TO.map(t => t[0]), value: toLab, hint: lenderIsOther ? 'Fais le virement depuis ta banque : ' + shortName(L.email) + ' confirmera l\'avoir reçu.' : 'Les deux comptes sont mis à jour tout de suite.' },
       { id: 'label', label: 'Libellé', value: 'Remboursement ' + d.name, ph: 'Remboursement…' }],
     onSave: r => {
       const amt = Math.round(num(r.amt) * 100) / 100;
@@ -3408,25 +3413,26 @@ async function payCreate(id, p, opt = {}) {
   const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), xid = uid(), incId = uid(), expId = uid();
   const fromName = p.from ? ACC[p.from].name : 'Autre', toUser = p.to.user, toName = toUser ? (p.to.accName || 'compte de ' + shortName(toUser.email)) : ACC[p.to.acc].name;
   const pay = { auto: !!opt.auto, id: uid(), amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: toUser ? '' : p.to.acc, toName, toUser: toUser ? toUser.email : '', k, inc: toUser ? '' : incId, exp: p.from ? expId : '', xid: p.from ? xid : '', by: currentUser.uid };
+  if (toUser) Object.assign(pay, { pend: 1, at: Date.now(), toAcc: p.to.acc || '' });      // « J'ai remboursé » : l'autre confirme
   const jobs = [updateDebt(e, x => { (x.payments = x.payments || []).push(pay); })];
   if (!toUser) {
     jobs.push(onAcc(p.to.acc, k, m => m.incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
       p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, isShared(p.to.acc) ? { by: currentUser.email } : {}))));
     if (p.from) jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: p.to.acc, accName: toName } })));
   } else {
-    // vers le compte d'une autre personne : virement « vers une personne », reçu en direct chez elle
+    // vers le compte d'une autre personne : ma sortie tout de suite ; chez elle, la recette arrive quand elle confirme
     jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: Object.assign({ id: xid, kind: 'person', to: toUser.email }, p.to.accName ? { toAccName: p.to.accName } : {}) })));
-    jobs.push(db.collection('transfers').doc(xid).set(Object.assign({ from: currentUser.uid, fromEmail: currentUser.email, to: toUser.email, amount: p.amount, label: p.label, date: dd, k, site: '', img: '', status: 'sent', at: Date.now(), debt: id }, p.to.acc ? { toAcc: p.to.acc, toAccName: p.to.accName || '' } : {})));
   }
   const res = await Promise.allSettled(jobs);
   const bad = res.some(r => r.status === 'rejected');
   if ((opt.leftBefore ?? debtInfo(d).left) - p.amount <= 0.005) await updateDebt(findDebt(id) || e, x => { if (debtInfo(x).done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } }).catch(() => {});
   if (opt.silent) return !bad;
-  toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name);
+  toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name + (toUser ? ' · ' + shortName(toUser.email) + ' doit confirmer' : ''));
   setTimeout(() => { const n2 = findDebt(id); if (n2 && debtInfo(n2.d).done) toast('🎉 « ' + d.name + ' » est entièrement remboursé !'); debtView(id); }, 500);
 }
 async function payDelete(id, pid) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
+  if ((p.pend || p.rej) && !p.okAt && mine(p.by)) { if (!confirm('Supprimer ce remboursement de ' + eur(p.amount) + ' (pas encore confirmé) ?')) return; return payRejAction(id, pid, 'drop'); }
   const mode = await askDeleteMode('ce remboursement de ' + eur(p.amount), payHasMov(p), !!e.home.shared); if (!mode) return;
   if (e.home.shared) return debtRequest(e, { type: 'pay', pid, mode });
   if (mode === 'all') await cleanMovs(Object.assign({}, p, { inc: p.inc, exp: p.exp }));
@@ -4525,9 +4531,11 @@ async function payEdit(e, p, n) {
   if (p.inc && myAcc(p.to)) jobs.push(lineSet(p.to, p.k, k, 'incomes', p.inc, x => x ? fix(x) : null));
   if (p.exp && myAcc(p.from)) jobs.push(lineSet(p.from, p.k, k, 'expenses', p.exp, x => x ? fix(x) : null));
   let note = '';
-  if (p.xid && p.toUser) { if (xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).update({ amount: n.amount, date: dd, label: n.label })); else note = ' (déjà reçu chez l\'autre : seul ton côté change)'; }
+  const conf = p.toUser && (p.pend || p.rej || p.okAt);                // « J'ai remboursé » (sans virement dans sa boîte)
+  if (conf && p.okAt) note = ' (à reconfirmer par ' + shortName(p.toUser) + ')';
+  else if (p.xid && p.toUser && !conf) { if (xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).update({ amount: n.amount, date: dd, label: n.label })); else note = ' (déjà reçu chez l\'autre : seul ton côté change)'; }
   await Promise.all(jobs.map(j => j.catch(er => console.warn(er))));
-  await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); compDone(x); });
+  await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); if (conf && q.okAt) { q.pend = 1; q.re = 1; q.at = Date.now(); } if (conf) delete q.rej; compDone(x); });
   warnMembers(e, 'Remboursement modifié : ' + eur(n.amount) + ' · « ' + e.d.name + ' »' + note);
   if (note) toast('ℹ' + note);
 }
@@ -4722,6 +4730,173 @@ function halfConvDialog() {
   d.showModal();
 }
 
+/* ============================== CHARGES FIXES PARTAGÉES & « J'AI REMBOURSÉ » ==============================
+   1. Charge fixe partagée (collection shfix) : je propose une de mes charges fixes à une personne connectée.
+      Si elle accepte, la MÊME charge fixe (nom, montant, jour, catégorie, logo) est créée chez elle, depuis le compte
+      qu'elle choisit. Si c'est un virement automatique vers un compte dont elle est aussi membre (ex. compte joint),
+      c'est le même virement automatique depuis son compte (recette fixe en face sur le joint).
+      shfix/{id} = { members[2], emails{}, from, fromEmail, fromAcc, tmplId, to, toEmail, status pending/accepted/declined,
+                     at, answeredAt, toAcc, toAccName, tpl{name, amount, date, cat, site?, img?, xfer?{acc, accName}} }
+   2. « J'ai remboursé » : quand je rembourse une AUTRE personne, le remboursement est « à confirmer » (p.pend) ;
+      elle confirme (la recette arrive sur le compte qu'elle choisit) ou répond « Pas reçu » (p.rej).
+   3. Pastille sur l'icône de l'app (nombre de demandes à traiter).                                                    */
+let SHFIX = [];
+function shfixListen() {
+  return db.collection('shfix').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
+    SHFIX = q.docs.map(d => ({ id: d.id, ...d.data() }));
+    shfixNotify();
+    if (loaded) { renderChrome(); if (['messages', 'parametres', 'accueil'].includes(UI.view)) render(); }
+  }, e => console.warn('Charges fixes partagées', e.code));
+}
+const shfixForMe = () => SHFIX.filter(s => s.status === 'pending' && mine(s.to));
+const shfixOf = (acc, tmplId) => SHFIX.filter(s => s.fromAcc === acc && s.tmplId === tmplId && s.status !== 'declined');
+function shfixWhat(t) {
+  const x = t.xfer, d = t.date ? ' le ' + t.date : '';
+  return eur(num(t.amount)) + ' chaque mois' + d + (x ? ' · virement vers « ' + (ACC[x.acc]?.name || x.accName || 'un compte') + ' »' : '') + (t.cat && t.cat !== 'Virement' ? ' · ' + t.cat : '');
+}
+// Proposer une charge fixe (modèle tmplId du compte affiché) à une personne connectée
+function shfixDialog(tmplId) {
+  const t = S.templates.expenses.find(x => x.tmplId === tmplId); if (!t) return;
+  const ppl = linkedPeople().filter(p => p.uid);
+  if (!ppl.length) return toast('Connecte-toi d\'abord à la personne (Paramètres › Mes connexions)');
+  const already = shfixOf(active, tmplId).map(s => s.to);
+  const free = ppl.filter(p => !already.includes(p.uid));
+  if (!free.length) return toast('Déjà partagée avec ' + ppl.map(p => shortName(p.email)).join(', '));
+  formDialog({ title: '👥 Partager « ' + esc(t.name) + ' »', ok: 'Envoyer la demande',
+    intro: `<b>${esc(shfixWhat(t))}</b><br>La personne reçoit une demande. Si elle accepte, la même charge fixe est ajoutée dans ses comptes (elle choisit le compte d'où elle part). Chacun garde la sienne : ta charge fixe ne change pas.`,
+    fields: [{ id: 'who', label: 'Avec qui ?', type: 'select', options: free.map(p => shortName(p.email) + ' · ' + p.email), value: shortName(free[0].email) + ' · ' + free[0].email }],
+    onSave: v => {
+      const p = free.find(x => v.who.endsWith(' · ' + x.email)); if (!p) return false;
+      const tpl = { name: t.name, amount: num(t.amount), date: t.date || '', cat: t.cat || '' };
+      if (t.site) tpl.site = t.site; if (t.img && t.img.length < 60000) tpl.img = t.img;
+      if (t.xfer?.kind === 'acc' && t.xfer.acc) tpl.xfer = { acc: t.xfer.acc, accName: ACC[t.xfer.acc]?.name || t.xfer.accName || '' };
+      const id = uid(), now = Date.now();
+      db.collection('shfix').doc(id).set({ members: [currentUser.uid, p.uid], emails: { [currentUser.uid]: myEmail(), [p.uid]: p.email }, from: currentUser.uid, fromEmail: myEmail(), fromAcc: active, tmplId,
+        to: p.uid, toEmail: p.email, status: 'pending', at: now, tpl })
+        .then(() => { toast('👥 Demande envoyée à ' + shortName(p.email)); render(); })
+        .catch(er => toast(er.code === 'permission-denied' ? '⚠ Refusé par Firebase : les règles Firestore (firestore.rules) doivent être publiées' : '⚠ ' + (er.code || er.message)));
+    } });
+}
+// Demande reçue : accepter (choisir le compte) ou refuser
+function shfixAnswerDialog(id) {
+  const s = SHFIX.find(x => x.id === id); if (!s || s.status !== 'pending') return;
+  const t = s.tpl, dest = t.xfer && myAcc(t.xfer.acc) ? t.xfer.acc : null;
+  const A = allAccs().filter(a => a !== dest && ACC[a].kind !== 'epargne'); if (!A.length) return toast('Ajoute d\'abord un compte courant');
+  const def = A.includes(recvAccount()) ? recvAccount() : A[0];
+  formDialog({ title: '👥 ' + esc(t.name), ok: 'Accepter', delLabel: 'Refuser',
+    intro: `<b>${esc(shortName(s.fromEmail))}</b> te propose de partager cette charge fixe :<br><b>${esc(shfixWhat(t))}</b>.<br>Si tu acceptes, la même charge fixe est ajoutée dans ton compte${dest ? ', en virement automatique vers « ' + esc(ACC[dest].name) + ' »' : ''}.`,
+    fields: [{ id: 'acc', label: dest ? 'Depuis quel compte part ton virement ?' : 'Dans quel compte ?', type: 'select', options: A.map(a => ACC[a].name), value: ACC[def]?.name }],
+    onDelete: () => shfixAnswer(id, false),
+    onSave: r => { shfixAnswer(id, true, A.find(a => ACC[a].name === r.acc)); } });
+}
+async function shfixAnswer(id, ok, acc) {
+  const s = SHFIX.find(x => x.id === id); if (!s) return;
+  const ref = db.collection('shfix').doc(id);
+  try {
+    let go = false;
+    await db.runTransaction(async tx => { const sn = await tx.get(ref); if (!sn.exists || sn.data().status !== 'pending') return; go = true;
+      tx.update(ref, Object.assign({ status: ok ? 'accepted' : 'declined', answeredAt: Date.now() }, ok && acc ? { toAcc: acc, toAccName: ACC[acc]?.name || '' } : {})); });
+    if (!go) return toast('Demande déjà traitée');
+    if (ok && acc) await fixCreate(acc, s.tpl);
+    toast(ok ? '✓ Charge fixe ajoutée : ' + s.tpl.name + ' · ' + eur(num(s.tpl.amount)) : 'Demande refusée'); render();
+  } catch (er) { toast('⚠ ' + (er.code || er.message)); }
+}
+// Crée une charge fixe (et l'élément du mois en cours, à payer) dans un de mes comptes ; virement automatique si la destination est à moi
+async function fixCreate(src, t) {
+  const k = nowK(), stid = uid(), dtid = uid(), rid = uid(), xid = uid();
+  const dest = t.xfer && myAcc(t.xfer.acc) && t.xfer.acc !== src ? t.xfer.acc : null;
+  const deco = Object.assign({}, t.site ? { site: t.site } : {}, t.img ? { img: t.img } : {});
+  const cat = t.cat && t.cat !== 'Virement' ? t.cat : dest ? 'Virement' : (t.cat || 'Autre');
+  const tpl = Object.assign({ tmplId: stid, name: t.name, amount: num(t.amount), date: t.date || '', cat, isDivided: false }, deco, dest ? { xfer: { kind: 'acc', acc: dest, accName: ACC[dest].name, auto: true, rid } } : {});
+  const inst = Object.assign({ id: uid(), name: t.name, amount: num(t.amount), date: t.date || '', status: 'Prévu', cat, isFixed: true, tmplId: stid, isDivided: false }, deco, dest ? { xfer: { id: xid, kind: 'acc', acc: dest, accName: ACC[dest].name, rid } } : {});
+  const addCat = o => { if (cat && cat !== 'Virement' && o.categories && !o.categories.includes(cat)) o.categories.push(cat); };
+  if (src === active) mutate(() => { addCat(S); month(k).expenses.unshift(inst); tplAdd('expenses', tpl, shiftK(k, 1)); }, false);
+  else await txMonth(src, k, m => m.expenses.unshift(inst), o => { addCat(o); o.templates.expenses.push(tpl); });
+  if (!dest) return;
+  const sn = ACC[src].name, itpl = Object.assign({ tmplId: dtid, name: t.name, amount: num(t.amount), date: t.date || '', isDivided: false, xfer: { kind: 'acc', acc: src, accName: sn, auto: true, rid } }, deco);
+  const iinst = Object.assign({ id: uid(), name: t.name, amount: num(t.amount), date: t.date || '', status: 'En attente', isFixed: true, tmplId: dtid, xfer: { id: xid, kind: 'acc', acc: src, accName: sn, rid } }, deco, isShared(dest) ? { by: currentUser.email } : {});
+  if (dest === active) mutate(() => { month(k).incomes.unshift(iinst); tplAdd('incomes', itpl, shiftK(k, 1)); }, false);
+  else await txMonth(dest, k, m => m.incomes.unshift(iinst), o => o.templates.incomes.push(itpl));
+}
+function shfixDrop(id) { db.collection('shfix').doc(id).delete().then(() => render()).catch(() => {}); }
+// Petite étiquette dans la liste des charges fixes : avec qui elle est partagée
+function shfixTag(tmplId) {
+  const L = shfixOf(active, tmplId); if (!L.length) return '';
+  return L.map(s => `<span class="xtag">👥 ${esc(shortName(s.toEmail))} ${s.status === 'accepted' ? '✓' : '⏳'}</span>`).join('');
+}
+
+/* ---------- « J'ai remboursé » : à confirmer par celui qui reçoit ---------- */
+const payConfirmsForMe = () => PDEBTS.filter(d => !d.closed && mine(lenderOf(d).uid)).flatMap(d => (d.payments || []).filter(p => p.pend && !p.rej && !mine(p.by)).map(p => ({ d, p })));
+const payRejectsForMe = () => PDEBTS.filter(d => !d.closed).flatMap(d => (d.payments || []).filter(p => p.rej && mine(p.by)).map(p => ({ d, p })));
+function payConfirmDialog(id, pid) {
+  const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p || !p.pend) return;
+  const A = allAccs(), who = shortName(borrowerOf(e.d).email || e.d.emails?.[p.by]);
+  const def = myAcc(p.toAcc) ? p.toAcc : myAcc(p.to) ? p.to : lenderAcc(e) || A[0];
+  formDialog({ title: '💸 ' + esc(who) + ' t\'a remboursé ?', ok: 'Confirmer', delLabel: 'Pas reçu',
+    intro: `<b>${eur(p.amount)}</b> le ${fmtD(p.date)} · ${esc(e.d.name)}${p.re ? '<br><small>Montant ou date modifié(e) après ta confirmation.</small>' : ''}<br>Vérifie sur ton compte bancaire que l'argent est bien arrivé.`,
+    fields: [{ id: 'acc', label: 'Reçu sur quel compte ?', type: 'select', options: A.map(a => ACC[a].name), value: ACC[def]?.name }],
+    onDelete: () => payConfirm(id, pid, false),
+    onSave: r => { payConfirm(id, pid, true, A.find(a => ACC[a].name === r.acc)); } });
+}
+async function payConfirm(id, pid, ok, acc) {
+  const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
+  try {
+    if (!ok) { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) q.rej = { at: Date.now(), by: currentUser.uid }; }); toast('Signalé : pas reçu'); return render(); }
+    const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), incId = p.inc && myAcc(p.to) ? p.inc : uid();
+    const from = shortName(e.d.emails?.[p.by] || borrowerOf(e.d).email);
+    const line = x => Object.assign(x || { id: incId, status: 'Reçu', isFixed: false, debt: id, xfer: { id: p.xid || uid(), kind: 'person', from: e.d.emails?.[p.by] || '' } }, { name: p.label || 'Remboursement ' + from, amount: num(p.amount), date: dd }, isShared(acc) ? { by: currentUser.email } : {});
+    if (p.inc && myAcc(p.to) && p.to !== acc) await lineSet(p.to, p.ik || p.k, null, 'incomes', p.inc);      // compte changé : on retire l'ancienne ligne
+    await lineSet(acc, p.inc && p.to === acc ? (p.ik || p.k) : null, k, 'incomes', incId, line);
+    await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (!q) return; delete q.pend; delete q.rej; delete q.re; Object.assign(q, { to: acc, toName: ACC[acc]?.name || '', inc: incId, ik: k, okAt: Date.now() }); });
+    toast('✓ ' + eur(p.amount) + ' reçus sur « ' + (ACC[acc]?.name || '') + ' »'); render();
+  } catch (er) { toast('⚠ ' + (er.code || er.message)); }
+}
+// Celui qui a remboursé : « Pas reçu » → renvoyer ou supprimer
+async function payRejAction(id, pid, what) {
+  const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
+  if (what === 'resend') { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) { delete q.rej; q.pend = 1; q.at = Date.now(); } }); toast('Renvoyé pour confirmation'); return render(); }
+  await cleanMovs(Object.assign({}, p, { inc: '' }));
+  await updateDebt(e, x => { x.payments = (x.payments || []).filter(z => z.id !== pid); });
+  toast('Remboursement supprimé'); render();
+}
+function payConfMsgHTML() {
+  const C = payConfirmsForMe(), R = payRejectsForMe(), F = shfixForMe(); if (!C.length && !R.length && !F.length) return '';
+  return `<section class="card" style="display:flex;flex-direction:column;gap:10px"><h2>À valider</h2>
+    ${C.map(({ d, p }) => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="gemo">💸</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(shortName(d.emails?.[p.by]))}</b> dit t'avoir remboursé <b>${eur(p.amount)}</b> · ${esc(d.name)}</span><span class="rs">le ${fmtD(p.date)}${p.re ? ' · modifié' : ''}</span></span>
+      <span class="chips"><button class="btn sm p" data-a="pc-ok" data-id="${d.id}" data-v="${p.id}">Confirmer</button><button class="btn sm" data-a="pc-no" data-id="${d.id}" data-v="${p.id}">Pas reçu</button></span></div>`).join('')}
+    ${R.map(({ d, p }) => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="gemo">❌</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(shortName(d.emails?.[p.rej.by]))}</b> n'a pas reçu ton remboursement de <b>${eur(p.amount)}</b> · ${esc(d.name)}</span><span class="rs">du ${fmtD(p.date)}</span></span>
+      <span class="chips"><button class="btn sm" data-a="pr-act" data-id="${d.id}" data-v="${p.id}" data-w="resend">Renvoyer</button><button class="btn sm" data-a="pr-act" data-id="${d.id}" data-v="${p.id}" data-w="drop">Supprimer</button></span></div>`).join('')}
+    ${F.map(s => `<div class="row" style="padding:6px 4px;flex-wrap:wrap"><span class="gemo">🔁</span><span class="rt" style="min-width:200px"><span class="rn" style="white-space:normal"><b>${esc(shortName(s.fromEmail))}</b> te propose une charge fixe partagée : <b>${esc(s.tpl.name)}</b></span><span class="rs" style="white-space:normal">${esc(shfixWhat(s.tpl))}</span></span>
+      <span class="chips"><button class="btn sm p" data-a="shfix-yes" data-id="${s.id}">Voir et accepter</button><button class="btn sm" data-a="shfix-no" data-id="${s.id}">Refuser</button></span></div>`).join('')}
+  </section>`;
+}
+const validCount = () => payConfirmsForMe().length + payRejectsForMe().length + shfixForMe().length;
+
+/* ---------- Notifications (app ouverte ou en arrière-plan) ---------- */
+let payStSeen = null, shSeen = null;
+function payNotify() {
+  const st = {}; PDEBTS.forEach(d => (d.payments || []).forEach(p => { if (p.pend || p.rej || p.okAt) st[d.id + p.id] = p.rej ? 'rej' : p.pend ? 'pend' + (p.at || '') : 'ok'; }));
+  if (payStSeen && loaded) PDEBTS.forEach(d => (d.payments || []).forEach(p => {
+    const s = st[d.id + p.id], was = payStSeen[d.id + p.id]; if (!s || s === was) return;
+    if (s.startsWith('pend') && !mine(p.by) && mine(lenderOf(d).uid)) { const t = shortName(d.emails?.[p.by]) + ' dit t\'avoir remboursé ' + eur(p.amount) + ' · ' + d.name; toast('💸 ' + t); browserNotify('Remboursement à confirmer', t); }
+    if (mine(p.by) && was && was.startsWith('pend') && (s === 'ok' || s === 'rej')) { const o = shortName(d.emails?.[d.members.find(u => !mine(u))]), t = s === 'ok' ? o + ' a confirmé ton remboursement de ' + eur(p.amount) : o + ' n\'a pas reçu ton remboursement de ' + eur(p.amount); toast((s === 'ok' ? '✓ ' : '❌ ') + t); browserNotify('Remboursement', t + ' · ' + d.name); }
+  }));
+  payStSeen = st; appBadge();
+}
+function shfixNotify() {
+  const st = {}; SHFIX.forEach(s => st[s.id] = s.status);
+  if (shSeen && loaded) SHFIX.forEach(s => {
+    if (shSeen[s.id] === s.status) return;
+    if (s.status === 'pending' && mine(s.to)) { const t = shortName(s.fromEmail) + ' te propose une charge fixe partagée : ' + s.tpl.name + ' (' + eur(num(s.tpl.amount)) + ')'; toast('🔁 ' + t); browserNotify('Charge fixe partagée', t); }
+    if (s.status !== 'pending' && shSeen[s.id] === 'pending' && mine(s.from)) { const t = shortName(s.toEmail) + (s.status === 'accepted' ? ' a accepté ' : ' a refusé ') + '« ' + s.tpl.name + ' »'; toast((s.status === 'accepted' ? '✓ ' : '❌ ') + t); browserNotify('Charge fixe partagée', t); }
+  });
+  shSeen = st; appBadge();
+}
+// Pastille sur l'icône de l'app installée (iPhone, Android, PC) : nombre de choses à traiter
+function appBadge() {
+  try { if (!navigator.setAppBadge || !currentUser) return; const n = unreadCount(); (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch (e) {}
+}
+
 
 /* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */
 const ACOL = [['Indigo','#4338CA'],['Vert','#0F766E'],['Bleu','#0369A1'],['Violet','#6D28D9'],['Rose','#BE185D'],['Orange','#C2410C'],['Ardoise','#334155']];
@@ -4809,6 +4984,7 @@ function vMessages() {
   const notifBtn = window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
   V.innerHTML = `
   ${linksMsgHTML()}
+  ${payConfMsgHTML()}
   ${debtReqsMsgHTML()}
   ${splitMsgHTML()}
   ${inv.length ? `<section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Invitations</h2>
@@ -4942,6 +5118,12 @@ document.addEventListener('click', ev => {
     case 'split-new': return splitDialog();
     case 'grp-open': return groupView(id);
     case 'inv-split': return inviteDialog(id);
+    case 'pc-ok': return payConfirmDialog(id, b.dataset.v);
+    case 'pc-no': return payConfirm(id, b.dataset.v, false);
+    case 'pr-act': return payRejAction(id, b.dataset.v, b.dataset.w);
+    case 'shfix-yes': return shfixAnswerDialog(id);
+    case 'shfix-no': return shfixAnswer(id, false);
+    case 'tshare': return shfixDialog(b.closest('[data-tpl]').dataset.id);
     case 'inv-split-no': return inviteAnswer(id, false);
     case 'split-dec': return declinedAction(id, b.dataset.v);
     case 'debt-open': return debtView(id);

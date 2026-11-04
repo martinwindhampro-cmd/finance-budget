@@ -1,0 +1,106 @@
+const {JSDOM}=require('jsdom');const fs=require('fs');const install=require('./fsmock.js');
+const src=fs.readFileSync(process.argv[2],'utf8').replace(/<script src=[^>]*><\/script>/g,'').replace(/<link [^>]*>/g,'');
+const shared={store:new Map(),listeners:new Set(),seq:0};
+shared.notify=()=>setTimeout(()=>shared.listeners.forEach(L=>{if(!L.win.document){shared.listeners.delete(L);return}try{L.fire()}catch(e){console.error('listener',e)}}),3);
+const errs=[];
+function client(name){
+  const dom=new JSDOM(src,{runScripts:'dangerously',url:'https://x.test/'+name,pretendToBeVisual:true,beforeParse(w){
+    install(w,shared);
+    w.Chart=class{destroy(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
+    w.scrollTo=()=>{};w.fetch=u=>Promise.resolve({ok:true,json:()=>Promise.resolve({amount:1,base:'EUR',date:'2026-10-12',rates:{USD:1.1181,GBP:0.84478,JPY:177.33}})});w.Element.prototype.scrollTo=()=>{};w.matchMedia=()=>({matches:false,addEventListener(){}});w.confirm=()=>true;w.alert=()=>{};w.prompt=()=>'SUPPRIMER';
+  }});
+  dom.window.addEventListener('error',e=>errs.push(name+': '+e.message));
+  const w=dom.window;w.name_=name;return w;
+}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+let fails=0;const ok=(n,c)=>{console.log((c?'✅':'❌')+' '+n);if(!c)fails++;};
+const click=(w,sel)=>{const el=typeof sel==='string'?w.document.querySelector(sel):sel;if(!el)throw new Error(w.name_+' introuvable: '+sel);el.dispatchEvent(new w.MouseEvent('click',{bubbles:true}));};
+const nk=(()=>{const x=new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')})();
+const sub=w=>w.document.querySelector('#dlg form').dispatchEvent(new w.Event('submit',{cancelable:true}));
+const close=w=>w.eval("$('dlg').open&&$('dlg').close()");
+const ev=(w,js)=>w.eval(js);
+const D=w=>w.document.getElementById('dlg').textContent.replace(/\s+/g,' ');
+const meta=a=>JSON.parse(shared.store.get('accounts/'+a).meta);
+const PM=(a,k)=>JSON.parse(shared.store.get(`accounts/${a}/months/${k}`)?.data||'{"incomes":[],"expenses":[]}');
+const selOpt=(w,id,re)=>{const s=w.document.getElementById(id);s.value=[...s.options].find(o=>re.test(o.text)).value;};
+(async()=>{
+  const A=client('robin'); await wait(20); A.__login({uid:'uA',email:'robin@test.fr'}); await wait(400);
+  const B=client('marion'); await wait(20); B.__login({uid:'uB',email:'marion@test.fr',emailVerified:true}); await wait(400);
+  const C=client('paul'); await wait(20); C.__login({uid:'uC',email:'paul@test.fr',emailVerified:true}); await wait(300);
+  let badge=null; B.navigator.setAppBadge=n=>{badge=n;return Promise.resolve()}; B.navigator.clearAppBadge=()=>{badge=0;return Promise.resolve()};
+  const perso=ev(A,'active'), bperso=ev(B,'active');
+  await A.eval("linkRequest('marion@test.fr')"); await wait(200); await B.eval("linkAnswer(linkPending()[0].id,true)"); await wait(400);
+  const joint=await ev(A,"createAccount({name:'Revolut Joint',bank:'Revolut'})"); await ev(A,`inviteMember('marion@test.fr','${joint}','Revolut Joint')`); await wait(200);
+  await ev(B,"acceptInvite(INV.in[0])"); await wait(400); ev(A,`openAccount('${perso}')`); await wait(400); ev(B,`openAccount('${bperso}')`); await wait(400);
+
+  console.log('— 1. Robin : virement automatique « Netflix » 20 € le 5 vers le joint, partagé avec Marion');
+  ev(A,"openPanel('expenses')"); click(A,'#panel [data-p=type][data-v=xfer]'); ev(A,`P.d.amount='20';P.d.name='Netflix';P.d.cat='Loisirs';P.d.date='5';P.repeat=true;P.dest='${joint}'`); click(A,'#panel [data-p=save]'); await wait(1500);
+  const tid=ev(A,"S.templates.expenses.find(t=>t.name==='Netflix').tmplId");
+  ev(A,"UI.pt='fixes';go('parametres')"); await wait(50);
+  const row=A.document.querySelector(`#v-parametres [data-tpl=expenses][data-id="${tid}"]`);
+  ok('Liste des charges fixes : bouton 👥 sur la ligne',!!row.querySelector('[data-a=tshare]'));
+  click(A,row.querySelector('[data-a=tshare]')); await wait(50);
+  ok('Fenêtre : « 20,00 € chaque mois le 5 · virement vers « Revolut Joint » · Loisirs », avec Marion',/20,00\s€ chaque mois le 5 · virement vers « Revolut Joint » · Loisirs/.test(D(A))&&/Marion · marion@test.fr/.test(D(A)));
+  sub(A); await wait(800);
+  const sh=[...shared.store.entries()].filter(([k])=>k.startsWith('shfix/')).map(([k,v])=>({id:k.slice(6),...v}));
+  ok('Demande enregistrée (en attente)',sh.length===1&&sh[0].status==='pending'&&sh[0].tpl.amount===20&&sh[0].tpl.xfer.acc===joint);
+  ok('Robin voit « 👥 Marion ⏳ » dans la liste',(ev(A,'render()'),/👥 Marion ⏳/.test(A.document.getElementById('v-parametres').textContent)));
+  ok('Paul ne peut pas lire la demande (règles)',await C.eval(`db.collection('shfix').doc('${sh[0].id}').get().then(()=>false,()=>true)`));
+  ok('Marion ne peut pas changer le montant proposé (règles)',await B.eval(`db.collection('shfix').doc('${sh[0].id}').update({'tpl.amount':1}).then(()=>false,()=>true)`));
+
+  console.log('— 2. Marion accepte depuis la messagerie');
+  ev(B,"go('messages')"); await wait(30);
+  ok('Marion : « À valider » + pastille sur l\'icône de l\'app',/te propose une charge fixe partagée : Netflix/.test(B.document.getElementById('v-messages').textContent)&&ev(B,'unreadCount()')>=1&&badge>=1);
+  ok('Accueil de Marion : la demande est aussi en haut',(ev(B,"go('accueil')"),/te propose une charge fixe partagée/.test(B.document.getElementById('v-accueil').textContent)));
+  ev(B,"go('messages')"); click(B,'#v-messages [data-a=shfix-yes]'); await wait(40);
+  ok('Fenêtre : « Depuis quel compte part ton virement ? » sans le compte joint',/Depuis quel compte part ton virement/.test(D(B))&&![...B.document.getElementById('f_acc').options].some(o=>/Joint/.test(o.text)));
+  sub(B); await wait(2000);
+  const bt=meta(bperso).templates.expenses.find(t=>t.name==='Netflix');
+  ok('Marion : même charge fixe (20 €, le 5, Loisirs) en virement auto vers le joint',bt&&bt.amount===20&&bt.date==='5'&&bt.cat==='Loisirs'&&bt.xfer.acc===joint&&bt.xfer.auto);
+  ok('Marion : Netflix dans le mois en cours, à payer',ev(B,"month(nowK()).expenses.some(e=>e.name==='Netflix'&&e.isFixed&&e.status==='Prévu'&&e.xfer?.acc)"));
+  const jt=meta(joint).templates.incomes.filter(t=>t.name==='Netflix');
+  ok('Joint : 2 recettes fixes Netflix (Robin + Marion) = 40 €',jt.length===2&&jt.reduce((s,t)=>s+t.amount,0)===40);
+  ok('Joint : les deux virements dans le mois en cours',PM(joint,nk).incomes.filter(i=>i.name==='Netflix').length===2);
+  await wait(300); ok('Robin voit « 👥 Marion ✓ »',(ev(A,"UI.pt='fixes';go('parametres')"),/👥 Marion ✓/.test(A.document.getElementById('v-parametres').textContent)));
+  ok('Plus de demande chez Marion, pastille remise à zéro',ev(B,'shfixForMe().length')===0&&(ev(B,'appBadge()'),badge===0||badge===ev(B,'unreadCount()')));
+  ok('Plus de bouton pour la repartager à Marion',(click(A,`#v-parametres [data-tpl=expenses][data-id="${tid}"] [data-a=tshare]`),!A.document.getElementById('dlg').open||!/Envoyer la demande/.test(D(A))));
+  close(A);
+
+  console.log('— 3. Charge fixe simple (pas un virement) : refus puis acceptation');
+  ev(A,"openPanel('expenses')"); ev(A,"P.d.amount='12';P.d.name='Spotify';P.d.cat='Loisirs';P.d.date='12';P.repeat=true"); click(A,'#panel [data-p=save]'); await wait(1000);
+  const sid=ev(A,"month(nowK()).expenses.find(e=>e.name==='Spotify').id"); ev(A,`openPanel('expenses','${sid}')`); await wait(30);
+  ok('Fiche de la charge fixe : « 👥 Partager cette charge fixe avec une personne »',/Partager cette charge fixe/.test(A.document.getElementById('panel').textContent));
+  click(A,'#panel [data-p=shfix]'); await wait(40); sub(A); await wait(800);
+  ev(B,"go('messages')"); click(B,'#v-messages [data-a=shfix-no]'); await wait(800);
+  ok('Marion refuse : rien chez elle, Robin peut la reproposer',!meta(bperso).templates.expenses.some(t=>t.name==='Spotify')&&ev(A,`shfixOf(active,'${ev(A,"S.templates.expenses.find(t=>t.name==='Spotify').tmplId")}').length`)===0);
+  ev(A,`shfixDialog(S.templates.expenses.find(t=>t.name==='Spotify').tmplId)`); await wait(30); sub(A); await wait(800);
+  ev(B,"go('messages')"); click(B,'#v-messages [data-a=shfix-yes]'); await wait(40);
+  ok('Fenêtre : « Dans quel compte ? »',/Dans quel compte/.test(D(B))); sub(B); await wait(1500);
+  const st=meta(bperso).templates.expenses.find(t=>t.name==='Spotify');
+  ok('Marion : Spotify 12 € le 12 en charge fixe simple',st&&st.amount===12&&st.date==='12'&&!st.xfer&&st.cat==='Loisirs');
+
+  console.log('— 4. « J\'ai remboursé » : Robin rembourse Marion, qui confirme');
+  await ev(A,`createDebt({id:'vac',name:'Vacances',amount:100,emo:'💸',at:Date.now(),payments:[],lender:{kind:'user',uid:'uB',email:'marion@test.fr',acc:'${bperso}',accName:'Compte'},borrower:{kind:'user',uid:'uA',email:'robin@test.fr',acc:'${perso}'},members:['uA','uB'],emails:{uA:'robin@test.fr',uB:'marion@test.fr'}})`); await wait(900); close(A);
+  ok('Fiche (Robin) : bouton « J\'ai remboursé »',(ev(A,"debtView('vac')"),/J'ai remboursé/.test(D(A)))); close(A);
+  await A.eval("payDialog('vac')"); await wait(60); ok('Aide : « Marion confirmera l\'avoir reçu »',/Marion confirmera/.test(D(A))); A.document.getElementById('f_amt').value='40'; sub(A); await wait(1800); close(A);
+  ok('Compté tout de suite (reste 60 €), marqué « à confirmer »',ev(A,"debtInfo(findDebt('vac').d).left")===60&&(ev(A,"debtView('vac')"),/⏳ à confirmer/.test(D(A)))); close(A);
+  ok('Aucun virement dans la boîte de Marion',![...shared.store.keys()].some(k=>k.startsWith('transfers/')));
+  ev(B,"go('messages')"); click(B,'#v-messages [data-a=pc-no]'); await wait(1000);
+  ok('Marion : « Pas reçu » → ne compte plus (reste 100 €)',ev(A,"debtInfo(findDebt('vac').d).left")===100&&ev(B,"debtInfo(findDebt('vac').d).left")===100);
+  ok('Robin le voit (fiche + messagerie) avec « Renvoyer / Supprimer »',(ev(A,"debtView('vac')"),/n'a pas reçu ton remboursement de 40,00/.test(D(A)))&&(close(A),ev(A,"go('messages')"),/n'a pas reçu ton remboursement/.test(A.document.getElementById('v-messages').textContent)));
+  click(A,'#v-messages [data-a=pr-act][data-w=resend]'); await wait(800);
+  ok('Renvoyé : de nouveau à confirmer chez Marion',ev(B,'payConfirmsForMe().length')===1);
+  ev(B,"payConfirmDialog('vac',findDebt('vac').d.payments[0].id)"); await wait(30); selOpt(B,'f_acc',/Revolut Joint/); sub(B); await wait(1500);
+  ok('Marion confirme sur le joint : recette 40 € « Remboursement Vacances » sur le joint',PM(joint,nk).incomes.filter(i=>/Remboursement Vacances/.test(i.name)&&i.amount===40).length===1&&ev(A,"debtInfo(findDebt('vac').d).left")===60);
+  const pid=ev(A,"findDebt('vac').d.payments[0].id");
+  await ev(A,`payEdit(findDebt('vac'),findDebt('vac').d.payments[0],{amount:45,date:todayISO(),label:'Remboursement Vacances'})`); await wait(1200);
+  ok('Robin corrige 40 → 45 € : à reconfirmer',ev(B,'payConfirmsForMe().length')===1&&ev(B,"payConfirmsForMe()[0].p.re")===1);
+  await ev(B,`payConfirm('vac','${pid}',true,'${joint}')`); await wait(1500);
+  ok('Marion reconfirme : la même recette passe à 45 € (pas de doublon)',PM(joint,nk).incomes.filter(i=>/Remboursement Vacances/.test(i.name)).map(i=>i.amount).join()==='45');
+  await ev(A,"payDialog('vac')"); await wait(60); A.document.getElementById('f_amt').value='5'; sub(A); await wait(1500); close(A);
+  A.confirm=()=>true; await ev(A,`payDelete('vac',findDebt('vac').d.payments.find(p=>p.pend).id)`); await wait(1200);
+  ok('Un remboursement pas encore confirmé se supprime sans demander à Marion',ev(A,"findDebt('vac').d.payments.length")===1&&!ev(A,"month(nowK()).expenses.some(e=>e.amount===5&&/Vacances/.test(e.name))"));
+
+  ok('Aucune erreur JS',!errs.length);
+  console.log('Erreurs JS :',errs.length?errs:'aucune');console.log(fails?fails+' échec(s)':'TOUT EST OK');process.exit(0);
+})().catch(e=>{console.error('CRASH',e);process.exit(1)});

@@ -20,6 +20,7 @@ const nk=(()=>{const x=new Date();return x.getFullYear()+'-'+String(x.getMonth()
 const sub=w=>w.document.querySelector('#dlg form').dispatchEvent(new w.Event('submit',{cancelable:true}));
 const sel=(w,id,txt)=>{const s=w.document.getElementById(id);const o=[...s.options].find(o=>o.value.includes(txt));s.value=o.value;};
 const close=w=>w.eval("$('dlg').open&&$('dlg').close()");
+const conf=async W=>{await W.eval("Promise.all(payConfirmsForMe().map(({d,p})=>payConfirm(d.id,p.id,true,ACC[p.toAcc]?p.toAcc:recvAccount())))");await wait(1500);};
 const pick=async(w,m)=>{await wait(30);const b=w.document.querySelector(`#dlg [data-m="${m}"]`);if(!b)throw new Error('pas de choix '+m+' : '+w.document.getElementById('dlg').textContent.slice(0,200));b.click();await wait(30);};
 (async()=>{
   const A=client('robin'); await wait(20); A.__login({uid:'uA',email:'robin@test.fr'}); await wait(400);
@@ -54,7 +55,10 @@ const pick=async(w,m)=>{await wait(30);const b=w.document.querySelector(`#dlg [d
   sel(A,'f_borr','Compte principal'); sub(A); await wait(900); close(A);
   const r1=ev(A,"allDebts().find(e=>e.d.name==='Restaurant').d.id");
   await A.eval(`payDialog('${r1}')`); A.document.getElementById('f_amt').value='20'; sub(A); await wait(2200); close(A);
-  ok('20 € envoyés : sortie chez Robin, reçus chez Marie',has(perso,'Remboursement Restaurant')&&has(bperso,'Remboursement Restaurant'));
+  ok('« J\'ai remboursé » : sortie chez Robin, rien chez Marie tant qu\'elle n\'a pas confirmé',has(perso,'Remboursement Restaurant')&&!has(bperso,'Remboursement Restaurant')&&ev(A,`findDebt('${r1}').d.payments[0].pend`)===1);
+  ok('Marie : « À valider » dans la messagerie + pastille',(ev(B,"go('messages')"),/À valider.*dit t'avoir remboursé 20,00/.test(B.document.getElementById('v-messages').textContent.replace(/\s+/g,' ')))&&ev(B,'unreadCount()')>=1);
+  click(B,'#v-messages [data-a=pc-ok]'); await wait(60); ok('Fenêtre : « Reçu sur quel compte ? »',/Reçu sur quel compte/.test(B.document.getElementById('dlg').textContent)); sub(B); await wait(2200); close(B);
+  ok('Marie confirme : 20 € reçus chez Marie, remboursement confirmé',has(bperso,'Remboursement Restaurant')&&!ev(A,`findDebt('${r1}').d.payments[0].pend`)&&!!ev(A,`findDebt('${r1}').d.payments[0].okAt`));
   // suppression d'un seul remboursement → demande
   ev(A,`debtView('${r1}')`); A.document.querySelector('#dlg [data-del]').click(); await pick(A,'all'); await wait(800);
   ok('Remboursement pas supprimé tout de suite (attente de Marie)',ev(A,`findDebt('${r1}').d.payments.length`)===1&&has(perso,'Remboursement Restaurant'));
@@ -66,7 +70,7 @@ const pick=async(w,m)=>{await wait(30);const b=w.document.querySelector(`#dlg [d
   ok('Marie accepte → remboursement retiré, reste 50 €',ev(A,`debtInfo(findDebt('${r1}').d).left`)===50&&ev(B,`debtInfo(findDebt('${r1}').d).left`)===50);
   ok('Mouvements retirés des deux côtés',!has(perso,'Remboursement Restaurant')&&!has(bperso,'Remboursement Restaurant'));
   // suppression de l'avance entière, mouvements gardés
-  await A.eval(`payDialog('${r1}')`); A.document.getElementById('f_amt').value='15'; sub(A); await wait(2200); close(A);
+  await A.eval(`payDialog('${r1}')`); A.document.getElementById('f_amt').value='15'; sub(A); await wait(2200); close(A); await conf(B);
   ev(B,`debtDialog('${r1}')`); B.document.querySelector('#dlg [data-del]').click(); await pick(B,'keep'); await wait(800);
   ok('Marie demande la suppression : Robin voit la demande dans la fiche',(ev(A,`debtView('${r1}')`),/veut clôturer l'avance « Restaurant »/.test(A.document.getElementById('dlg').textContent)));
   A.document.querySelector('#dlg [data-rq-yes]').click(); await wait(2500);

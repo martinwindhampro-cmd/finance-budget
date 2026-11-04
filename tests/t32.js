@@ -61,7 +61,7 @@ const P=w=>w.document.getElementById('panel').textContent.replace(/\s+/g,' ');
   ok('Fenêtre : compensation 30 € de chaque côté, reste 70 € à verser',/compensent : 30,00\s€.*reste 70,00\s€ à lui verser/.test(A.document.getElementById('dlg').textContent.replace(/\s+/g,' ')));
   sub(A); await wait(3000);
   ok('Vacances et Ciné soldées',left(A,'va')===0&&left(A,'ci')===0);
-  ok('Un seul vrai virement : 70 € vers Marion',[...shared.store.entries()].filter(([k,t])=>k.startsWith('transfers/')).map(([k,t])=>t.amount).join()==='70'&&ev(A,"month(nowK()).expenses.some(e=>e.xfer&&e.amount===70)"));
+  ok('Un seul vrai remboursement : 70 € vers Marion, à confirmer par elle',B.eval("payConfirmsForMe().map(x=>x.p.amount).join()")==='70'&&ev(A,"month(nowK()).expenses.some(e=>e.xfer&&e.amount===70)"));
   await wait(500); ok('Marion voit les deux soldées',B.eval("debtInfo(findDebt('va').d).done&&debtInfo(findDebt('ci').d).done"));
   console.log('— 4. Anciens « ½ Partagé »');
   ev(A,`mutate(()=>{month(nowK()).expenses.push({id:'old',name:'Resto',amount:40,date:'3',status:'Payé',cat:'Loisirs',isFixed:false,isDivided:true})},false)`); ev(A,"go('mouvements')"); await wait(50);

@@ -133,9 +133,11 @@ async function payEdit(e, p, n) {
   if (p.inc && myAcc(p.to)) jobs.push(lineSet(p.to, p.k, k, 'incomes', p.inc, x => x ? fix(x) : null));
   if (p.exp && myAcc(p.from)) jobs.push(lineSet(p.from, p.k, k, 'expenses', p.exp, x => x ? fix(x) : null));
   let note = '';
-  if (p.xid && p.toUser) { if (xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).update({ amount: n.amount, date: dd, label: n.label })); else note = ' (déjà reçu chez l\'autre : seul ton côté change)'; }
+  const conf = p.toUser && (p.pend || p.rej || p.okAt);                // « J'ai remboursé » (sans virement dans sa boîte)
+  if (conf && p.okAt) note = ' (à reconfirmer par ' + shortName(p.toUser) + ')';
+  else if (p.xid && p.toUser && !conf) { if (xfStatus(p.xid) === 'sent') jobs.push(db.collection('transfers').doc(p.xid).update({ amount: n.amount, date: dd, label: n.label })); else note = ' (déjà reçu chez l\'autre : seul ton côté change)'; }
   await Promise.all(jobs.map(j => j.catch(er => console.warn(er))));
-  await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); compDone(x); });
+  await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); if (conf && q.okAt) { q.pend = 1; q.re = 1; q.at = Date.now(); } if (conf) delete q.rej; compDone(x); });
   warnMembers(e, 'Remboursement modifié : ' + eur(n.amount) + ' · « ' + e.d.name + ' »' + note);
   if (note) toast('ℹ' + note);
 }

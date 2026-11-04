@@ -85,6 +85,7 @@ function vMessages() {
   const notifBtn = window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
   V.innerHTML = `
   ${linksMsgHTML()}
+  ${payConfMsgHTML()}
   ${debtReqsMsgHTML()}
   ${splitMsgHTML()}
   ${inv.length ? `<section class="card" style="display:flex;flex-direction:column;gap:12px"><h2>Invitations</h2>

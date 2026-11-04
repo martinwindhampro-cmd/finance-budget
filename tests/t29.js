@@ -77,8 +77,7 @@ async function split(w,{name,tot,rowsP,me=true}){ ev(w,"splitDialog()"); await w
   const pr=ev(A,`findDebt('${id}').d.payments.find(p=>!p.comp).id`);
   ev(A,`payEditDialog('${id}','${pr}')`); await wait(40); A.document.getElementById('f_amt').value='25'; sub(A); await wait(1500); close(A);
   ok('Remboursement 20 → 25 € tout de suite (reste 10 €)',left(A,id)===10&&left(B,id)===10);
-  const xf=[...shared.store.entries()].filter(([k])=>k.startsWith('transfers/')).map(([k,t])=>t)[0]; console.log('virement',xf.status,xf.amount);
-  ok('Sortie de Robin à 25 € ; virement corrigé s\'il n\'était pas encore reçu',ev(A,"month(nowK()).expenses.some(e=>e.xfer&&e.amount===25)")&&(xf.status==='received'||xf.amount===25));
+  ok('Sortie de Robin à 25 € ; toujours à confirmer par Marion (25 €)',ev(A,"month(nowK()).expenses.some(e=>e.xfer&&e.amount===25)")&&B.eval("payConfirmsForMe().some(x=>x.p.amount===25)"));
   console.log('— 4. Entre mes comptes : le joint a avancé 100 € au Compte principal');
   const joint=await ev(A,"createAccount({name:'Revolut Joint',bank:'Revolut'})"); await wait(300); ev(A,`openAccount('${perso}')`); await wait(300);
   await ev(A,`createDebt({id:'jd',name:'Avance joint',amount:100,emo:'💸',at:Date.now(),payments:[],lender:{kind:'acc',acc:'${joint}'},borrower:{kind:'acc',acc:'${perso}'}})`); await wait(600); close(A);

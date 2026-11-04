@@ -73,13 +73,13 @@ let PDEBTS = [];
 const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 function debtInfo(d) {
   // dépenses communes « ajoutées » (montant négatif) : augmentent ce qui est dû
-  const P = d.payments || [], t = Math.round((num(d.amount) + sum(P.filter(p => num(p.amount) < 0), p => -num(p.amount))) * 100) / 100, r = sum(P.filter(p => num(p.amount) > 0), p => num(p.amount)), left = Math.max(0, Math.round((t - r) * 100) / 100);
+  const P = (d.payments || []).filter(p => !p.rej), t = Math.round((num(d.amount) + sum(P.filter(p => num(p.amount) < 0), p => -num(p.amount))) * 100) / 100, r = sum(P.filter(p => num(p.amount) > 0), p => num(p.amount)), left = Math.max(0, Math.round((t - r) * 100) / 100);
   return { t, r, left, p: t > 0 ? Math.min(100, r / t * 100) : 0, done: t > 0 && left <= 0 };
 }
 function pdebtListen() {
   return db.collection('pdebts').where('members', 'array-contains', currentUser.uid).onSnapshot(q => {
     PDEBTS = q.docs.map(d => ({ id: d.id, ...d.data() }));
-    processDebtReqs(); splitNotify(); setTimeout(() => compSync(), 600);
+    processDebtReqs(); splitNotify(); payNotify(); setTimeout(() => compSync(), 600);
     if (loaded) { renderChrome(); if (['budgets', 'accueil', 'messages'].includes(UI.view)) render(); }
   }, e => console.warn('Remboursements partagés', e.code));
 }
@@ -360,17 +360,19 @@ function debtView(id) {
     ${(d.reqs || []).filter(q => q.status === 'pending').map(q => mine(q.by) ? `<div class="alert"><span>⏳ En attente de l'accord de ${esc(shortName(d.emails?.[d.members.find(u => !mine(u))]))} pour ${esc(reqText(d, q))}.</span><button class="lnk" data-rq-cancel="${q.id}">Annuler</button></div>`
       : `<div class="alert bad" style="flex-wrap:wrap"><span>${esc(shortName(d.emails?.[q.by]))} veut ${esc(reqText(d, q))}.</span><span class="chips"><button class="btn sm p" data-rq-yes="${q.id}">Accepter</button><button class="btn sm" data-rq-no="${q.id}">Refuser</button></span></div>`).join('')}
     ${d.grp ? `<button class="dopt" data-grp style="width:100%">👥 <span><b>Partage « ${esc(d.grp.name)} » · ${eur(d.grp.total)}</b><small>${esc(d.grp.parts.map(p => p.who + ' ' + eur(p.amount)).join(' · '))}${mine(d.grp.by) || myAcc(lenderAcc(e)) ? ' · voir tout' : ''}</small></span></button>` : ''}
+    ${(d.payments || []).filter(p => p.pend && !p.rej && !mine(p.by) && e.home.shared).map(p => `<div class="alert" style="flex-wrap:wrap"><span>💸 ${esc(shortName(d.emails?.[p.by]))} dit t'avoir remboursé <b>${eur(p.amount)}</b> le ${fmtD(p.date)}.</span><span class="chips"><button class="btn sm p" data-pc-ok="${p.id}">Confirmer</button><button class="btn sm" data-pc-no="${p.id}">Pas reçu</button></span></div>`).join('')}
+    ${(d.payments || []).filter(p => p.rej && mine(p.by)).map(p => `<div class="alert bad" style="flex-wrap:wrap"><span>❌ ${esc(shortName(d.emails?.[p.rej.by]))} n'a pas reçu ton remboursement de <b>${eur(p.amount)}</b> du ${fmtD(p.date)}.</span><span class="chips"><button class="btn sm" data-pr="resend" data-v="${p.id}">Renvoyer</button><button class="btn sm" data-pr="drop" data-v="${p.id}">Supprimer</button></span></div>`).join('')}
     ${invPending(d) ? `<div class="alert"><span>⏳ Demande envoyée à ${esc(sideLabel(B))} : en attente de son accord.</span></div>` : ''}
     ${invDeclined(d) ? `<div class="alert bad" style="flex-wrap:wrap"><span>❌ ${esc(sideLabel(B))} a refusé cette part.</span><span class="chips"><button class="btn sm" data-dec="keep">Garder en suivi perso</button><button class="btn sm" data-dec="resend">Renvoyer</button><button class="btn sm" data-dec="drop">Retirer</button></span></div>` : ''}
     ${d.arch ? `<div class="alert"><span>🗂️ Clôturée le ${fmtD(d.arch.at)}${d.arch.left > 0 ? ' : ' + eur(d.arch.left) + ' abandonnés' : ''}. Elle est dans l'historique.</span><button class="lnk" data-reopen>Rouvrir</button></div>` : ''}
-    ${i.done || d.arch || invDeclined(d) ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} Enregistrer un remboursement</button>
+    ${i.done || d.arch || invDeclined(d) ? '' : `<button class="btn p big" data-pay>${svg('plus', 18)} ${!lenderIsMine(L) && B.kind === 'user' && mine(B.uid) ? 'J\'ai remboursé' : 'Enregistrer un remboursement'}</button>
     <div class="dopts">
       <button class="dopt" data-auto>${d.auto ? `🔁 <span><b>${eur(d.auto.amount)} le ${d.auto.day} de chaque mois</b><small>prochain : ${fmtD(d.auto.next + '-' + String(Math.min(d.auto.day, dim(d.auto.next))).padStart(2, '0'))} · fin prévue ${mlab(autoEnd(d)).toLowerCase()}${d.auto.by !== currentUser.uid ? ' · réglé par ' + esc(shortName(d.emails?.[d.auto.by] || '')) : ''}</small></span>` : '🔁 <span><b>Remboursement automatique</b><small>ex. 20 € le 5 de chaque mois, jusqu\'au bout</small></span>'}</button>
       <button class="dopt" data-comp>↔ <span><b>Dépense commune</b><small>payée par l'un de vous : déduite ou ajoutée, sans virement</small></span></button>
       <button class="dopt" data-remind>${d.remind ? `🔔 <span><b>Rappel</b><small>${esc(remindText(d.remind))}</small></span>` : '🔔 <span><b>Rappel</b><small>choisis quand être prévenu</small></span>'}</button>
     </div>`}
     <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">Remboursements ${P_.length ? '(' + P_.length + ')' : ''}</b>
-      ${P_.map(p => p.comp ? compRowHTML(p, d) : `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}${p.ed ? ' · modifié' : ''}</span></span><b class="num" style="color:var(--ok)">+${eur(p.amount)}</b></button>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
+      ${P_.map(p => p.comp ? compRowHTML(p, d) : `<div class="row prow" style="padding:8px 4px"><button class="rowb" data-pedit="${p.id}" style="flex:1;min-width:0"><span class="ico sm" style="--c:#10B981">${svg('up', 17)}</span><span class="rt"><span class="rn">${esc(p.label || 'Remboursement')}</span><span class="rs">${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(p.fromName || 'Autre')} → ${esc(p.toName || '')}${p.by && p.by !== currentUser.uid ? ' · saisi par ' + esc(shortName(d.emails?.[p.by] || '')) : ''}${p.ed ? ' · modifié' : ''}${p.rej ? ' · <b style="color:var(--bad)">❌ pas reçu</b>' : p.pend ? ' · <b style="color:var(--warn)">⏳ à confirmer</b>' : p.okAt ? ' · ✓ confirmé' : ''}</span></span><b class="num" style="color:${p.rej ? 'var(--mute)' : 'var(--ok)'}">+${eur(p.amount)}</b></button>${!p.by || p.by === currentUser.uid ? `<button class="x" data-del="${p.id}" aria-label="Supprimer ce remboursement">${svg('trash', 15)}</button>` : ''}</div>`).join('') || '<p class="note" style="padding:6px 4px">Aucun remboursement pour l\'instant.</p>'}</div>
     <div class="dact"><button class="btn" data-ed>Modifier</button><button class="btn" data-x>Fermer</button></div></div>`;
   dl.onclick = ev => {
     if (ev.target.closest('[data-x]')) return dl.close();
@@ -383,6 +385,8 @@ function debtView(id) {
     if (ev.target.closest('[data-grp]')) { if ((mine(d.grp.by) || myAcc(lenderAcc(e))) && d.grp.id) { dl.close(); return setTimeout(() => groupView(d.grp.id), 50); } return; }
     const dec = ev.target.closest('[data-dec]'); if (dec) { dl.close(); return declinedAction(id, dec.dataset.dec); }
     if (ev.target.closest('[data-reopen]')) { updateDebt(e, x => { delete x.arch; }).then(() => { toast('Avance rouverte'); render(); setTimeout(() => debtView(id), 300); }); return; }
+    const pc = ev.target.closest('[data-pc-ok],[data-pc-no]'); if (pc) { dl.close(); if (pc.dataset.pcOk) return payConfirmDialog(id, pc.dataset.pcOk); return payConfirm(id, pc.dataset.pcNo, false); }
+    const pr = ev.target.closest('[data-pr]'); if (pr) { dl.close(); return payRejAction(id, pr.dataset.v, pr.dataset.pr); }
     const del = ev.target.closest('[data-del]'); if (del) { dl.close(); return payDelete(id, del.dataset.del).then(() => setTimeout(() => debtView(id), 400)); }
     const ry = ev.target.closest('[data-rq-yes],[data-rq-no]'); if (ry) { const rid = ry.dataset.rqYes || ry.dataset.rqNo; debtAnswer(id, rid, !!ry.dataset.rqYes).then(() => setTimeout(() => { dl.close(); if (findDebt(id)) debtView(id); }, 400)); return; }
     const rc = ev.target.closest('[data-rq-cancel]'); if (rc) { updateDebt(findDebt(id), x => { x.reqs = (x.reqs || []).filter(q => q.id !== rc.dataset.rqCancel); }).then(() => setTimeout(() => debtView(id), 300)); return; }
@@ -432,7 +436,7 @@ async function payDialog(id) {
     fields: [{ id: 'amt', label: 'Montant', type: 'num', value: i.left, ph: '0,00' },
       { id: 'date', label: 'Date', value: todayISO() },
       { id: 'from', label: 'Depuis quel compte ? (l\'argent sort)', type: 'select', options: A.map(nm).concat([OTHER]), value: fromSel ? nm(fromSel) : ((B.kind === 'user' && !mine(B.uid)) || B.kind === 'text' ? OTHER : A.find(x => x !== toDef) ? nm(A.find(x => x !== toDef)) : OTHER) },
-      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: TO.map(t => t[0]), value: toLab, hint: lenderIsOther ? 'Le virement lui arrive en direct sur ce compte.' : 'Les deux comptes sont mis à jour tout de suite.' },
+      { id: 'to', label: 'Vers quel compte ? (l\'argent arrive)', type: 'select', options: TO.map(t => t[0]), value: toLab, hint: lenderIsOther ? 'Fais le virement depuis ta banque : ' + shortName(L.email) + ' confirmera l\'avoir reçu.' : 'Les deux comptes sont mis à jour tout de suite.' },
       { id: 'label', label: 'Libellé', value: 'Remboursement ' + d.name, ph: 'Remboursement…' }],
     onSave: r => {
       const amt = Math.round(num(r.amt) * 100) / 100;
@@ -453,25 +457,26 @@ async function payCreate(id, p, opt = {}) {
   const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), xid = uid(), incId = uid(), expId = uid();
   const fromName = p.from ? ACC[p.from].name : 'Autre', toUser = p.to.user, toName = toUser ? (p.to.accName || 'compte de ' + shortName(toUser.email)) : ACC[p.to.acc].name;
   const pay = { auto: !!opt.auto, id: uid(), amount: p.amount, date: p.date, label: p.label, from: p.from || '', fromName, to: toUser ? '' : p.to.acc, toName, toUser: toUser ? toUser.email : '', k, inc: toUser ? '' : incId, exp: p.from ? expId : '', xid: p.from ? xid : '', by: currentUser.uid };
+  if (toUser) Object.assign(pay, { pend: 1, at: Date.now(), toAcc: p.to.acc || '' });      // « J'ai remboursé » : l'autre confirme
   const jobs = [updateDebt(e, x => { (x.payments = x.payments || []).push(pay); })];
   if (!toUser) {
     jobs.push(onAcc(p.to.acc, k, m => m.incomes.unshift(Object.assign({ id: incId, name: p.label, amount: p.amount, date: dd, status: 'Reçu', isFixed: false, debt: id },
       p.from ? { xfer: { id: xid, kind: 'acc', acc: p.from, accName: fromName } } : {}, isShared(p.to.acc) ? { by: currentUser.email } : {}))));
     if (p.from) jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: { id: xid, kind: 'acc', acc: p.to.acc, accName: toName } })));
   } else {
-    // vers le compte d'une autre personne : virement « vers une personne », reçu en direct chez elle
+    // vers le compte d'une autre personne : ma sortie tout de suite ; chez elle, la recette arrive quand elle confirme
     jobs.push(onAcc(p.from, k, m => m.expenses.unshift({ id: expId, name: p.label, amount: p.amount, date: dd, status: 'Payé', cat: 'Virement', isFixed: false, isDivided: false, debt: id, xfer: Object.assign({ id: xid, kind: 'person', to: toUser.email }, p.to.accName ? { toAccName: p.to.accName } : {}) })));
-    jobs.push(db.collection('transfers').doc(xid).set(Object.assign({ from: currentUser.uid, fromEmail: currentUser.email, to: toUser.email, amount: p.amount, label: p.label, date: dd, k, site: '', img: '', status: 'sent', at: Date.now(), debt: id }, p.to.acc ? { toAcc: p.to.acc, toAccName: p.to.accName || '' } : {})));
   }
   const res = await Promise.allSettled(jobs);
   const bad = res.some(r => r.status === 'rejected');
   if ((opt.leftBefore ?? debtInfo(d).left) - p.amount <= 0.005) await updateDebt(findDebt(id) || e, x => { if (debtInfo(x).done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } }).catch(() => {});
   if (opt.silent) return !bad;
-  toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name);
+  toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name + (toUser ? ' · ' + shortName(toUser.email) + ' doit confirmer' : ''));
   setTimeout(() => { const n2 = findDebt(id); if (n2 && debtInfo(n2.d).done) toast('🎉 « ' + d.name + ' » est entièrement remboursé !'); debtView(id); }, 500);
 }
 async function payDelete(id, pid) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
+  if ((p.pend || p.rej) && !p.okAt && mine(p.by)) { if (!confirm('Supprimer ce remboursement de ' + eur(p.amount) + ' (pas encore confirmé) ?')) return; return payRejAction(id, pid, 'drop'); }
   const mode = await askDeleteMode('ce remboursement de ' + eur(p.amount), payHasMov(p), !!e.home.shared); if (!mode) return;
   if (e.home.shared) return debtRequest(e, { type: 'pay', pid, mode });
   if (mode === 'all') await cleanMovs(Object.assign({}, p, { inc: p.inc, exp: p.exp }));
