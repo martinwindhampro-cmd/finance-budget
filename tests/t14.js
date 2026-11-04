@@ -1,0 +1,65 @@
+const {JSDOM}=require('jsdom');const fs=require('fs');const install=require('./fsmock.js');
+const src=fs.readFileSync(process.argv[2],'utf8').replace(/<script src=[^>]*><\/script>/g,'').replace(/<link [^>]*>/g,'');
+const shared={store:new Map(),listeners:new Set(),seq:0};
+shared.notify=()=>setTimeout(()=>shared.listeners.forEach(L=>{if(!L.win.document){shared.listeners.delete(L);return}try{L.fire()}catch(e){console.error('listener',e)}}),3);
+const errs=[];
+function client(name){
+  const dom=new JSDOM(src,{runScripts:'dangerously',url:'https://x.test/'+name,pretendToBeVisual:true,beforeParse(w){
+    install(w,shared);
+    w.Chart=class{destroy(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
+    w.scrollTo=()=>{};w.fetch=u=>Promise.resolve({ok:true,json:()=>Promise.resolve({amount:1,base:'EUR',date:'2026-10-12',rates:{USD:1.1181,GBP:0.84478,JPY:177.33}})});w.Element.prototype.scrollTo=()=>{};w.matchMedia=()=>({matches:false,addEventListener(){}});w.confirm=()=>true;w.alert=()=>{};w.prompt=()=>'SUPPRIMER';
+  }});
+  dom.window.addEventListener('error',e=>errs.push(name+': '+e.message));
+  const w=dom.window;w.name_=name;return w;
+}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+let fails=0;const ok=(n,c)=>{console.log((c?'✅':'❌')+' '+n);if(!c)fails++;};
+const ev=(w,js)=>w.eval(js);
+const click=(w,sel)=>{const el=typeof sel==='string'?w.document.querySelector(sel):sel;if(!el)throw new Error(w.name_+' introuvable: '+sel);el.dispatchEvent(new w.MouseEvent('click',{bubbles:true}));};
+const nk=(()=>{const x=new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')})();
+const nxt=(()=>{const x=new Date();x.setDate(1);x.setMonth(x.getMonth()+1);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')})();
+(async()=>{
+  const A=client('robin'); await wait(20); A.__login({uid:'uA',email:'robin@test.fr'}); await wait(400);
+  const perso=ev(A,'active'); const joint=await ev(A,"createAccount({name:'Joint',bank:'Boursorama'})"); await ev(A,`inviteMember('marie@test.fr','${joint}','Joint')`); await wait(150);
+  const B=client('marie'); await wait(20); B.__login({uid:'uB',email:'marie@test.fr',emailVerified:true}); await wait(300);
+  await ev(B,"acceptInvite(INV.in[0])"); await wait(200); ev(B,`openAccount('${joint}')`); await wait(300);
+  ev(A,`openAccount('${perso}')`); await wait(300);
+  const J=()=>JSON.parse(shared.store.get('accounts/'+joint).meta), JM=k=>JSON.parse(shared.store.get(`accounts/${joint}/months/${k}`)?.data||'{"incomes":[]}');
+  console.log('— Mois 1 : Robin crée un virement automatique de 150 € « Super U » (Alimentation) vers le joint');
+  ev(A,"openPanel('expenses')"); click(A,'#panel [data-p=type][data-v=xfer]'); ev(A,"P.d.amount='150';P.d.name='Super U';P.d.cat='Alimentation';P.d.date='1';P.repeat=true"); click(A,'#panel [data-p=save]'); await wait(1500);
+  ok('M1 perso : dépense « Super U » fixe (charge fixe du mois)',ev(A,"month().expenses.some(e=>e.name==='Super U'&&e.isFixed&&e.tmplId&&e.status==='Payé')"));
+  ok('M1 perso : modèle dans Charges fixes',ev(A,"S.templates.expenses.some(t=>t.name==='Super U'&&t.xfer?.rid)"));
+  ok('M1 joint : recette « Super U » fixe et reçue',JM(nk).incomes.some(i=>i.name==='Super U'&&i.isFixed&&i.tmplId&&i.status==='Reçu'));
+  ok('M1 joint : présente dans Recettes fixes (modèle)',J().templates.incomes.some(t=>t.name==='Super U'&&t.xfer?.rid));
+  ok('M1 conjointe : voit la recette fixe en direct',ev(B,"S.templates.incomes.some(t=>t.name==='Super U')&&month().incomes.some(i=>i.name==='Super U'&&i.isFixed)"));
+  ev(B,"UI.pt='fixes';go('parametres')"); ok('Conjointe › Paramètres › Recettes fixes : « Super U · Virement auto depuis Compte principal »',/Virement auto depuis « Compte principal »/.test(B.document.getElementById('v-parametres').textContent));
+  console.log('— Mois 2 (le mois prochain)');
+  ev(A,"cur.setMonth(cur.getMonth()+1);render()"); ev(B,"cur.setMonth(cur.getMonth()+1);render()");
+  ok('M2 perso : virement prévu (à payer)',ev(A,"month().expenses.some(e=>e.name==='Super U'&&e.isFixed&&e.status==='Prévu')"));
+  ok('M2 joint : recette attendue (en attente)',ev(B,"month().incomes.some(i=>i.name==='Super U'&&i.isFixed&&i.status==='En attente')"));
+  const sid=ev(A,"month().expenses.find(e=>e.name==='Super U').id");
+  A.eval(`document.querySelector('[data-a=tst][data-id="${sid}"]')||0`); ev(A,`(()=>{const b=document.createElement('button');b.dataset.a='tst';b.dataset.t='expenses';b.dataset.id='${sid}';document.body.appendChild(b);b.click();b.remove()})()`); await wait(1500);
+  ok('M2 : Robin coche « payé » → le joint passe à « reçu »',JM(nxt).incomes.some(i=>i.name==='Super U'&&i.status==='Reçu')&&ev(B,"month().incomes.some(i=>i.name==='Super U'&&i.status==='Reçu')"));
+  console.log('— Robin passe le virement à 180 € dans Paramètres (à partir du mois 2)');
+  ev(A,"UI.pt='fixes';go('parametres')"); const inp=A.document.querySelector('[data-tpl=expenses] [data-f=amount]'); 
+  const row=[...A.document.querySelectorAll('[data-tpl=expenses]')].find(r=>r.querySelector('[data-f=name]').value==='Super U'); const ai=row.querySelector('[data-f=amount]'); ai.value='180'; ai.dispatchEvent(new A.Event('change',{bubbles:true})); await wait(1500);
+  ok('Modèle joint passé à 180 €',J().templates.incomes.some(t=>t.name==='Super U'&&t.amount===180));
+  ok('Conjointe : Recettes fixes à jour (180 €)',ev(B,"S.templates.incomes.find(t=>t.name==='Super U').amount")===180);
+  ev(A,"cur.setMonth(cur.getMonth()+1);render()"); ev(B,"cur.setMonth(cur.getMonth()+1);render()");
+  ok('Mois 3 : 180 € des deux côtés',ev(A,"month().expenses.find(e=>e.name==='Super U').amount")===180&&ev(B,"month().incomes.find(i=>i.name==='Super U').amount")===180);
+  ev(A,"cur.setMonth(cur.getMonth()-2);render()"); ev(B,"cur.setMonth(cur.getMonth()-2);render()");
+  console.log('— Robin supprime le virement automatique');
+  ev(A,"UI.pt='fixes';go('parametres')"); const row2=[...A.document.querySelectorAll('[data-tpl=expenses]')].find(r=>r.querySelector('[data-f=name]').value==='Super U'); click(A,row2.querySelector('[data-a=tdel]')); await wait(1500);
+  ok('Supprimé des Recettes fixes du joint',!J().templates.incomes.some(t=>t.name==='Super U')&&!ev(B,"S.templates.incomes.some(t=>t.name==='Super U')"));
+  ok('Les mois déjà payés / reçus sont gardés',JM(nk).incomes.some(i=>i.name==='Super U'));
+  // ---- fichier JSON d'un compte joint (données fictives, même structure qu'un vrai export)
+  console.log('— Fichier de démonstration (compte joint, octobre)');
+  const raw=require('fs').readFileSync(__dirname+'/fixtures/joint-demo.json','utf8');
+  const n=JSON.parse(A.eval(`JSON.stringify(normalize(JSON.parse(${JSON.stringify(raw)})))`));
+  const inc=n.months['2026-10'].incomes;
+  ok('JSON joint : « Super U » et « FreeBox » d\'octobre reliés à leur recette fixe',['Super U','FreeBox'].every(nm=>{const i=inc.find(x=>x.name===nm),t=n.templates.incomes.find(x=>x.name===nm);return i.isFixed&&i.tmplId===t.tmplId;}));
+  ok('JSON joint : « Virement Dupont / Marion » (sans virement auto) inchangés',inc.filter(x=>/Dupont|Marion/.test(x.name)).every(x=>!x.isFixed));
+  ok('JSON joint : 3 recettes fixes',n.templates.incomes.length===3);
+  ok('Aucune erreur JS',!errs.length);
+  console.log('Erreurs JS :',errs.length?errs:'aucune');console.log(fails?fails+' échec(s)':'TOUT EST OK');process.exit(0);
+})().catch(e=>{console.error('CRASH',e);process.exit(1)});

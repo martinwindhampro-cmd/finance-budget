@@ -1,0 +1,6 @@
+{
+  "name": "suivi-depenses-tests",
+  "private": true,
+  "description": "Tests de scénarios de l'app (jsdom + faux Firestore en mémoire). Lancer : npm install puis ./run.sh",
+  "dependencies": { "jsdom": "^24.1.3" }
+}

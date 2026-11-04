@@ -1,0 +1,27 @@
+{
+  "categories": ["Alimentation", "Logement", "Abonnements", "Virement"],
+  "templates": {
+    "expenses": [],
+    "incomes": [
+      {"name": "Super U", "amount": 150, "date": "1", "cat": "Alimentation", "xfer": {"kind": "acc", "acc": "accPerso", "accName": "Compte principal", "auto": true, "id": "x1"}},
+      {"name": "FreeBox", "amount": 20, "date": "5", "cat": "Abonnements", "xfer": {"kind": "acc", "acc": "accPerso", "accName": "Compte principal", "auto": true, "id": "x2"}},
+      {"name": "Remboursement assurance", "amount": 12, "date": "15", "cat": ""}
+    ],
+    "budgets": []
+  },
+  "months": {
+    "2026-10": {
+      "bankBalance": 250,
+      "expenses": [
+        {"name": "Courses", "amount": 87.4, "date": "6", "status": "Payé", "cat": "Alimentation"}
+      ],
+      "incomes": [
+        {"name": "Super U", "amount": 150, "date": "1", "status": "Reçu", "cat": "Alimentation", "xfer": {"kind": "acc", "acc": "accPerso", "accName": "Compte principal", "id": "x1"}},
+        {"name": "FreeBox", "amount": 20, "date": "5", "status": "Reçu", "cat": "Abonnements", "xfer": {"kind": "acc", "acc": "accPerso", "accName": "Compte principal", "id": "x2"}},
+        {"name": "Virement Dupont", "amount": 300, "date": "8", "status": "Reçu", "cat": "", "xfer": {"kind": "acc", "acc": "accPerso", "accName": "Compte principal", "id": "x3"}},
+        {"name": "Virement Marion", "amount": 40, "date": "10", "status": "Reçu", "cat": ""}
+      ],
+      "budgets": []
+    }
+  }
+}

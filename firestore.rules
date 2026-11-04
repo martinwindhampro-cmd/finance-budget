@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function isMember(acc) {
+      return signedIn() && me() in get(/databases/$(database)/documents/accounts/$(acc)).data.members;
+    }
+
+    // Profil, ancien bloc de données (version 1) et anciennes sauvegardes : propriétaire seulement
+    match /users/{uid} {
+      allow read, write: if signedIn() && me() == uid;
+      match /{document=**} {
+        allow read, write: if signedIn() && me() == uid;
+      }
+    }
+
+    // Comptes bancaires
+    match /accounts/{acc} {
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn()
+        && request.resource.data.owner == me()
+        && request.resource.data.members == [me()];
+      allow update: if signedIn() && (
+        // Propriétaire : tout, tant qu'il reste membre (il peut transférer la propriété à un autre membre)
+        (resource.data.owner == me() && request.resource.data.owner in request.resource.data.members)
+        // Membre : tout sauf la liste des membres et le propriétaire… ou se retirer lui-même
+        || (me() in resource.data.members
+            && request.resource.data.owner == resource.data.owner
+            && (request.resource.data.members == resource.data.members
+                || request.resource.data.members == resource.data.members.removeAll([me()])))
+        // Invité : s'ajouter lui-même, avec une invitation en attente et un email confirmé
+        || (request.auth.token.email_verified == true
+            && !(me() in resource.data.members)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberEmails'])
+            && request.resource.data.members == resource.data.members.concat([me()])
+            && get(/databases/$(database)/documents/invites/$(acc + '_' + myEmail())).data.status == 'pending')
+      );
+      allow delete: if signedIn() && resource.data.owner == me();
+
+      // Mois, activité, sauvegardes du compte : membres seulement
+      match /{document=**} {
+        allow read, write: if isMember(acc);
+      }
+    }
+
+    // Invitations à rejoindre un compte
+    match /invites/{id} {
+      allow create: if signedIn()
+        && request.resource.data.from == me()
+        && id == request.resource.data.acc + '_' + request.resource.data.to
+        && isMember(request.resource.data.acc);
+      allow read: if signedIn() && (resource.data.from == me() || resource.data.to == myEmail());
+      allow update: if signedIn() && (
+        resource.data.from == me()
+        || (resource.data.to == myEmail()
+            && request.auth.token.email_verified == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'answeredAt'])));
+      allow delete: if signedIn() && (resource.data.from == me() || resource.data.to == myEmail());
+    }
+
+    // Annuaire : nom + banque des comptes proposés (aucun solde) — lisible seulement par les personnes connectées
+    function pair(e) { return e < myEmail() ? e + '__' + myEmail() : myEmail() + '__' + e; }
+    function linked(e) { return exists(/databases/$(database)/documents/links/$(pair(e)))
+      && get(/databases/$(database)/documents/links/$(pair(e))).data.status == 'accepted'; }
+    match /directory/{email} {
+      allow read: if signedIn() && (email == myEmail() || linked(email));
+      allow create, update: if signedIn() && email == myEmail() && request.resource.data.uid == me();
+      allow delete: if signedIn() && email == myEmail();
+    }
+
+    // Connexions entre deux personnes (chacune doit accepter)
+    match /links/{id} {
+      allow read: if signedIn() && myEmail() in resource.data.emails;
+      allow create: if signedIn()
+        && request.resource.data.from == me() && request.resource.data.fromEmail == myEmail()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.emails.size() == 2 && myEmail() in request.resource.data.emails
+        && request.resource.data.emails[0] < request.resource.data.emails[1]
+        && id == request.resource.data.emails[0] + '__' + request.resource.data.emails[1]
+        && request.resource.data.to in request.resource.data.emails && request.resource.data.to != myEmail();
+      allow update: if signedIn() && resource.data.to == myEmail() && resource.data.status == 'pending'
+        && request.resource.data.status in ['accepted', 'declined']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'answeredAt', 'uids']);
+      allow delete: if signedIn() && myEmail() in resource.data.emails;
+    }
+
+    // Remboursements partagés entre deux personnes connectées
+    match /pdebts/{id} {
+      allow read: if signedIn() && me() in resource.data.members;
+      // suppression seulement une fois acceptée par les deux (avance « fermée »)
+      allow delete: if signedIn() && me() in resource.data.members && resource.data.closed == true;
+      allow update: if signedIn() && me() in resource.data.members && request.resource.data.members == resource.data.members;
+      allow create: if signedIn() && me() in request.resource.data.members && request.resource.data.members.size() == 2;
+    }
+
+    // Virements vers une autre personne (sa « boîte de réception »)
+    match /transfers/{id} {
+      allow create: if signedIn()
+        && request.resource.data.from == me()
+        && request.resource.data.status == 'sent'
+        && request.resource.data.to is string
+        && request.resource.data.amount is number && request.resource.data.amount > 0;
+      allow read: if signedIn() && (resource.data.from == me() || resource.data.to == myEmail());
+      allow update: if signedIn() && resource.data.status == 'sent' && (
+        // Expéditeur : peut corriger montant, date, libellé tant que ce n'est pas reçu
+        (resource.data.from == me()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'date', 'label']))
+        // Destinataire : marque seulement « reçu »
+        || (resource.data.to == myEmail()
+          && request.resource.data.status == 'received'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'toAcc', 'toAccName', 'receivedAt'])));
+      allow delete: if signedIn() && (resource.data.from == me() || resource.data.to == myEmail());
+    }
+  }
+}

@@ -1,0 +1,53 @@
+const {JSDOM}=require('jsdom');const fs=require('fs');const install=require('./fsmock.js');
+const src=fs.readFileSync(process.argv[2],'utf8').replace(/<script src=[^>]*><\/script>/g,'').replace(/<link [^>]*>/g,'');
+const shared={store:new Map(),listeners:new Set(),seq:0};
+shared.notify=()=>setTimeout(()=>shared.listeners.forEach(L=>{if(!L.win.document){shared.listeners.delete(L);return}try{L.fire()}catch(e){console.error('listener',e)}}),3);
+const errs=[];
+function client(name){
+  const dom=new JSDOM(src,{runScripts:'dangerously',url:'https://x.test/'+name,pretendToBeVisual:true,beforeParse(w){
+    install(w,shared);
+    w.Chart=class{destroy(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
+    w.scrollTo=()=>{};w.fetch=u=>Promise.resolve({ok:true,json:()=>Promise.resolve({amount:1,base:'EUR',date:'2026-10-12',rates:{USD:1.1181,GBP:0.84478,JPY:177.33}})});w.Element.prototype.scrollTo=()=>{};w.matchMedia=()=>({matches:false,addEventListener(){}});w.confirm=()=>true;w.alert=()=>{};w.prompt=()=>'SUPPRIMER';
+  }});
+  dom.window.addEventListener('error',e=>errs.push(name+': '+e.message));
+  const w=dom.window;w.name_=name;return w;
+}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+let fails=0;const ok=(n,c)=>{console.log((c?'✅':'❌')+' '+n);if(!c)fails++;};
+const ev=(w,js)=>w.eval(js), D=w=>w.document.getElementById('dlg');
+const inp=(w,el,v)=>{el.value=v;el.dispatchEvent(new w.Event('input',{bubbles:true}));};
+const chg=(w,el,v)=>{el.value=v;el.dispatchEvent(new w.Event('change',{bubbles:true}));};
+const rows=w=>[...w.document.querySelectorAll('#sp-rows .sprow')];
+const sub=w=>w.document.querySelector('#dlg form').dispatchEvent(new w.Event('submit',{cancelable:true}));
+(async()=>{
+  const A=client('robin'); await wait(20); A.__login({uid:'uA',email:'robin@test.fr'}); await wait(400);
+  const perso=ev(A,'active'); await ev(A,`mutate(()=>{},false)`);
+  const joint=await ev(A,"createAccount({name:'Revolut Joint',bank:'Revolut'})"); await ev(A,`inviteMember('marie@test.fr','${joint}','Revolut Joint')`); await wait(150);
+  const B=client('marie'); await wait(20); B.__login({uid:'uB',email:'marie@test.fr',emailVerified:true}); await wait(300); await B.eval("acceptInvite(INV.in[0])"); await wait(200);
+  const C=client('paul'); await wait(20); C.__login({uid:'uC',email:'paul@test.fr',emailVerified:true}); await wait(300);
+  await A.eval("linkRequest('paul@test.fr')"); await wait(200); await C.eval("linkAnswer(linkPending()[0].id,true)"); await wait(400);
+  ev(A,`openAccount('${joint}')`); await wait(400); ev(A,"go('budgets')");
+  ev(A,"splitDialog()"); await wait(30);
+  ok('« Payé depuis » propose le Revolut Joint sélectionné',A.document.getElementById('sp-acc').value===joint);
+  ok('Mes comptes proposés comme participants (🏦 Compte principal), le payeur grisé',[...rows(A)[0].querySelectorAll('option')].some(o=>o.value==='a:'+perso&&!o.disabled)&&rows(A)[0].querySelector(`option[value="a:${joint}"]`).disabled);
+  ok('Case : « Le compte « Revolut Joint » garde aussi une part »',/Revolut Joint » garde aussi une part/.test(A.document.getElementById('sp-me-l').textContent));
+  inp(A,A.document.getElementById('sp-name'),'Restaurant'); inp(A,A.document.getElementById('sp-tot'),'90');
+  chg(A,rows(A)[0].querySelector('select'),'a:'+perso); A.document.querySelector('[data-sp-add]').dispatchEvent(new A.MouseEvent('click',{bubbles:true})); chg(A,rows(A)[1].querySelector('select'),'u:uC');
+  ok('Parts : 30 / 30 + 30 pour le joint',rows(A).map(r=>r.querySelector('[data-amt]').value).join('|')==='30|30');
+  sub(A); await wait(1500); A.eval("$('dlg').open&&$('dlg').close()");
+  const V=w=>w.document.getElementById('v-budgets').textContent.replace(/\s+/g,' ');
+  ok('Revolut Joint : « Restaurant · 2 personnes » à recevoir',/À recevoir/.test(V(A))&&/Restaurant · 2 personnes/.test(V(A)));
+  ev(A,`openAccount('${perso}')`); await wait(400); ev(A,"go('budgets')"); await wait(100);
+  ok('Compte principal : « À rembourser » · Restaurant · à Revolut Joint · 30 €',/À rembourser/.test(V(A))&&/Restaurant · à Revolut Joint/.test(V(A))&&/Reste 30,00/.test(V(A)));
+  ok('Paul : demande reçue (30 €)',C.eval("invitesForMe().length")===1&&C.eval("invitesForMe()[0].amount")===30);
+  const pid=ev(A,`allDebts().find(e=>e.d.grp&&e.d.borrower.kind==='acc').d.id`);
+  await A.eval(`payDialog('${pid}')`); await wait(50); ok('Remboursement : depuis Compte principal vers Revolut Joint par défaut',/Compte principal/.test(A.document.getElementById('f_from').value)&&/Revolut Joint/.test(A.document.getElementById('f_to').value)); sub(A); await wait(1500); A.eval("$('dlg').open&&$('dlg').close()");
+  ok('Payé : le partage passe à « Reste 30 € sur 60 € » côté joint',(ev(A,`openAccount('${joint}')`),await wait(400),ev(A,"go('budgets')"),/Reste 30,00\s€ sur 60,00/.test(V(A))));
+  B.eval(`openAccount('${joint}')`); await wait(600); B.eval("go('budgets')"); await wait(200); console.log('MARIE',(V(B).match(/Remboursements.{0,300}/)||[''])[0], B.eval('JSON.stringify(debts().map(d=>[d.name,d.borrower.kind]))'), B.eval('allDebts().length')); ok('Marie (membre du joint) voit la part du Compte principal (remboursée → historique)',/Historique \(1\)/.test(V(B))&&B.eval('debts().length')===1);
+  console.log('— Nom tapé « compte principal » → reconnu comme le compte');
+  ev(A,"splitDialog()"); await wait(30); inp(A,A.document.getElementById('sp-name'),'Ciné'); inp(A,A.document.getElementById('sp-tot'),'20');
+  chg(A,rows(A)[0].querySelector('select'),'txt'); inp(A,rows(A)[0].querySelector('[data-who]'),'compte principal'); sub(A); await wait(1200); A.eval("$('dlg').open&&$('dlg').close()");
+  ok('« compte principal » tapé à la main → part du Compte principal',ev(A,`allDebts().some(e=>e.d.name==='Ciné'&&e.d.borrower.kind==='acc'&&e.d.borrower.acc==='${perso}')`));
+  ok('Aucune erreur JS',!errs.length);
+  console.log('Erreurs JS :',errs.length?errs:'aucune');console.log(fails?fails+' échec(s)':'TOUT EST OK');process.exit(0);
+})().catch(e=>{console.error('CRASH',e);process.exit(1)});
