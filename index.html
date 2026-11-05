@@ -2642,7 +2642,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '5 nov. · v35';
+const APP_VERSION = '5 nov. · v36';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -4909,7 +4909,7 @@ function appBadge() {
    (lisible seulement par les personnes connectées). Quand je fais une demande à quelqu'un, l'app lit ses abonnements
    et demande au relais (push/worker.js, Cloudflare, gratuit) de lui envoyer la notification. Le texte ne contient
    jamais de montant.                                                                                                  */
-const PUSH_URL = '';                                                           // adresse du relais Cloudflare (vide = pas encore installé)
+const PUSH_URL = 'https://suivi-notif.martiwindham50.workers.dev/';                                                           // adresse du relais Cloudflare (vide = pas encore installé)
 const VAPID_PUB = 'BNh0SGesDsd8PXvqe4RtGX2qSTY9C8oIiU4ZXgivvrYjjS0IEQPqRWFPyZ-imf7GQZDAmcOS66Nbmj0EeOj4ve8';
 let pushOn = false;
 const pushOk = () => !!(PUSH_URL && window.Notification && navigator.serviceWorker && window.PushManager);
@@ -4936,14 +4936,24 @@ async function pushEnable() {
   toast(await pushSetup() ? '🔔 Notifications activées sur cet appareil' : '⚠ Activation impossible, réessaie'); render();
 }
 // Envoie une notification aux appareils d'une personne connectée
-async function pushTo(email, body, tag) {
+async function pushTo(email, body, tag, self) {
   email = String(email || '').toLowerCase();
-  if (!PUSH_URL || !email || email === myEmail()) return;
+  if (!PUSH_URL || !email || (email === myEmail() && !self)) return;
   try {
     const s = await db.collection('directory').doc(email).get(); const L = s.exists ? (s.data().push || []) : []; if (!L.length) return;
     const tok = await currentUser.getIdToken();
-    await fetch(PUSH_URL, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + tok }, body: JSON.stringify({ to: L, title: 'Suivi dépenses', body: String(body).slice(0, 200), tag: tag || '' }) });
+    return await fetch(PUSH_URL, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + tok }, body: JSON.stringify({ to: L, title: 'Suivi dépenses', body: String(body).slice(0, 200), tag: tag || '' }) });
   } catch (e) { console.warn('Notification non envoyée', e.message); }
+}
+// Test : envoie une notification à tous MES appareils (à voir en fermant l'app)
+async function pushTest() {
+  toast('Envoi… ferme l\'app ou verrouille ton téléphone : la notification arrive dans quelques secondes');
+  const r = await pushTo(myEmail(), 'Test réussi ✓ Les notifications marchent sur cet appareil', 'test', true);
+  if (!r) return toast('⚠ Relais injoignable : vérifie ta connexion, puis réessaie');
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return toast('⚠ Le relais a refusé (' + (j.error || r.status) + ')');
+  const okN = (j.res || []).filter(s => s >= 200 && s < 300).length;
+  toast(okN ? '✓ Envoyée à ' + okN + ' appareil' + (okN > 1 ? 's' : '') : '⚠ Aucun appareil n\'a accepté (' + (j.res || []).join(', ') + ')');
 }
 const meName = () => shortName(myEmail());
 // Notification locale (app ouverte en arrière-plan) seulement si cet appareil ne reçoit pas déjà la vraie notification
@@ -4953,7 +4963,7 @@ function pushCardHTML() {
   const on = pushOn && window.Notification && Notification.permission === 'granted';
   return `<section class="card" style="flex:1 1 300px;align-self:flex-start;display:flex;flex-direction:column;gap:10px"><h2>🔔 Notifications</h2>
     <p class="note">${on ? '<b style="color:var(--ok)">Activées sur cet appareil.</b> Tu es prévenu tout de suite, même app fermée, quand on te demande de valider quelque chose (remboursement, charge fixe partagée, part à payer, suppression).' : 'Sois prévenu tout de suite, même app fermée, quand on te demande de valider quelque chose. À activer sur chaque appareil (téléphone, ordinateur).'}</p>
-    ${on ? '' : `<button class="btn p" data-a="push-on">Activer les notifications</button>`}
+    ${on ? `<button class="btn" data-a="push-test">Envoyer une notification de test</button>` : `<button class="btn p" data-a="push-on">Activer les notifications</button>`}
     ${isIOS() && !standalone() ? '<small class="note">Sur iPhone, ça marche seulement depuis l\'app ajoutée à l\'écran d\'accueil.</small>' : ''}</section>`;
 }
 
@@ -5114,6 +5124,7 @@ document.addEventListener('click', ev => {
     case 'verify-check': return currentUser.reload().then(() => currentUser.getIdToken(true)).then(() => { currentUser = auth.currentUser; render(); toast(currentUser.emailVerified ? '✅ Email confirmé' : 'Pas encore confirmé : clique sur le lien reçu par email'); }).catch(fail);
     case 'notif-on': return Notification.requestPermission().then(() => render());
     case 'push-on': return pushEnable();
+    case 'push-test': return pushTest();
     case 'al-go': cur = keyDate(nowK()); return go(b.dataset.v, { flt: b.dataset.f || 'all', q: b.dataset.q || '' });
     case 'acc-kick': { const m = membersOf(active).find(x => x.uid === id); if (!m || !confirm('Retirer ' + m.email + ' de ce compte ? Il n\'y aura plus accès.')) return;
       return removeMember(active, id).then(() => toast(m.email + ' retiré')).catch(fail); }

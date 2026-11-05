@@ -155,6 +155,7 @@ document.addEventListener('click', ev => {
     case 'verify-check': return currentUser.reload().then(() => currentUser.getIdToken(true)).then(() => { currentUser = auth.currentUser; render(); toast(currentUser.emailVerified ? '✅ Email confirmé' : 'Pas encore confirmé : clique sur le lien reçu par email'); }).catch(fail);
     case 'notif-on': return Notification.requestPermission().then(() => render());
     case 'push-on': return pushEnable();
+    case 'push-test': return pushTest();
     case 'al-go': cur = keyDate(nowK()); return go(b.dataset.v, { flt: b.dataset.f || 'all', q: b.dataset.q || '' });
     case 'acc-kick': { const m = membersOf(active).find(x => x.uid === id); if (!m || !confirm('Retirer ' + m.email + ' de ce compte ? Il n\'y aura plus accès.')) return;
       return removeMember(active, id).then(() => toast(m.email + ' retiré')).catch(fail); }

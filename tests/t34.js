@@ -1,6 +1,6 @@
 // Vraies notifications : abonnement de l'appareil, envoi au relais à chaque demande (sans montant)
 const {JSDOM}=require('jsdom');const fs=require('fs');const install=require('./fsmock.js');
-const src=fs.readFileSync(process.argv[2],'utf8').replace(/<script src=[^>]*><\/script>/g,'').replace(/<link [^>]*>/g,'').replace("const PUSH_URL = '';","const PUSH_URL = 'https://relais.test/';");
+const src=fs.readFileSync(process.argv[2],'utf8').replace(/<script src=[^>]*><\/script>/g,'').replace(/<link [^>]*>/g,'').replace(/const PUSH_URL = '[^']*';/,"const PUSH_URL = 'https://relais.test/';");
 const shared={store:new Map(),listeners:new Set(),seq:0};
 shared.notify=()=>setTimeout(()=>shared.listeners.forEach(L=>{if(!L.win.document){shared.listeners.delete(L);return}try{L.fire()}catch(e){console.error('listener',e)}}),3);
 const errs=[],sent=[];
@@ -35,6 +35,8 @@ const dir=e=>shared.store.get('directory/'+e)||{};
   B.document.querySelector('#v-parametres [data-a=push-on]').dispatchEvent(new B.MouseEvent('click',{bubbles:true})); await wait(600);
   ok('Abonnement rangé dans son annuaire (un appareil)',(dir('marion@test.fr').push||[]).length===1&&dir('marion@test.fr').push[0].endpoint.endsWith('/marion'));
   ok('La carte affiche « Activées sur cet appareil »',(ev(B,'render()'),/Activées sur cet appareil/.test(B.document.getElementById('v-parametres').textContent)));
+  sent.length=0; B.document.querySelector('#v-parametres [data-a=push-test]').dispatchEvent(new B.MouseEvent('click',{bubbles:true})); await wait(400);
+  ok('Bouton « Envoyer une notification de test » : envoyée à son propre appareil',sent.length===1&&sent[0].body.to[0].endpoint.endsWith('/marion')&&/Test réussi/.test(sent[0].body.body));
   await B.eval('pushSetup()'); await wait(200); ok('Réactiver ne crée pas de doublon',dir('marion@test.fr').push.length===1);
   ev(B,"publishDir()"); ev(B,"U.recvHide=['zz'];dirLast='';publishDir()"); await wait(1600);
   ok('La mise à jour de l\'annuaire (comptes) garde l\'abonnement',dir('marion@test.fr').push?.length===1&&(dir('marion@test.fr').accounts||[]).length>=1);

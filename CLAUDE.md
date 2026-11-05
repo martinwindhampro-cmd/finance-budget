@@ -1,7 +1,7 @@
 # Suivi dépenses : contexte du projet pour Claude Code
 
 > Ce fichier résume tout ce qu'il faut savoir pour reprendre le projet : qui l'utilise, comment travailler, l'architecture, le modèle de données, les règles de calcul, les fonctionnalités, les tests et l'historique. **Lis-le en entier avant toute modification.**
-> Dernière version livrée : **`5 nov. · v35`** (constante `APP_VERSION`, dans `src/app7.js`).
+> Dernière version livrée : **`5 nov. · v36`** (constante `APP_VERSION`, dans `src/app7.js`).
 
 ---
 
@@ -229,7 +229,7 @@ S = {
 **Notifications** (v35) : **vraies notifications même app fermée** (Web Push, iPhone avec l'app sur l'écran d'accueil iOS ≥ 16.4, Android, PC), sans Play Store / App Store.
 - Les services push d'Apple / Google refusent les envois directs depuis une page web (pas de CORS) : un **relais Cloudflare Worker gratuit** (`push/worker.js`, compte Cloudflare de Robin, sans carte) les envoie. Il vérifie le jeton Firebase de l'expéditeur (RS256, `aud` = projet), n'accepte que l'origine GitHub Pages et les hôtes des services push, chiffre le message (aes128gcm, RFC 8291) et signe (VAPID ES256). Il ne garde rien.
 - **Clé VAPID** : la publique est dans `src/app16.js` (`VAPID_PUB`) ; la **privée n'est que dans la copie collée dans Cloudflare** (jamais dans le dépôt : `push/worker.js` a des marqueurs `__VAPID_PRIVATE__`). Le contact VAPID doit être une vraie URL (Apple renvoie `BadJwtToken` pour un contact fictif).
-- `PUSH_URL` (`src/app16.js`) = adresse du relais ; vide → tout est caché.
+- `PUSH_URL` (`src/app16.js`) = adresse du relais (`https://suivi-notif.martiwindham50.workers.dev/`) ; vide → tout est caché. **L'environnement de Claude ne peut pas joindre `*.workers.dev`** (blocage du proxy) : on ne peut pas tester le relais en ligne d'ici, Robin teste avec le bouton « Envoyer une notification de test » (`pushTest`, envoie à ses propres appareils).
 - Chaque appareil : bouton « 🔔 Activer les notifications » (Paramètres › Profil & app, ou Messagerie) → `pushSetup` range l'abonnement dans `directory/{email}.push` (5 max ; lisible par les personnes connectées ; `publishDir` écrit en `merge`).
 - Envoi `pushTo(email, texte)` à chaque demande ou réponse : « J'ai remboursé », confirmé / pas reçu / modifié, charge fixe partagée proposée / acceptée / refusée, part demandée / acceptée / refusée, demande de suppression / réponse. **Jamais de montant** dans le texte.
 - `sw.js` : événement `push` → notification + pastille. Quand l'appareil a le push, les notifications locales du navigateur (`notifyLocal`) sont coupées pour éviter les doublons.
@@ -298,6 +298,7 @@ S = {
 - **v26–v27** : partage avec ses propres comptes ; compte joint vu à l'identique par ses 2 membres.
 - **v28** : intérêts des comptes épargne.
 - **v29–v32** : dépenses communes façon Tricount (compensation), lignes dans les 2 comptes, modification sans accord, montant réel sur le compte et ma part dans les stats, choix Non / Partagée / Déduire / Avance dans la fiche dépense.
+- **v36** : relais branché (`PUSH_URL`), bouton « Envoyer une notification de test ».
 - **v35** : vraies notifications même app fermée, via un relais Cloudflare gratuit.
 - **v34** : charges fixes partagées (demande à accepter, même charge fixe chez l'autre), « J'ai remboursé » à confirmer par celui qui reçoit (remplace le virement automatique dans sa boîte), carte « À valider » sur l'accueil, pastille sur l'icône de l'app.
 - **v33** : charges fixes comptées dans le budget de leur catégorie (virement « courses » → Alimentation, répartition corrigée), choix habituel par catégorie, bilan par personne + « Tout solder », conversion des anciens « ½ Partagé ».
