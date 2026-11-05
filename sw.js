@@ -25,14 +25,18 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(r).then(hit => hit || fetch(r).then(res => { if (res.ok || res.type === 'opaque') { const cp = res.clone(); caches.open(V).then(c => c.put(r, cp)); } return res; })));
   }
 });
-// Clic sur une notification : ouvre (ou ramène) l'app
+// Clic sur une notification : ouvre (ou ramène) l'app, directement sur la question à valider (act = « pc|avance|paiement »…)
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(l => l.length ? l[0].focus() : self.clients.openWindow('./')));
+  const act = (e.notification.data && e.notification.data.act) || '';
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(l => {
+    if (l.length) { if (act) l[0].postMessage({ act }); return l[0].focus(); }
+    return self.clients.openWindow('./' + (act ? '?act=' + encodeURIComponent(act) : ''));
+  }));
 });
 // Vraie notification (envoyée par le relais, même app fermée) : « Robin dit t'avoir remboursé · Vacances »
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (er) { d = { body: e.data ? e.data.text() : '' }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Suivi dépenses', { body: d.body || 'Nouvelle demande à valider', icon: 'icon-192.png', badge: 'icon-192.png', tag: d.tag ? d.tag + '-' + Date.now() : undefined, data: { url: './' } })
+  e.waitUntil(self.registration.showNotification(d.title || 'Suivi dépenses', { body: d.body || 'Nouvelle demande à valider', icon: 'icon-192.png', badge: 'icon-192.png', tag: d.tag ? d.tag + '-' + Date.now() : undefined, data: { act: d.tag && d.tag !== 'test' ? d.tag : '' } })
     .then(() => self.navigator.setAppBadge ? self.navigator.setAppBadge() : null).catch(() => {}));
 });

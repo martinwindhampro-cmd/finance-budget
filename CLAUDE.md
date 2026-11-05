@@ -1,7 +1,7 @@
 # Suivi dépenses : contexte du projet pour Claude Code
 
 > Ce fichier résume tout ce qu'il faut savoir pour reprendre le projet : qui l'utilise, comment travailler, l'architecture, le modèle de données, les règles de calcul, les fonctionnalités, les tests et l'historique. **Lis-le en entier avant toute modification.**
-> Dernière version livrée : **`5 nov. · v36`** (constante `APP_VERSION`, dans `src/app7.js`).
+> Dernière version livrée : **`5 nov. · v37`** (constante `APP_VERSION`, dans `src/app7.js`).
 
 ---
 
@@ -231,7 +231,8 @@ S = {
 - **Clé VAPID** : la publique est dans `src/app16.js` (`VAPID_PUB`) ; la **privée n'est que dans la copie collée dans Cloudflare** (jamais dans le dépôt : `push/worker.js` a des marqueurs `__VAPID_PRIVATE__`). Le contact VAPID doit être une vraie URL (Apple renvoie `BadJwtToken` pour un contact fictif).
 - `PUSH_URL` (`src/app16.js`) = adresse du relais (`https://suivi-notif.martiwindham50.workers.dev/`) ; vide → tout est caché. **L'environnement de Claude ne peut pas joindre `*.workers.dev`** (blocage du proxy) : on ne peut pas tester le relais en ligne d'ici, Robin teste avec le bouton « Envoyer une notification de test » (`pushTest`, envoie à ses propres appareils).
 - Chaque appareil : bouton « 🔔 Activer les notifications » (Paramètres › Profil & app, ou Messagerie) → `pushSetup` range l'abonnement dans `directory/{email}.push` (5 max ; lisible par les personnes connectées ; `publishDir` écrit en `merge`).
-- Envoi `pushTo(email, texte)` à chaque demande ou réponse : « J'ai remboursé », confirmé / pas reçu / modifié, charge fixe partagée proposée / acceptée / refusée, part demandée / acceptée / refusée, demande de suppression / réponse. **Jamais de montant** dans le texte.
+- Envoi `pushTo(email, texte, act)` à chaque demande ou réponse : « J'ai remboursé », confirmé / pas reçu / modifié, remboursement noté par l'autre, avance créée avec toi, dépense commune ajoutée, charge fixe partagée proposée / acceptée / refusée, part demandée / acceptée / refusée, demande de suppression / réponse, virement reçu d'une personne. **Jamais de montant** dans le texte. Pas de notification pour une demande de connexion ni une invitation à un compte (la personne n'est pas encore connectée : on ne peut pas lire ses appareils sans exposer l'annuaire).
+- **Clic sur la notification** (v37) : `act` voyage dans le champ `tag` (le relais le transmet tel quel, ≤ 60 car.) : `pc|avance|paiement` (Confirmer / Pas reçu), `iv|avance` (Accepter / Refuser une part), `sf|shfix` (charge fixe partagée), `d|avance` (fiche), `f` (charges fixes), `m` (messagerie). `sw.js` ouvre `./?act=…` ou envoie un message à l'app déjà ouverte ; `openAct` attend que les données soient chargées puis ouvre la bonne fenêtre (« Déjà traité ✓ » sinon). Pas de boutons Oui / Non dans la notification elle-même : l'iPhone ne les gère pas pour les apps web.
 - `sw.js` : événement `push` → notification + pastille. Quand l'appareil a le push, les notifications locales du navigateur (`notifyLocal`) sont coupées pour éviter les doublons.
 - Pastille sur l'icône (`appBadge`).
 
@@ -298,6 +299,7 @@ S = {
 - **v26–v27** : partage avec ses propres comptes ; compte joint vu à l'identique par ses 2 membres.
 - **v28** : intérêts des comptes épargne.
 - **v29–v32** : dépenses communes façon Tricount (compensation), lignes dans les 2 comptes, modification sans accord, montant réel sur le compte et ma part dans les stats, choix Non / Partagée / Déduire / Avance dans la fiche dépense.
+- **v37** : notifications pour toutes les demandes (avance créée, dépense commune, remboursement noté, virement reçu), toucher la notification ouvre directement la question Oui / Non.
 - **v36** : relais branché (`PUSH_URL`), bouton « Envoyer une notification de test ».
 - **v35** : vraies notifications même app fermée, via un relais Cloudflare gratuit.
 - **v34** : charges fixes partagées (demande à accepter, même charge fixe chez l'autre), « J'ai remboursé » à confirmer par celui qui reçoit (remplace le virement automatique dans sa boîte), carte « À valider » sur l'accueil, pastille sur l'icône de l'app.

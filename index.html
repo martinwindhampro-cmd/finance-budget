@@ -2601,6 +2601,7 @@ async function saveXfer() {
       if (site) x.site = site; if (img) x.img = img; month(k).expenses.unshift(x);
     }, 'Virement à ' + to.split('@')[0] + ' · ' + eur(amt));
     const c = (U.contacts = U.contacts || []).find(z => z.email === to); if (c) { c.n++; c.last = Date.now(); } else U.contacts.push({ email: to, n: 1, last: Date.now() }); saveUser();
+    pushTo(to, meName() + ' t\'a fait un virement' + (label ? ' · ' + label : ''), 'm');
     db.collection('transfers').doc(xid).set({ from: currentUser.uid, fromEmail: currentUser.email, to, amount: amt, label, date: dd, k, site, img, status: 'sent', at: Date.now(), ...(ta ? { toAcc: ta.id, toAccName: taN } : {}) })
       .catch(e => toast('⚠ Virement non transmis (' + (e.code || e.message) + ')'));
   }
@@ -2642,7 +2643,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '5 nov. · v36';
+const APP_VERSION = '5 nov. · v37';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
@@ -3183,6 +3184,7 @@ async function createDebt(d, fromGoal) {
       if (d.lender.kind === 'acc') d.lender = { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: d.lender.acc, accName: d.lender.accName };
       if (d.borrower.kind === 'acc') d.borrower = { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: d.borrower.acc, accName: d.borrower.accName };
       await db.collection('pdebts').doc(d.id).set(Object.assign(d, { createdBy: currentUser.uid, updatedAt: Date.now() }));
+      pushTo(other.email, meName() + ' a créé une avance avec toi · ' + d.name, 'd|' + d.id);
     } else {
       const home = d.lender.acc;                             // rangée dans le compte qui a avancé
       if (home === active) mutate(() => debts().push(d), false);
@@ -3251,7 +3253,7 @@ async function debtRequest(e, r) {
   const other = e.d.members.find(u => !mine(u)), req = Object.assign({ id: uid(), by: currentUser.uid, at: Date.now(), status: 'pending', done: {} }, r);
   await updateDebt(e, x => { x.reqs = (x.reqs || []).filter(q => !(q.status === 'pending' && q.by === currentUser.uid && q.type === r.type && q.pid === r.pid)); x.reqs.push(req); });
   toast('Demande envoyée à ' + shortName(e.d.emails?.[other]) + ' : en attente de son accord');
-  pushTo(e.d.emails?.[other], meName() + ' demande ton accord pour ' + reqText(e.d, req).replace(/ \(\d[^)]*\)/, ''), 'req');
+  pushTo(e.d.emails?.[other], meName() + ' demande ton accord pour ' + reqText(e.d, req).replace(/ \(\d[^)]*\)/, ''), 'd|' + e.d.id);
 }
 function debtAnswer(id, rid, ok) {
   const e = findDebt(id) || (PDEBTS.find(d => d.id === id) && { d: PDEBTS.find(d => d.id === id), home: { shared: id } }); if (!e) return;
@@ -3261,7 +3263,7 @@ function debtAnswer(id, rid, ok) {
     if (ok && q.type === 'pay') { q.pay = (x.payments || []).find(p => p.id === q.pid) || null; x.payments = (x.payments || []).filter(p => p.id !== q.pid); }
     if (ok && q.type === 'debt' && q.mode === 'keep' && !q.purge) { x.arch = { at: Date.now(), by: q.by, kind: 'abandon', left: debtInfo(x).left }; delete x.auto; x.reqs = x.reqs.filter(z => z.id !== rid); return; }
     if (ok && q.type === 'debt') { q.pays = x.payments || []; x.closed = true; }
-  }).then(() => { toast(ok ? 'Suppression acceptée' : 'Suppression refusée'); const q = (e.d.reqs || []).find(z => z.id === rid); if (q) pushTo(e.d.emails?.[q.by], meName() + (ok ? ' a accepté' : ' a refusé') + ' ta demande de suppression · ' + e.d.name, 'req'); });
+  }).then(() => { toast(ok ? 'Suppression acceptée' : 'Suppression refusée'); const q = (e.d.reqs || []).find(z => z.id === rid); if (q) pushTo(e.d.emails?.[q.by], meName() + (ok ? ' a accepté' : ' a refusé') + ' ta demande de suppression · ' + e.d.name, 'd|' + e.d.id); });
 }
 const reqText = (d, q) => (q.type === 'debt' ? (q.purge ? 'retirer de l\'historique « ' + d.name + ' »' : q.mode === 'keep' ? 'clôturer l\'avance « ' + d.name + ' » (abandonner le reste)' : 'supprimer l\'avance « ' + d.name + ' »') : 'supprimer un remboursement de « ' + d.name + ' » (' + eur(num((d.payments || []).find(p => p.id === q.pid)?.amount || q.pay?.amount)) + ')') + (q.type === 'debt' && q.mode === 'keep' ? '' : q.mode === 'keep' ? ', en gardant les mouvements' : ', avec ses mouvements');
 const pendingForMe = () => PDEBTS.flatMap(d => (d.reqs || []).filter(q => q.status === 'pending' && !mine(q.by)).map(q => ({ d, q })));
@@ -3428,7 +3430,8 @@ async function payCreate(id, p, opt = {}) {
   }
   const res = await Promise.allSettled(jobs);
   const bad = res.some(r => r.status === 'rejected');
-  if (toUser) pushTo(toUser.email, meName() + ' dit t\'avoir remboursé · ' + d.name, 'pay');
+  if (toUser) pushTo(toUser.email, meName() + ' dit t\'avoir remboursé · ' + d.name, 'pc|' + id + '|' + pay.id);
+  else if (e.home.shared && !opt.silent) pushTo(d.emails?.[d.members.find(u => !mine(u))], meName() + ' a noté un remboursement · ' + d.name, 'd|' + id);
   if ((opt.leftBefore ?? debtInfo(d).left) - p.amount <= 0.005) await updateDebt(findDebt(id) || e, x => { if (debtInfo(x).done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } }).catch(() => {});
   if (opt.silent) return !bad;
   toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name + (toUser ? ' · ' + shortName(toUser.email) + ' doit confirmer' : ''));
@@ -3677,7 +3680,7 @@ async function splitSave() {
   if (add) jobs.push(onAcc(acc, k, m => m.expenses.unshift(Object.assign({ id: uid(), name, amount: s.T / 100, share: s.mine / 100, date: String(today()), status: 'Payé', cat, isFixed: false, isDivided: false }, made ? { split: gid } : {}))));
   else if (P0.expId) jobs.push(onAcc(acc, k, m => { const x = m.expenses.find(e => e.id === P0.expId); if (x) { if (made) x.split = gid; x.share = s.mine / 100; } }));
   const res = await Promise.allSettled(jobs), bad = res.filter(r => r.status === 'rejected');
-  shared.forEach(d => pushTo(d.borrower.email, meName() + ' te demande ta part · ' + name, 'split'));
+  shared.forEach(d => pushTo(d.borrower.email, meName() + ' te demande ta part · ' + name, 'iv|' + d.id));
   if (bad.length) console.warn('Partage', bad.map(b => b.reason));
   const cm = comps.map(z => (z.c > 0 ? '−' : '+') + eur(Math.abs(z.c) / 100) + ' ' + (z.c > 0 ? 'déduits' : 'ajoutés') + ' (' + spWho(SP0.rows[z.i]) + ')').join(', ');
   toast(bad.length ? '⚠ Partage incomplet, vérifie ta connexion' : (made ? '👥 Partage créé' + (shared.length ? ' · ' + shared.length + ' demande' + (shared.length > 1 ? 's envoyées' : ' envoyée') : '') + (cm ? ' · ' : '') : '↔ ') + cm);
@@ -3748,7 +3751,7 @@ function inviteAnswer(id, ok, acc) {
     if (!invPending(x)) return;
     x.invite = Object.assign({}, x.invite, { status: ok ? 'accepted' : 'declined', answeredAt: Date.now() });
     if (ok && acc) { x.borrower.acc = acc; x.borrower.accName = ACC[acc]?.name || ''; }
-  }).then(() => { toast(ok ? '✓ Part acceptée : ' + eur(d.amount) + ' à rembourser' : 'Demande refusée'); pushTo(lenderOf(d).email, meName() + (ok ? ' a accepté' : ' a refusé') + ' sa part · ' + d.name, 'split'); render(); })
+  }).then(() => { toast(ok ? '✓ Part acceptée : ' + eur(d.amount) + ' à rembourser' : 'Demande refusée'); pushTo(lenderOf(d).email, meName() + (ok ? ' a accepté' : ' a refusé') + ' sa part · ' + d.name, 'd|' + d.id); render(); })
     .catch(er => toast('⚠ ' + (er.code || er.message)));
 }
 // Côté de celui qui a payé, quand une part est refusée
@@ -4436,6 +4439,7 @@ async function compAdd(e, o) {
     date: o.date, k: o.date.slice(0, 7), v: 1, lines: o.lines || {}, from: '', fromName: '', to: '', toName: '', by: currentUser.uid };
   p.amount = compAmount(e.d, o.side, o.part);
   await updateDebt(e, x => { (x.payments = x.payments || []).push(p); compDone(x); });
+  if (e.home.shared) pushTo(e.d.emails?.[e.d.members.find(u => !mine(u))], meName() + ' a ajouté une dépense commune · ' + (o.label || e.d.name), 'd|' + e.d.id);
   await compSync(e.d.id);
   return p;
 }
@@ -4542,7 +4546,7 @@ async function payEdit(e, p, n) {
   await Promise.all(jobs.map(j => j.catch(er => console.warn(er))));
   await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); if (conf && q.okAt) { q.pend = 1; q.re = 1; q.at = Date.now(); } if (conf) delete q.rej; compDone(x); });
   warnMembers(e, 'Remboursement modifié : ' + eur(n.amount) + ' · « ' + e.d.name + ' »' + note);
-  if (conf) pushTo(p.toUser, meName() + ' a modifié son remboursement (à confirmer) · ' + e.d.name, 'pay');
+  if (conf) pushTo(p.toUser, meName() + ' a modifié son remboursement (à confirmer) · ' + e.d.name, 'pc|' + e.d.id + '|' + p.id);
   if (note) toast('ℹ' + note);
 }
 
@@ -4631,7 +4635,7 @@ async function compPanelSave(xid, k, o, prev) {
     if (w.startsWith('u:')) { const pp = linkedPeople().find(z => 'u:' + z.uid === w); if (!pp) return toast('Personne introuvable');
       Object.assign(d, { lender: { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: active, accName: accName() }, borrower: { kind: 'user', uid: pp.uid, email: pp.email },
         invite: { status: 'pending', at: now }, members: [currentUser.uid, pp.uid], emails: { [currentUser.uid]: myEmail(), [pp.uid]: pp.email }, createdBy: currentUser.uid, updatedAt: now });
-      await db.collection('pdebts').doc(did).set(d); }
+      await db.collection('pdebts').doc(did).set(d); pushTo(pp.email, meName() + ' te demande ta part · ' + x.name, 'iv|' + did); }
     else { Object.assign(d, { lender: { kind: 'acc', acc: active, accName: accName() }, borrower: w.startsWith('a:') ? { kind: 'acc', acc: w.slice(2), accName: ACC[w.slice(2)]?.name || '' } : { kind: 'text', who: (o.name || '').trim() || 'Quelqu\'un' } });
       mutate(() => debts().push(d), false); }
     setX(y => Object.assign(y, { share: mine, newdebt: did, isDivided: false }));
@@ -4779,7 +4783,7 @@ function shfixDialog(tmplId) {
       const id = uid(), now = Date.now();
       db.collection('shfix').doc(id).set({ members: [currentUser.uid, p.uid], emails: { [currentUser.uid]: myEmail(), [p.uid]: p.email }, from: currentUser.uid, fromEmail: myEmail(), fromAcc: active, tmplId,
         to: p.uid, toEmail: p.email, status: 'pending', at: now, tpl })
-        .then(() => { toast('👥 Demande envoyée à ' + shortName(p.email)); pushTo(p.email, meName() + ' te propose une charge fixe partagée : ' + t.name, 'shfix'); render(); })
+        .then(() => { toast('👥 Demande envoyée à ' + shortName(p.email)); pushTo(p.email, meName() + ' te propose une charge fixe partagée : ' + t.name, 'sf|' + id); render(); })
         .catch(er => toast(er.code === 'permission-denied' ? '⚠ Refusé par Firebase : les règles Firestore (firestore.rules) doivent être publiées' : '⚠ ' + (er.code || er.message)));
     } });
 }
@@ -4804,7 +4808,7 @@ async function shfixAnswer(id, ok, acc) {
       tx.update(ref, Object.assign({ status: ok ? 'accepted' : 'declined', answeredAt: Date.now() }, ok && acc ? { toAcc: acc, toAccName: ACC[acc]?.name || '' } : {})); });
     if (!go) return toast('Demande déjà traitée');
     if (ok && acc) await fixCreate(acc, s.tpl);
-    pushTo(s.fromEmail, meName() + (ok ? ' a accepté ' : ' a refusé ') + 'ta charge fixe partagée « ' + s.tpl.name + ' »', 'shfix');
+    pushTo(s.fromEmail, meName() + (ok ? ' a accepté ' : ' a refusé ') + 'ta charge fixe partagée « ' + s.tpl.name + ' »', 'f');
     toast(ok ? '✓ Charge fixe ajoutée : ' + s.tpl.name + ' · ' + eur(num(s.tpl.amount)) : 'Demande refusée'); render();
   } catch (er) { toast('⚠ ' + (er.code || er.message)); }
 }
@@ -4848,20 +4852,20 @@ function payConfirmDialog(id, pid) {
 async function payConfirm(id, pid, ok, acc) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
   try {
-    if (!ok) { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) q.rej = { at: Date.now(), by: currentUser.uid }; }); toast('Signalé : pas reçu'); pushTo(e.d.emails?.[p.by], meName() + ' n\'a pas reçu ton remboursement · ' + e.d.name, 'pay'); return render(); }
+    if (!ok) { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) q.rej = { at: Date.now(), by: currentUser.uid }; }); toast('Signalé : pas reçu'); pushTo(e.d.emails?.[p.by], meName() + ' n\'a pas reçu ton remboursement · ' + e.d.name, 'd|' + id); return render(); }
     const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), incId = p.inc && myAcc(p.to) ? p.inc : uid();
     const from = shortName(e.d.emails?.[p.by] || borrowerOf(e.d).email);
     const line = x => Object.assign(x || { id: incId, status: 'Reçu', isFixed: false, debt: id, xfer: { id: p.xid || uid(), kind: 'person', from: e.d.emails?.[p.by] || '' } }, { name: p.label || 'Remboursement ' + from, amount: num(p.amount), date: dd }, isShared(acc) ? { by: currentUser.email } : {});
     if (p.inc && myAcc(p.to) && p.to !== acc) await lineSet(p.to, p.ik || p.k, null, 'incomes', p.inc);      // compte changé : on retire l'ancienne ligne
     await lineSet(acc, p.inc && p.to === acc ? (p.ik || p.k) : null, k, 'incomes', incId, line);
     await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (!q) return; delete q.pend; delete q.rej; delete q.re; Object.assign(q, { to: acc, toName: ACC[acc]?.name || '', inc: incId, ik: k, okAt: Date.now() }); });
-    toast('✓ ' + eur(p.amount) + ' reçus sur « ' + (ACC[acc]?.name || '') + ' »'); pushTo(e.d.emails?.[p.by], meName() + ' a confirmé ton remboursement · ' + e.d.name, 'pay'); render();
+    toast('✓ ' + eur(p.amount) + ' reçus sur « ' + (ACC[acc]?.name || '') + ' »'); pushTo(e.d.emails?.[p.by], meName() + ' a confirmé ton remboursement · ' + e.d.name, 'd|' + id); render();
   } catch (er) { toast('⚠ ' + (er.code || er.message)); }
 }
 // Celui qui a remboursé : « Pas reçu » → renvoyer ou supprimer
 async function payRejAction(id, pid, what) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
-  if (what === 'resend') { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) { delete q.rej; q.pend = 1; q.at = Date.now(); } }); toast('Renvoyé pour confirmation'); pushTo(lenderOf(e.d).email, meName() + ' dit t\'avoir remboursé · ' + e.d.name, 'pay'); return render(); }
+  if (what === 'resend') { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) { delete q.rej; q.pend = 1; q.at = Date.now(); } }); toast('Renvoyé pour confirmation'); pushTo(lenderOf(e.d).email, meName() + ' dit t\'avoir remboursé · ' + e.d.name, 'pc|' + id + '|' + pid); return render(); }
   await cleanMovs(Object.assign({}, p, { inc: '' }));
   await updateDebt(e, x => { x.payments = (x.payments || []).filter(z => z.id !== pid); });
   toast('Remboursement supprimé'); render();
@@ -4966,6 +4970,39 @@ function pushCardHTML() {
     ${on ? `<button class="btn" data-a="push-test">Envoyer une notification de test</button>` : `<button class="btn p" data-a="push-on">Activer les notifications</button>`}
     ${isIOS() && !standalone() ? '<small class="note">Sur iPhone, ça marche seulement depuis l\'app ajoutée à l\'écran d\'accueil.</small>' : ''}</section>`;
 }
+
+/* ---------- Clic sur une notification → l'app s'ouvre directement sur la question (Oui / Non) ---------- */
+let actWait = null;
+function openAct(act) {
+  if (!act) return; clearTimeout(actWait);
+  const [t, id, pid] = String(act).split('|'); let n = 0;
+  const tryIt = () => {
+    if (!loaded || !currentUser) return (actWait = setTimeout(tryIt, 300));
+    const dl = $('dlg'); if (dl.open) dl.close();
+    const e = id && findDebt(id), later = () => { if (++n < 40) { actWait = setTimeout(tryIt, 300); return true; } return false; };
+    if (t === 'pc') { const p = e && (e.d.payments || []).find(x => x.id === pid);
+      if (!p) return later() || toast('Introuvable : déjà supprimé ?');
+      if (!p.pend || p.rej) { toast('Déjà traité ✓'); return debtView(id); }
+      return payConfirmDialog(id, pid); }
+    if (t === 'sf') { const s = SHFIX.find(x => x.id === id);
+      if (!s) return later() || go('messages');
+      if (s.status !== 'pending') { toast('Déjà traité ✓'); return go('messages'); }
+      return shfixAnswerDialog(id); }
+    if (t === 'iv') { const d = PDEBTS.find(x => x.id === id);
+      if (!d) return later() || go('messages');
+      if (!invPending(d)) { toast('Déjà traité ✓'); return findDebt(id) ? debtView(id) : go('messages'); }
+      return inviteDialog(id); }
+    if (t === 'd') return e ? debtView(id) : later() || go('messages');
+    if (t === 'f') { UI.pt = 'fixes'; return go('parametres'); }
+    return go('messages');
+  };
+  tryIt();
+}
+try {
+  const q = new URLSearchParams(location.search).get('act');
+  if (q) { history.replaceState(null, '', location.pathname); openAct(q); }
+  navigator.serviceWorker?.addEventListener('message', ev => { if (ev.data && ev.data.act) openAct(ev.data.act); });
+} catch (e) {}
 
 
 /* ---------- COMPTES : sélecteur, vue d'ensemble, réglages ---------- */

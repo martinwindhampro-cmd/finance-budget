@@ -199,6 +199,7 @@ async function saveXfer() {
       if (site) x.site = site; if (img) x.img = img; month(k).expenses.unshift(x);
     }, 'Virement à ' + to.split('@')[0] + ' · ' + eur(amt));
     const c = (U.contacts = U.contacts || []).find(z => z.email === to); if (c) { c.n++; c.last = Date.now(); } else U.contacts.push({ email: to, n: 1, last: Date.now() }); saveUser();
+    pushTo(to, meName() + ' t\'a fait un virement' + (label ? ' · ' + label : ''), 'm');
     db.collection('transfers').doc(xid).set({ from: currentUser.uid, fromEmail: currentUser.email, to, amount: amt, label, date: dd, k, site, img, status: 'sent', at: Date.now(), ...(ta ? { toAcc: ta.id, toAccName: taN } : {}) })
       .catch(e => toast('⚠ Virement non transmis (' + (e.code || e.message) + ')'));
   }
@@ -240,7 +241,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '5 nov. · v36';
+const APP_VERSION = '5 nov. · v37';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;

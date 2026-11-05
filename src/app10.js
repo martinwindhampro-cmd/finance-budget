@@ -225,6 +225,7 @@ async function createDebt(d, fromGoal) {
       if (d.lender.kind === 'acc') d.lender = { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: d.lender.acc, accName: d.lender.accName };
       if (d.borrower.kind === 'acc') d.borrower = { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: d.borrower.acc, accName: d.borrower.accName };
       await db.collection('pdebts').doc(d.id).set(Object.assign(d, { createdBy: currentUser.uid, updatedAt: Date.now() }));
+      pushTo(other.email, meName() + ' a créé une avance avec toi · ' + d.name, 'd|' + d.id);
     } else {
       const home = d.lender.acc;                             // rangée dans le compte qui a avancé
       if (home === active) mutate(() => debts().push(d), false);
@@ -293,7 +294,7 @@ async function debtRequest(e, r) {
   const other = e.d.members.find(u => !mine(u)), req = Object.assign({ id: uid(), by: currentUser.uid, at: Date.now(), status: 'pending', done: {} }, r);
   await updateDebt(e, x => { x.reqs = (x.reqs || []).filter(q => !(q.status === 'pending' && q.by === currentUser.uid && q.type === r.type && q.pid === r.pid)); x.reqs.push(req); });
   toast('Demande envoyée à ' + shortName(e.d.emails?.[other]) + ' : en attente de son accord');
-  pushTo(e.d.emails?.[other], meName() + ' demande ton accord pour ' + reqText(e.d, req).replace(/ \(\d[^)]*\)/, ''), 'req');
+  pushTo(e.d.emails?.[other], meName() + ' demande ton accord pour ' + reqText(e.d, req).replace(/ \(\d[^)]*\)/, ''), 'd|' + e.d.id);
 }
 function debtAnswer(id, rid, ok) {
   const e = findDebt(id) || (PDEBTS.find(d => d.id === id) && { d: PDEBTS.find(d => d.id === id), home: { shared: id } }); if (!e) return;
@@ -303,7 +304,7 @@ function debtAnswer(id, rid, ok) {
     if (ok && q.type === 'pay') { q.pay = (x.payments || []).find(p => p.id === q.pid) || null; x.payments = (x.payments || []).filter(p => p.id !== q.pid); }
     if (ok && q.type === 'debt' && q.mode === 'keep' && !q.purge) { x.arch = { at: Date.now(), by: q.by, kind: 'abandon', left: debtInfo(x).left }; delete x.auto; x.reqs = x.reqs.filter(z => z.id !== rid); return; }
     if (ok && q.type === 'debt') { q.pays = x.payments || []; x.closed = true; }
-  }).then(() => { toast(ok ? 'Suppression acceptée' : 'Suppression refusée'); const q = (e.d.reqs || []).find(z => z.id === rid); if (q) pushTo(e.d.emails?.[q.by], meName() + (ok ? ' a accepté' : ' a refusé') + ' ta demande de suppression · ' + e.d.name, 'req'); });
+  }).then(() => { toast(ok ? 'Suppression acceptée' : 'Suppression refusée'); const q = (e.d.reqs || []).find(z => z.id === rid); if (q) pushTo(e.d.emails?.[q.by], meName() + (ok ? ' a accepté' : ' a refusé') + ' ta demande de suppression · ' + e.d.name, 'd|' + e.d.id); });
 }
 const reqText = (d, q) => (q.type === 'debt' ? (q.purge ? 'retirer de l\'historique « ' + d.name + ' »' : q.mode === 'keep' ? 'clôturer l\'avance « ' + d.name + ' » (abandonner le reste)' : 'supprimer l\'avance « ' + d.name + ' »') : 'supprimer un remboursement de « ' + d.name + ' » (' + eur(num((d.payments || []).find(p => p.id === q.pid)?.amount || q.pay?.amount)) + ')') + (q.type === 'debt' && q.mode === 'keep' ? '' : q.mode === 'keep' ? ', en gardant les mouvements' : ', avec ses mouvements');
 const pendingForMe = () => PDEBTS.flatMap(d => (d.reqs || []).filter(q => q.status === 'pending' && !mine(q.by)).map(q => ({ d, q })));
@@ -470,7 +471,8 @@ async function payCreate(id, p, opt = {}) {
   }
   const res = await Promise.allSettled(jobs);
   const bad = res.some(r => r.status === 'rejected');
-  if (toUser) pushTo(toUser.email, meName() + ' dit t\'avoir remboursé · ' + d.name, 'pay');
+  if (toUser) pushTo(toUser.email, meName() + ' dit t\'avoir remboursé · ' + d.name, 'pc|' + id + '|' + pay.id);
+  else if (e.home.shared && !opt.silent) pushTo(d.emails?.[d.members.find(u => !mine(u))], meName() + ' a noté un remboursement · ' + d.name, 'd|' + id);
   if ((opt.leftBefore ?? debtInfo(d).left) - p.amount <= 0.005) await updateDebt(findDebt(id) || e, x => { if (debtInfo(x).done) { x.doneAt = x.doneAt || Date.now(); delete x.auto; } }).catch(() => {});
   if (opt.silent) return !bad;
   toast(bad ? '⚠ Un des comptes n\'a pas pu être mis à jour. Vérifie ta connexion.' : '+' + eur(p.amount) + ' remboursés · ' + d.name + (toUser ? ' · ' + shortName(toUser.email) + ' doit confirmer' : ''));

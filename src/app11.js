@@ -131,7 +131,7 @@ async function splitSave() {
   if (add) jobs.push(onAcc(acc, k, m => m.expenses.unshift(Object.assign({ id: uid(), name, amount: s.T / 100, share: s.mine / 100, date: String(today()), status: 'Payé', cat, isFixed: false, isDivided: false }, made ? { split: gid } : {}))));
   else if (P0.expId) jobs.push(onAcc(acc, k, m => { const x = m.expenses.find(e => e.id === P0.expId); if (x) { if (made) x.split = gid; x.share = s.mine / 100; } }));
   const res = await Promise.allSettled(jobs), bad = res.filter(r => r.status === 'rejected');
-  shared.forEach(d => pushTo(d.borrower.email, meName() + ' te demande ta part · ' + name, 'split'));
+  shared.forEach(d => pushTo(d.borrower.email, meName() + ' te demande ta part · ' + name, 'iv|' + d.id));
   if (bad.length) console.warn('Partage', bad.map(b => b.reason));
   const cm = comps.map(z => (z.c > 0 ? '−' : '+') + eur(Math.abs(z.c) / 100) + ' ' + (z.c > 0 ? 'déduits' : 'ajoutés') + ' (' + spWho(SP0.rows[z.i]) + ')').join(', ');
   toast(bad.length ? '⚠ Partage incomplet, vérifie ta connexion' : (made ? '👥 Partage créé' + (shared.length ? ' · ' + shared.length + ' demande' + (shared.length > 1 ? 's envoyées' : ' envoyée') : '') + (cm ? ' · ' : '') : '↔ ') + cm);
@@ -202,7 +202,7 @@ function inviteAnswer(id, ok, acc) {
     if (!invPending(x)) return;
     x.invite = Object.assign({}, x.invite, { status: ok ? 'accepted' : 'declined', answeredAt: Date.now() });
     if (ok && acc) { x.borrower.acc = acc; x.borrower.accName = ACC[acc]?.name || ''; }
-  }).then(() => { toast(ok ? '✓ Part acceptée : ' + eur(d.amount) + ' à rembourser' : 'Demande refusée'); pushTo(lenderOf(d).email, meName() + (ok ? ' a accepté' : ' a refusé') + ' sa part · ' + d.name, 'split'); render(); })
+  }).then(() => { toast(ok ? '✓ Part acceptée : ' + eur(d.amount) + ' à rembourser' : 'Demande refusée'); pushTo(lenderOf(d).email, meName() + (ok ? ' a accepté' : ' a refusé') + ' sa part · ' + d.name, 'd|' + d.id); render(); })
     .catch(er => toast('⚠ ' + (er.code || er.message)));
 }
 // Côté de celui qui a payé, quand une part est refusée

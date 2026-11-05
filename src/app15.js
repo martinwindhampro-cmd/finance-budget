@@ -33,6 +33,7 @@ async function compAdd(e, o) {
     date: o.date, k: o.date.slice(0, 7), v: 1, lines: o.lines || {}, from: '', fromName: '', to: '', toName: '', by: currentUser.uid };
   p.amount = compAmount(e.d, o.side, o.part);
   await updateDebt(e, x => { (x.payments = x.payments || []).push(p); compDone(x); });
+  if (e.home.shared) pushTo(e.d.emails?.[e.d.members.find(u => !mine(u))], meName() + ' a ajouté une dépense commune · ' + (o.label || e.d.name), 'd|' + e.d.id);
   await compSync(e.d.id);
   return p;
 }
@@ -139,7 +140,7 @@ async function payEdit(e, p, n) {
   await Promise.all(jobs.map(j => j.catch(er => console.warn(er))));
   await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); if (conf && q.okAt) { q.pend = 1; q.re = 1; q.at = Date.now(); } if (conf) delete q.rej; compDone(x); });
   warnMembers(e, 'Remboursement modifié : ' + eur(n.amount) + ' · « ' + e.d.name + ' »' + note);
-  if (conf) pushTo(p.toUser, meName() + ' a modifié son remboursement (à confirmer) · ' + e.d.name, 'pay');
+  if (conf) pushTo(p.toUser, meName() + ' a modifié son remboursement (à confirmer) · ' + e.d.name, 'pc|' + e.d.id + '|' + p.id);
   if (note) toast('ℹ' + note);
 }
 
@@ -228,7 +229,7 @@ async function compPanelSave(xid, k, o, prev) {
     if (w.startsWith('u:')) { const pp = linkedPeople().find(z => 'u:' + z.uid === w); if (!pp) return toast('Personne introuvable');
       Object.assign(d, { lender: { kind: 'user', uid: currentUser.uid, email: myEmail(), acc: active, accName: accName() }, borrower: { kind: 'user', uid: pp.uid, email: pp.email },
         invite: { status: 'pending', at: now }, members: [currentUser.uid, pp.uid], emails: { [currentUser.uid]: myEmail(), [pp.uid]: pp.email }, createdBy: currentUser.uid, updatedAt: now });
-      await db.collection('pdebts').doc(did).set(d); }
+      await db.collection('pdebts').doc(did).set(d); pushTo(pp.email, meName() + ' te demande ta part · ' + x.name, 'iv|' + did); }
     else { Object.assign(d, { lender: { kind: 'acc', acc: active, accName: accName() }, borrower: w.startsWith('a:') ? { kind: 'acc', acc: w.slice(2), accName: ACC[w.slice(2)]?.name || '' } : { kind: 'text', who: (o.name || '').trim() || 'Quelqu\'un' } });
       mutate(() => debts().push(d), false); }
     setX(y => Object.assign(y, { share: mine, newdebt: did, isDivided: false }));
