@@ -238,6 +238,7 @@ function vParametres() {
       <button class="btn" data-a="logout">${svg('out', 18)} Se déconnecter</button>
       <button class="btn danger" data-a="delacc">Supprimer mon profil</button>
     </section>
+    ${pushCardHTML()}
     ${installHTML()}
     ${linksCardHTML()}
   </div>`,

@@ -82,7 +82,7 @@ function vMessages() {
   const V = $('v-messages'), me = currentUser.uid, seen = USER?.seen || {}, ver = currentUser.emailVerified;
   const inv = INV.in.filter(i => i.status === 'pending'), al = alerts(nowK());
   const acts = Object.values(ACT).flat().sort((a, b) => b.at - a.at).slice(0, 50);
-  const notifBtn = window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
+  const notifBtn = PUSH_URL ? (pushOn ? '' : '<button class="btn sm" data-a="push-on">🔔 Activer les notifications</button>') : window.Notification && Notification.permission === 'default' ? '<button class="btn sm" data-a="notif-on">Activer les notifications du navigateur</button>' : '';
   V.innerHTML = `
   ${linksMsgHTML()}
   ${payConfMsgHTML()}
@@ -154,6 +154,7 @@ document.addEventListener('click', ev => {
     case 'verify-send': return currentUser.sendEmailVerification().then(() => toast('📧 Email envoyé à ' + currentUser.email + ' — clique sur le lien puis sur « J\'ai confirmé »')).catch(fail);
     case 'verify-check': return currentUser.reload().then(() => currentUser.getIdToken(true)).then(() => { currentUser = auth.currentUser; render(); toast(currentUser.emailVerified ? '✅ Email confirmé' : 'Pas encore confirmé : clique sur le lien reçu par email'); }).catch(fail);
     case 'notif-on': return Notification.requestPermission().then(() => render());
+    case 'push-on': return pushEnable();
     case 'al-go': cur = keyDate(nowK()); return go(b.dataset.v, { flt: b.dataset.f || 'all', q: b.dataset.q || '' });
     case 'acc-kick': { const m = membersOf(active).find(x => x.uid === id); if (!m || !confirm('Retirer ' + m.email + ' de ce compte ? Il n\'y aura plus accès.')) return;
       return removeMember(active, id).then(() => toast(m.email + ' retiré')).catch(fail); }

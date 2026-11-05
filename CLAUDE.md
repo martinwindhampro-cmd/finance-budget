@@ -1,7 +1,7 @@
 # Suivi dépenses : contexte du projet pour Claude Code
 
 > Ce fichier résume tout ce qu'il faut savoir pour reprendre le projet : qui l'utilise, comment travailler, l'architecture, le modèle de données, les règles de calcul, les fonctionnalités, les tests et l'historique. **Lis-le en entier avant toute modification.**
-> Dernière version livrée : **`4 nov. · v34`** (constante `APP_VERSION`, dans `src/app7.js`).
+> Dernière version livrée : **`5 nov. · v35`** (constante `APP_VERSION`, dans `src/app7.js`).
 
 ---
 
@@ -39,7 +39,7 @@
 - **Publication** : Claude publie lui-même chaque nouvelle version directement sur `main` (tests OK d'abord), puis vérifie que le site en ligne affiche la nouvelle `APP_VERSION`. Robin n'a plus de glisser-déposer à faire.
 - **Firebase, plan gratuit Spark uniquement** : Auth (email + mot de passe) et Firestore.
   - **Pas** de Cloud Functions, pas de Storage payant, pas de serveur, pas d'API payante, pas d'agrégateur bancaire.
-  - Conséquence : pas de vraies notifications push quand l'app est fermée, et pas de récupération automatique des opérations bancaires.
+  - Conséquence : pas de récupération automatique des opérations bancaires. Les vraies notifications passent par un **relais gratuit Cloudflare** (voir Notifications).
 - **Bibliothèques CDN** :
   - Firebase *compat* 10.8.1 (`firebase-app`, `-auth`, `-firestore`) ;
   - Chart.js 4.4.1 ;
@@ -57,6 +57,7 @@
 index.html            ← GÉNÉRÉ (ne pas éditer à la main) : c'est le fichier servi par GitHub Pages
 manifest.webmanifest, sw.js, icon-*.png, apple-touch-icon.png, favicon-32.png   ← PWA
 firestore.rules       ← règles de sécurité (à publier à la main dans la console Firebase)
+push/worker.js        ← relais de notifications (Cloudflare Worker), SANS la clé privée
 src/
   shell.html          ← tout le HTML + CSS, avec le marqueur /*APP_JS*/ où le JS est injecté
   app1.js … app16.js  ← le JavaScript, découpé par thème (voir ci-dessous)
@@ -87,7 +88,7 @@ Tout est dans un seul `<script>` en `'use strict'`. Les fonctions sont « hoist�
 | `app12.js` | **Pointage avec le relevé bancaire** : lecture CSV / Excel / OFX / QIF, rapprochement, écran de validation |
 | `app13.js` | **Relevés bancaires** : historique des relevés déposés (`statements`), écran `releves`, fusion sans doublon, rappel mensuel |
 | `app14.js` | **Intérêts des comptes épargne** (Livret A par quinzaines, au jour le jour, fin de mois ; plafonds ; fiscalité) |
-| `app16.js` | **Charges fixes partagées** (`shfix` : proposer une charge fixe à une personne connectée, elle accepte et la même charge fixe est créée chez elle ; virement auto vers le même compte joint si elle en est membre — `fixCreate`), **« J'ai remboursé »** (remboursement vers une autre personne « à confirmer » : `payConfirm`, `payRejAction`, carte « À valider » sur l'accueil et la messagerie), **pastille sur l'icône** (`appBadge`) |
+| `app16.js` | **Vraies notifications** (`pushSetup`, `pushTo`, `PUSH_URL`, `VAPID_PUB`), **Charges fixes partagées** (`shfix` : proposer une charge fixe à une personne connectée, elle accepte et la même charge fixe est créée chez elle ; virement auto vers le même compte joint si elle en est membre — `fixCreate`), **« J'ai remboursé »** (remboursement vers une autre personne « à confirmer » : `payConfirm`, `payRejAction`, carte « À valider » sur l'accueil et la messagerie), **pastille sur l'icône** (`appBadge`) |
 | `app15.js` | **Dépenses communes façon Tricount** (compensation des avances, lignes dans les 2 comptes, modification sans accord, choix Non / Partagée / Déduire / Avance dans la fiche dépense, choix habituel par catégorie, **bilan par personne** + « Tout solder », conversion des anciens « ½ Partagé ») |
 
 `app.js` et `sync.js` (anciennes versions monolithiques) **ne sont plus utilisés**. Ils ne sont pas dans ce dépôt.
@@ -225,7 +226,14 @@ S = {
 
 **Charges fixes partagées** (`app16`, v34) : bouton 👥 dans Paramètres › Charges fixes (colonne « Partage ») ou dans la fiche d'une charge fixe › « 👥 Partager cette charge fixe ». La personne connectée reçoit la demande (« À valider » sur l'accueil et dans la messagerie). Si elle accepte, elle choisit le compte d'où part la charge : même nom, montant, jour, catégorie, logo ; si c'était un virement automatique vers un compte dont elle est membre (compte joint), elle a le même virement automatique (recette fixe en face sur le joint). Copie à l'acceptation : une modification ultérieure n'est **pas** répercutée chez l'autre.
 
-**Notifications** : pas de vraie notification push app fermée (le plan gratuit n'a pas de serveur ; les services de push d'Apple et de Google refusent les envois depuis une page web, testé : pas de CORS). On a : notifications du navigateur quand l'app est ouverte ou en arrière-plan, et **pastille sur l'icône de l'app** (`navigator.setAppBadge`, nombre de choses à traiter). Seule vraie option : passer Firebase en formule Blaze (carte bancaire, quasi gratuit à cet usage) avec une Cloud Function + FCM.
+**Notifications** (v35) : **vraies notifications même app fermée** (Web Push, iPhone avec l'app sur l'écran d'accueil iOS ≥ 16.4, Android, PC), sans Play Store / App Store.
+- Les services push d'Apple / Google refusent les envois directs depuis une page web (pas de CORS) : un **relais Cloudflare Worker gratuit** (`push/worker.js`, compte Cloudflare de Robin, sans carte) les envoie. Il vérifie le jeton Firebase de l'expéditeur (RS256, `aud` = projet), n'accepte que l'origine GitHub Pages et les hôtes des services push, chiffre le message (aes128gcm, RFC 8291) et signe (VAPID ES256). Il ne garde rien.
+- **Clé VAPID** : la publique est dans `src/app16.js` (`VAPID_PUB`) ; la **privée n'est que dans la copie collée dans Cloudflare** (jamais dans le dépôt : `push/worker.js` a des marqueurs `__VAPID_PRIVATE__`). Le contact VAPID doit être une vraie URL (Apple renvoie `BadJwtToken` pour un contact fictif).
+- `PUSH_URL` (`src/app16.js`) = adresse du relais ; vide → tout est caché.
+- Chaque appareil : bouton « 🔔 Activer les notifications » (Paramètres › Profil & app, ou Messagerie) → `pushSetup` range l'abonnement dans `directory/{email}.push` (5 max ; lisible par les personnes connectées ; `publishDir` écrit en `merge`).
+- Envoi `pushTo(email, texte)` à chaque demande ou réponse : « J'ai remboursé », confirmé / pas reçu / modifié, charge fixe partagée proposée / acceptée / refusée, part demandée / acceptée / refusée, demande de suppression / réponse. **Jamais de montant** dans le texte.
+- `sw.js` : événement `push` → notification + pastille. Quand l'appareil a le push, les notifications locales du navigateur (`notifyLocal`) sont coupées pour éviter les doublons.
+- Pastille sur l'icône (`appBadge`).
 
 **Pointage avec le relevé** (`app12`) :
 - **Formats lus** : Crédit Agricole (CSV ISO-8859-1 avec en-tête de compte et libellés sur plusieurs lignes, **Excel .xlsx**), Boursorama (CSV), Revolut (CSV, frais inclus, opérations annulées ignorées), OFX, QIF. Sinon, une fenêtre propose de choisir les colonnes.
@@ -260,7 +268,8 @@ S = {
   - t26–t27 : partage avec ses propres comptes et compte joint ;
   - t28 : intérêts ;
   - t29–t32 : dépenses communes, Tricount, choix habituel, bilan, budget avec charges fixes ;
-  - t33 : charges fixes partagées, « J'ai remboursé » (confirmer / pas reçu / reconfirmer), pastille.
+  - t33 : charges fixes partagées, « J'ai remboursé » (confirmer / pas reçu / reconfirmer), pastille ;
+  - t34 : vraies notifications (abonnement, envoi au relais, textes sans montant). Le relais lui-même a été testé à part (chiffrement déchiffré par `http_ece`, signature VAPID, jetons refusés, Apple accepte la signature).
 - **Tests retirés de ce dépôt** : ceux basés sur les **vrais relevés de Robin**, pour ne pas publier ses données bancaires. t14 utilise `tests/fixtures/joint-demo.json` (fictif).
 - **Contrôle visuel** : rendre la page à 390 × 844 px (Playwright / Chromium) pour vérifier l'affichage téléphone. Les noms longs doivent passer à la ligne, pas être coupés.
 
@@ -289,6 +298,7 @@ S = {
 - **v26–v27** : partage avec ses propres comptes ; compte joint vu à l'identique par ses 2 membres.
 - **v28** : intérêts des comptes épargne.
 - **v29–v32** : dépenses communes façon Tricount (compensation), lignes dans les 2 comptes, modification sans accord, montant réel sur le compte et ma part dans les stats, choix Non / Partagée / Déduire / Avance dans la fiche dépense.
+- **v35** : vraies notifications même app fermée, via un relais Cloudflare gratuit.
 - **v34** : charges fixes partagées (demande à accepter, même charge fixe chez l'autre), « J'ai remboursé » à confirmer par celui qui reçoit (remplace le virement automatique dans sa boîte), carte « À valider » sur l'accueil, pastille sur l'icône de l'app.
 - **v33** : charges fixes comptées dans le budget de leur catégorie (virement « courses » → Alimentation, répartition corrigée), choix habituel par catégorie, bilan par personne + « Tout solder », conversion des anciens « ½ Partagé ».
 
@@ -297,9 +307,8 @@ S = {
 ## 10. Idées en attente / pistes proposées à Robin
 
 - Répercuter chez l'autre une modification d'une charge fixe partagée (montant qui change), ou l'arrêter des deux côtés.
-- Vraies notifications push (seulement avec Firebase Blaze + Cloud Function).
 - Refusé par Robin : « relancer quelqu'un » (il ne veut pas que l'app devienne une messagerie).
 - Inviter par email une personne non connectée (sa part devient une demande quand elle accepte).
 - Export / récap de l'historique des avances (CSV / PDF).
 - Partage d'une dépense quand **l'autre** a payé directement depuis la fiche dépense (aujourd'hui : bouton « ↔ Dépense commune » de l'avance).
-- Limites assumées : pas de push app fermée (plan gratuit, voir Notifications), pas d'import bancaire automatique (agrégateur payant), taux du Livret A à saisir.
+- Limites assumées : pas d'import bancaire automatique (agrégateur payant), taux du Livret A à saisir.

@@ -139,6 +139,7 @@ async function payEdit(e, p, n) {
   await Promise.all(jobs.map(j => j.catch(er => console.warn(er))));
   await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === p.id); if (!q) return; Object.assign(q, n, { k, ed: { by: currentUser.uid, at: Date.now() } }); if (conf && q.okAt) { q.pend = 1; q.re = 1; q.at = Date.now(); } if (conf) delete q.rej; compDone(x); });
   warnMembers(e, 'Remboursement modifié : ' + eur(n.amount) + ' · « ' + e.d.name + ' »' + note);
+  if (conf) pushTo(p.toUser, meName() + ' a modifié son remboursement (à confirmer) · ' + e.d.name, 'pay');
   if (note) toast('ℹ' + note);
 }
 

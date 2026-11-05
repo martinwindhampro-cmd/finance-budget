@@ -1,0 +1,68 @@
+// Vraies notifications : abonnement de l'appareil, envoi au relais à chaque demande (sans montant)
+const {JSDOM}=require('jsdom');const fs=require('fs');const install=require('./fsmock.js');
+const src=fs.readFileSync(process.argv[2],'utf8').replace(/<script src=[^>]*><\/script>/g,'').replace(/<link [^>]*>/g,'').replace("const PUSH_URL = '';","const PUSH_URL = 'https://relais.test/';");
+const shared={store:new Map(),listeners:new Set(),seq:0};
+shared.notify=()=>setTimeout(()=>shared.listeners.forEach(L=>{if(!L.win.document){shared.listeners.delete(L);return}try{L.fire()}catch(e){console.error('listener',e)}}),3);
+const errs=[],sent=[];
+function client(name){
+  const dom=new JSDOM(src,{runScripts:'dangerously',url:'https://x.test/'+name,pretendToBeVisual:true,beforeParse(w){
+    install(w,shared);
+    w.Chart=class{destroy(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
+    w.scrollTo=()=>{};w.Element.prototype.scrollTo=()=>{};w.matchMedia=()=>({matches:false,addEventListener(){}});w.confirm=()=>true;w.alert=()=>{};
+    w.fetch=(u,o)=>{if(String(u).startsWith('https://relais.test/')){sent.push({from:name,body:JSON.parse(o.body),auth:o.headers.Authorization});return Promise.resolve({ok:true,json:()=>Promise.resolve({res:[201]})});}return Promise.resolve({ok:true,json:()=>Promise.resolve({rates:{}})});};
+    w.Notification=class{static permission='default';static requestPermission(){w.Notification.permission='granted';return Promise.resolve('granted');}};
+    w.PushManager=class{};
+    const sub={endpoint:'https://fcm.googleapis.com/fcm/send/'+name,options:{},toJSON(){return{endpoint:this.endpoint,keys:{p256dh:'P_'+name,auth:'A_'+name}}},unsubscribe(){return Promise.resolve(true)}};
+    let has=null;Object.defineProperty(w.navigator,'serviceWorker',{value:{ready:Promise.resolve({pushManager:{getSubscription:()=>Promise.resolve(has),subscribe:()=>{has=sub;return Promise.resolve(sub)}}}),register:()=>Promise.resolve(),addEventListener(){}}});
+  }});
+  dom.window.addEventListener('error',e=>errs.push(name+': '+e.message));
+  const w=dom.window;w.name_=name;return w;
+}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+let fails=0;const ok=(n,c)=>{console.log((c?'✅':'❌')+' '+n);if(!c)fails++;};
+const ev=(w,js)=>w.eval(js);
+const sub=w=>w.document.querySelector('#dlg form').dispatchEvent(new w.Event('submit',{cancelable:true}));
+const close=w=>w.eval("$('dlg').open&&$('dlg').close()");
+const dir=e=>shared.store.get('directory/'+e)||{};
+(async()=>{
+  const A=client('robin'); await wait(20); A.__login({uid:'uA',email:'robin@test.fr'}); await wait(400);
+  const B=client('marion'); await wait(20); B.__login({uid:'uB',email:'marion@test.fr',emailVerified:true}); await wait(400);
+  await A.eval("linkRequest('marion@test.fr')"); await wait(200); await B.eval("linkAnswer(linkPending()[0].id,true)"); await wait(400);
+  const perso=ev(A,'active'), bperso=ev(B,'active');
+  console.log('— 1. Marion active les notifications sur son téléphone');
+  ev(B,"UI.pt='profil';go('parametres')"); await wait(30);
+  ok('Paramètres › Profil : carte « 🔔 Notifications » avec le bouton',/🔔 Notifications/.test(B.document.getElementById('v-parametres').textContent)&&!!B.document.querySelector('#v-parametres [data-a=push-on]'));
+  B.document.querySelector('#v-parametres [data-a=push-on]').dispatchEvent(new B.MouseEvent('click',{bubbles:true})); await wait(600);
+  ok('Abonnement rangé dans son annuaire (un appareil)',(dir('marion@test.fr').push||[]).length===1&&dir('marion@test.fr').push[0].endpoint.endsWith('/marion'));
+  ok('La carte affiche « Activées sur cet appareil »',(ev(B,'render()'),/Activées sur cet appareil/.test(B.document.getElementById('v-parametres').textContent)));
+  await B.eval('pushSetup()'); await wait(200); ok('Réactiver ne crée pas de doublon',dir('marion@test.fr').push.length===1);
+  ev(B,"publishDir()"); ev(B,"U.recvHide=['zz'];dirLast='';publishDir()"); await wait(1600);
+  ok('La mise à jour de l\'annuaire (comptes) garde l\'abonnement',dir('marion@test.fr').push?.length===1&&(dir('marion@test.fr').accounts||[]).length>=1);
+  ok('Robin (connecté) peut lire l\'abonnement de Marion',await A.eval("db.collection('directory').doc('marion@test.fr').get().then(s=>!!s.data().push)"));
+  console.log('— 2. Robin rembourse Marion → elle reçoit une vraie notification');
+  await ev(A,`createDebt({id:'vac',name:'Vacances',amount:100,emo:'💸',at:Date.now(),payments:[],lender:{kind:'user',uid:'uB',email:'marion@test.fr',acc:'${bperso}',accName:'Compte'},borrower:{kind:'user',uid:'uA',email:'robin@test.fr',acc:'${perso}'},members:['uA','uB'],emails:{uA:'robin@test.fr',uB:'marion@test.fr'}})`); await wait(900); close(A);
+  sent.length=0; await A.eval("payDialog('vac')"); await wait(60); A.document.getElementById('f_amt').value='40'; sub(A); await wait(1800); close(A);
+  const s1=sent.find(x=>x.from==='robin');
+  ok('Relais appelé avec l\'appareil de Marion et le jeton de Robin',!!s1&&s1.body.to[0].endpoint.endsWith('/marion')&&/^Bearer /.test(s1.auth));
+  ok('Texte : « Robin dit t\'avoir remboursé · Vacances » (sans montant)',s1&&s1.body.body==="Robin dit t'avoir remboursé · Vacances"&&!/\d/.test(s1.body.body));
+  console.log('— 3. Marion confirme → Robin n\'a pas activé : aucun envoi');
+  sent.length=0; await B.eval("payConfirm('vac',findDebt('vac').d.payments[0].id,true,active)"); await wait(800);
+  ok('Pas d\'envoi vers quelqu\'un qui n\'a pas activé',!sent.length);
+  console.log('— 4. Robin active aussi → Marion « Pas reçu » sur un 2e remboursement');
+  await A.eval("Notification.requestPermission().then(pushSetup)"); await wait(400);
+  await A.eval("payDialog('vac')"); await wait(60); A.document.getElementById('f_amt').value='5'; sub(A); await wait(1500); close(A);
+  sent.length=0; await B.eval("payConfirm('vac',findDebt('vac').d.payments.find(p=>p.pend).id,false)"); await wait(800);
+  ok('Robin reçoit « Marion n\'a pas reçu ton remboursement · Vacances »',sent.some(x=>x.from==='marion'&&x.body.to[0].endpoint.endsWith('/robin')&&/n'a pas reçu ton remboursement · Vacances/.test(x.body.body)));
+  console.log('— 5. Charge fixe partagée et partage à plusieurs');
+  ev(A,"mutate(()=>{tplAdd('expenses',{tmplId:'nf',name:'Netflix',amount:20,date:'5',cat:'Loisirs',isDivided:false})},false)"); await wait(300);
+  sent.length=0; ev(A,"shfixDialog('nf')"); await wait(30); sub(A); await wait(900);
+  ok('Marion : « Robin te propose une charge fixe partagée : Netflix »',sent.some(x=>x.body.body==='Robin te propose une charge fixe partagée : Netflix'));
+  sent.length=0; await B.eval("shfixAnswer(shfixForMe()[0].id,true,active)"); await wait(1200);
+  ok('Robin : « Marion a accepté ta charge fixe partagée « Netflix » »',sent.some(x=>/Marion a accepté ta charge fixe partagée « Netflix »/.test(x.body.body)));
+  sent.length=0; ev(A,"splitDialog()"); await wait(30);
+  const inp=(id,v)=>{const el=A.document.getElementById(id);el.value=v;el.dispatchEvent(new A.Event('input',{bubbles:true}));};
+  inp('sp-name','Restaurant'); inp('sp-tot','60'); await wait(20); const cp=A.document.getElementById('sp-comp'); if(cp){cp.checked=false;cp.dispatchEvent(new A.Event('change',{bubbles:true}));} await wait(20); A.document.querySelector('#dlg form').dispatchEvent(new A.Event('submit',{cancelable:true})); await wait(1200); close(A);
+  ok('Marion : « Robin te demande ta part · Restaurant »',sent.some(x=>x.body.body==='Robin te demande ta part · Restaurant'));
+  ok('Aucune erreur JS',!errs.length);
+  console.log('Erreurs JS :',errs.length?errs:'aucune');console.log(fails?fails+' échec(s)':'TOUT EST OK');process.exit(0);
+})().catch(e=>{console.error('CRASH',e);process.exit(1)});

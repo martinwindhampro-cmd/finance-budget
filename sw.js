@@ -30,3 +30,9 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(l => l.length ? l[0].focus() : self.clients.openWindow('./')));
 });
+// Vraie notification (envoyée par le relais, même app fermée) : « Robin dit t'avoir remboursé · Vacances »
+self.addEventListener('push', e => {
+  let d = {}; try { d = e.data ? e.data.json() : {}; } catch (er) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Suivi dépenses', { body: d.body || 'Nouvelle demande à valider', icon: 'icon-192.png', badge: 'icon-192.png', tag: d.tag ? d.tag + '-' + Date.now() : undefined, data: { url: './' } })
+    .then(() => self.navigator.setAppBadge ? self.navigator.setAppBadge() : null).catch(() => {}));
+});

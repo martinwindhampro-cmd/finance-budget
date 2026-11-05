@@ -41,7 +41,7 @@ function shfixDialog(tmplId) {
       const id = uid(), now = Date.now();
       db.collection('shfix').doc(id).set({ members: [currentUser.uid, p.uid], emails: { [currentUser.uid]: myEmail(), [p.uid]: p.email }, from: currentUser.uid, fromEmail: myEmail(), fromAcc: active, tmplId,
         to: p.uid, toEmail: p.email, status: 'pending', at: now, tpl })
-        .then(() => { toast('👥 Demande envoyée à ' + shortName(p.email)); render(); })
+        .then(() => { toast('👥 Demande envoyée à ' + shortName(p.email)); pushTo(p.email, meName() + ' te propose une charge fixe partagée : ' + t.name, 'shfix'); render(); })
         .catch(er => toast(er.code === 'permission-denied' ? '⚠ Refusé par Firebase : les règles Firestore (firestore.rules) doivent être publiées' : '⚠ ' + (er.code || er.message)));
     } });
 }
@@ -66,6 +66,7 @@ async function shfixAnswer(id, ok, acc) {
       tx.update(ref, Object.assign({ status: ok ? 'accepted' : 'declined', answeredAt: Date.now() }, ok && acc ? { toAcc: acc, toAccName: ACC[acc]?.name || '' } : {})); });
     if (!go) return toast('Demande déjà traitée');
     if (ok && acc) await fixCreate(acc, s.tpl);
+    pushTo(s.fromEmail, meName() + (ok ? ' a accepté ' : ' a refusé ') + 'ta charge fixe partagée « ' + s.tpl.name + ' »', 'shfix');
     toast(ok ? '✓ Charge fixe ajoutée : ' + s.tpl.name + ' · ' + eur(num(s.tpl.amount)) : 'Demande refusée'); render();
   } catch (er) { toast('⚠ ' + (er.code || er.message)); }
 }
@@ -109,20 +110,20 @@ function payConfirmDialog(id, pid) {
 async function payConfirm(id, pid, ok, acc) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
   try {
-    if (!ok) { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) q.rej = { at: Date.now(), by: currentUser.uid }; }); toast('Signalé : pas reçu'); return render(); }
+    if (!ok) { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) q.rej = { at: Date.now(), by: currentUser.uid }; }); toast('Signalé : pas reçu'); pushTo(e.d.emails?.[p.by], meName() + ' n\'a pas reçu ton remboursement · ' + e.d.name, 'pay'); return render(); }
     const k = p.date.slice(0, 7), dd = String(+p.date.slice(8, 10)), incId = p.inc && myAcc(p.to) ? p.inc : uid();
     const from = shortName(e.d.emails?.[p.by] || borrowerOf(e.d).email);
     const line = x => Object.assign(x || { id: incId, status: 'Reçu', isFixed: false, debt: id, xfer: { id: p.xid || uid(), kind: 'person', from: e.d.emails?.[p.by] || '' } }, { name: p.label || 'Remboursement ' + from, amount: num(p.amount), date: dd }, isShared(acc) ? { by: currentUser.email } : {});
     if (p.inc && myAcc(p.to) && p.to !== acc) await lineSet(p.to, p.ik || p.k, null, 'incomes', p.inc);      // compte changé : on retire l'ancienne ligne
     await lineSet(acc, p.inc && p.to === acc ? (p.ik || p.k) : null, k, 'incomes', incId, line);
     await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (!q) return; delete q.pend; delete q.rej; delete q.re; Object.assign(q, { to: acc, toName: ACC[acc]?.name || '', inc: incId, ik: k, okAt: Date.now() }); });
-    toast('✓ ' + eur(p.amount) + ' reçus sur « ' + (ACC[acc]?.name || '') + ' »'); render();
+    toast('✓ ' + eur(p.amount) + ' reçus sur « ' + (ACC[acc]?.name || '') + ' »'); pushTo(e.d.emails?.[p.by], meName() + ' a confirmé ton remboursement · ' + e.d.name, 'pay'); render();
   } catch (er) { toast('⚠ ' + (er.code || er.message)); }
 }
 // Celui qui a remboursé : « Pas reçu » → renvoyer ou supprimer
 async function payRejAction(id, pid, what) {
   const e = findDebt(id); const p = e && (e.d.payments || []).find(x => x.id === pid); if (!p) return;
-  if (what === 'resend') { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) { delete q.rej; q.pend = 1; q.at = Date.now(); } }); toast('Renvoyé pour confirmation'); return render(); }
+  if (what === 'resend') { await updateDebt(e, x => { const q = (x.payments || []).find(z => z.id === pid); if (q) { delete q.rej; q.pend = 1; q.at = Date.now(); } }); toast('Renvoyé pour confirmation'); pushTo(lenderOf(e.d).email, meName() + ' dit t\'avoir remboursé · ' + e.d.name, 'pay'); return render(); }
   await cleanMovs(Object.assign({}, p, { inc: '' }));
   await updateDebt(e, x => { x.payments = (x.payments || []).filter(z => z.id !== pid); });
   toast('Remboursement supprimé'); render();
@@ -146,8 +147,8 @@ function payNotify() {
   const st = {}; PDEBTS.forEach(d => (d.payments || []).forEach(p => { if (p.pend || p.rej || p.okAt) st[d.id + p.id] = p.rej ? 'rej' : p.pend ? 'pend' + (p.at || '') : 'ok'; }));
   if (payStSeen && loaded) PDEBTS.forEach(d => (d.payments || []).forEach(p => {
     const s = st[d.id + p.id], was = payStSeen[d.id + p.id]; if (!s || s === was) return;
-    if (s.startsWith('pend') && !mine(p.by) && mine(lenderOf(d).uid)) { const t = shortName(d.emails?.[p.by]) + ' dit t\'avoir remboursé ' + eur(p.amount) + ' · ' + d.name; toast('💸 ' + t); browserNotify('Remboursement à confirmer', t); }
-    if (mine(p.by) && was && was.startsWith('pend') && (s === 'ok' || s === 'rej')) { const o = shortName(d.emails?.[d.members.find(u => !mine(u))]), t = s === 'ok' ? o + ' a confirmé ton remboursement de ' + eur(p.amount) : o + ' n\'a pas reçu ton remboursement de ' + eur(p.amount); toast((s === 'ok' ? '✓ ' : '❌ ') + t); browserNotify('Remboursement', t + ' · ' + d.name); }
+    if (s.startsWith('pend') && !mine(p.by) && mine(lenderOf(d).uid)) { const t = shortName(d.emails?.[p.by]) + ' dit t\'avoir remboursé ' + eur(p.amount) + ' · ' + d.name; toast('💸 ' + t); notifyLocal('Remboursement à confirmer', t); }
+    if (mine(p.by) && was && was.startsWith('pend') && (s === 'ok' || s === 'rej')) { const o = shortName(d.emails?.[d.members.find(u => !mine(u))]), t = s === 'ok' ? o + ' a confirmé ton remboursement de ' + eur(p.amount) : o + ' n\'a pas reçu ton remboursement de ' + eur(p.amount); toast((s === 'ok' ? '✓ ' : '❌ ') + t); notifyLocal('Remboursement', t + ' · ' + d.name); }
   }));
   payStSeen = st; appBadge();
 }
@@ -155,12 +156,65 @@ function shfixNotify() {
   const st = {}; SHFIX.forEach(s => st[s.id] = s.status);
   if (shSeen && loaded) SHFIX.forEach(s => {
     if (shSeen[s.id] === s.status) return;
-    if (s.status === 'pending' && mine(s.to)) { const t = shortName(s.fromEmail) + ' te propose une charge fixe partagée : ' + s.tpl.name + ' (' + eur(num(s.tpl.amount)) + ')'; toast('🔁 ' + t); browserNotify('Charge fixe partagée', t); }
-    if (s.status !== 'pending' && shSeen[s.id] === 'pending' && mine(s.from)) { const t = shortName(s.toEmail) + (s.status === 'accepted' ? ' a accepté ' : ' a refusé ') + '« ' + s.tpl.name + ' »'; toast((s.status === 'accepted' ? '✓ ' : '❌ ') + t); browserNotify('Charge fixe partagée', t); }
+    if (s.status === 'pending' && mine(s.to)) { const t = shortName(s.fromEmail) + ' te propose une charge fixe partagée : ' + s.tpl.name + ' (' + eur(num(s.tpl.amount)) + ')'; toast('🔁 ' + t); notifyLocal('Charge fixe partagée', t); }
+    if (s.status !== 'pending' && shSeen[s.id] === 'pending' && mine(s.from)) { const t = shortName(s.toEmail) + (s.status === 'accepted' ? ' a accepté ' : ' a refusé ') + '« ' + s.tpl.name + ' »'; toast((s.status === 'accepted' ? '✓ ' : '❌ ') + t); notifyLocal('Charge fixe partagée', t); }
   });
   shSeen = st; appBadge();
 }
 // Pastille sur l'icône de l'app installée (iPhone, Android, PC) : nombre de choses à traiter
 function appBadge() {
   try { if (!navigator.setAppBadge || !currentUser) return; const n = unreadCount(); (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch (e) {}
+}
+
+/* ============================== VRAIES NOTIFICATIONS (même app fermée) ==============================
+   Chaque appareil qui active les notifications s'abonne (Web Push) et range son abonnement dans directory/{email}.push
+   (lisible seulement par les personnes connectées). Quand je fais une demande à quelqu'un, l'app lit ses abonnements
+   et demande au relais (push/worker.js, Cloudflare, gratuit) de lui envoyer la notification. Le texte ne contient
+   jamais de montant.                                                                                                  */
+const PUSH_URL = '';                                                           // adresse du relais Cloudflare (vide = pas encore installé)
+const VAPID_PUB = 'BNh0SGesDsd8PXvqe4RtGX2qSTY9C8oIiU4ZXgivvrYjjS0IEQPqRWFPyZ-imf7GQZDAmcOS66Nbmj0EeOj4ve8';
+let pushOn = false;
+const pushOk = () => !!(PUSH_URL && window.Notification && navigator.serviceWorker && window.PushManager);
+const keyBytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0));
+// Abonne CET appareil (après l'accord de l'utilisateur) et range l'abonnement dans l'annuaire
+async function pushSetup() {
+  if (!pushOk() || Notification.permission !== 'granted' || !currentUser) return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let s = await reg.pushManager.getSubscription();
+    if (s && s.options?.applicationServerKey && btoa(String.fromCharCode(...new Uint8Array(s.options.applicationServerKey))) !== btoa(String.fromCharCode(...keyBytes(VAPID_PUB)))) { await s.unsubscribe(); s = null; }
+    if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(VAPID_PUB) });
+    const j = s.toJSON(), ref = db.collection('directory').doc(myEmail()), cur = await ref.get().catch(() => null);
+    const L = ((cur && cur.exists && cur.data().push) || []).filter(x => x.endpoint !== j.endpoint);
+    L.unshift({ endpoint: j.endpoint, keys: j.keys, at: Date.now(), dev: isIOS() ? 'iPhone' : /android/i.test(navigator.userAgent) ? 'Android' : 'Ordinateur' });
+    await ref.set({ uid: currentUser.uid, push: L.slice(0, 5) }, { merge: true });
+    pushOn = true; return true;
+  } catch (e) { console.warn('Notifications', e.message); return false; }
+}
+async function pushEnable() {
+  if (!pushOk()) return toast(isIOS() && !standalone() ? 'Sur iPhone : ajoute d\'abord l\'app à l\'écran d\'accueil (Partager › Sur l\'écran d\'accueil), puis ouvre-la depuis l\'icône' : 'Ce navigateur ne permet pas les notifications');
+  const p = await Notification.requestPermission();
+  if (p !== 'granted') { render(); return toast('Notifications refusées : autorise-les dans les réglages du téléphone (Réglages › Notifications › Suivi dépenses)'); }
+  toast(await pushSetup() ? '🔔 Notifications activées sur cet appareil' : '⚠ Activation impossible, réessaie'); render();
+}
+// Envoie une notification aux appareils d'une personne connectée
+async function pushTo(email, body, tag) {
+  email = String(email || '').toLowerCase();
+  if (!PUSH_URL || !email || email === myEmail()) return;
+  try {
+    const s = await db.collection('directory').doc(email).get(); const L = s.exists ? (s.data().push || []) : []; if (!L.length) return;
+    const tok = await currentUser.getIdToken();
+    await fetch(PUSH_URL, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + tok }, body: JSON.stringify({ to: L, title: 'Suivi dépenses', body: String(body).slice(0, 200), tag: tag || '' }) });
+  } catch (e) { console.warn('Notification non envoyée', e.message); }
+}
+const meName = () => shortName(myEmail());
+// Notification locale (app ouverte en arrière-plan) seulement si cet appareil ne reçoit pas déjà la vraie notification
+function notifyLocal(title, body) { if (!pushOn) browserNotify(title, body); }
+function pushCardHTML() {
+  if (!PUSH_URL) return '';
+  const on = pushOn && window.Notification && Notification.permission === 'granted';
+  return `<section class="card" style="flex:1 1 300px;align-self:flex-start;display:flex;flex-direction:column;gap:10px"><h2>🔔 Notifications</h2>
+    <p class="note">${on ? '<b style="color:var(--ok)">Activées sur cet appareil.</b> Tu es prévenu tout de suite, même app fermée, quand on te demande de valider quelque chose (remboursement, charge fixe partagée, part à payer, suppression).' : 'Sois prévenu tout de suite, même app fermée, quand on te demande de valider quelque chose. À activer sur chaque appareil (téléphone, ordinateur).'}</p>
+    ${on ? '' : `<button class="btn p" data-a="push-on">Activer les notifications</button>`}
+    ${isIOS() && !standalone() ? '<small class="note">Sur iPhone, ça marche seulement depuis l\'app ajoutée à l\'écran d\'accueil.</small>' : ''}</section>`;
 }

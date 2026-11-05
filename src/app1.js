@@ -744,6 +744,7 @@ auth.onAuthStateChanged(user => {
   }, err => console.warn('Invitations', err.code));
   subs.push(inv('to', myEmail(), 'in'), inv('from', user.uid, 'out'));
   subs.push(xfListen('to', myEmail(), 'in'), xfListen('from', user.uid, 'out'), linkListen(), pdebtListen(), shfixListen());
+  setTimeout(pushSetup, 3000);
 });
 
 /* ============================== 6. CONNEXION & COMPTE ============================== */

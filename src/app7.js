@@ -14,7 +14,7 @@ function publishDir() {
     const accounts = accIds.filter(id => id === def || !hide.includes(id)).map(id => { const a = ACC[id]; return { id, name: a.name || 'Compte', bank: a.bank || '', site: a.site || '', color: a.color || '', kind: a.kind || 'courant' }; });
     const doc = { uid: currentUser.uid, recv: def, accounts }, j = JSON.stringify(doc);
     if (j === dirLast) return; dirLast = j;
-    db.collection('directory').doc(myEmail()).set(Object.assign(doc, { at: Date.now() })).catch(e => { dirLast = ''; console.warn('Annuaire', e.code); });
+    db.collection('directory').doc(myEmail()).set(Object.assign(doc, { at: Date.now() }), { merge: true }).catch(e => { dirLast = ''; console.warn('Annuaire', e.code); });
   }, 1200);
 }
 const DIR = {}, DIR_T = {};            // email → { recv, accounts } | null (inconnu) ; absent = pas encore cherché
@@ -240,7 +240,7 @@ async function receiveTransfer(t) {
 }
 
 /* ============================== APPLICATION INSTALLÉE (PC & iPhone) ============================== */
-const APP_VERSION = '4 nov. · v34';
+const APP_VERSION = '5 nov. · v35';
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let installEvt = null;
